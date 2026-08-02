@@ -1,0 +1,40 @@
+# Compiled binaries
+/walite
+/bin/
+/build/
+/dist/
+
+# Go
+*.test
+*.out
+coverage.out
+vendor/
+
+# Private WhatsApp data
+/store/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+session/
+sessions/
+media/
+downloads/
+
+# Secrets and logs
+.env
+.env.*
+*.log
+*.pem
+*.key
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
