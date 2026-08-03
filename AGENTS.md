@@ -88,12 +88,26 @@ message bodies.
 Keep these packages separate:
 
 - `cmd/walite`: executable and CLI wiring
+- `internal/model`: dependency-free owner of shared application values, bounded
+  constructors and validation; no I/O, goroutines, interfaces or dependency on
+  another internal package
 - `internal/config`: configuration and XDG paths
 - `internal/wa`: whatsmeow adapter
 - `internal/store`: persistence and queries
 - `internal/syncpolicy`: retention and prioritization
 - `internal/service`: application coordination
 - `internal/tui`: terminal interface
+
+Package dependency direction:
+
+- `internal/model` has no internal dependencies.
+- `internal/config` has no application dependencies.
+- `internal/syncpolicy` may import `internal/model` and `internal/config`.
+- `internal/service` may import `internal/model` and `internal/syncpolicy`.
+- `internal/wa` imports `internal/model` but not `internal/service`.
+- `internal/store` imports `internal/model` but not `internal/service`.
+- `internal/tui` may import `internal/model` and `internal/service`.
+- `cmd/walite` imports selected concrete implementations and performs wiring.
 
 The TUI must not access SQLite or whatsmeow directly.
 
@@ -147,3 +161,4 @@ gofmt
 go vet ./...
 go test ./...
 go test -race ./...
+```
