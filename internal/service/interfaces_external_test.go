@@ -6,10 +6,12 @@ import (
 
 	"github.com/antoinebaudrimont-beep/walite/internal/model"
 	"github.com/antoinebaudrimont-beep/walite/internal/service"
+	"github.com/antoinebaudrimont-beep/walite/internal/wa"
 )
 
 var (
 	_ service.EventSource = (*contractSource)(nil)
+	_ service.EventSource = (*wa.FakeSource)(nil)
 	_ service.Clock       = (*contractClock)(nil)
 	_ service.Timer       = (*contractTimer)(nil)
 )
