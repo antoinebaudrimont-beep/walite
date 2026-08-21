@@ -27,6 +27,22 @@ type EventSource interface {
 	ReleaseHistory(model.HistoryJob)
 }
 
+// MessageStore is the persistence contract consumed by coordination.
+type MessageStore interface {
+	EnsureChat(context.Context, model.Chat) error
+	Write(context.Context, model.WriteBatch) error
+	Page(context.Context, model.ChatID, model.Cursor, int) ([]model.Message, model.Cursor, error)
+	RetentionSnapshot(context.Context, model.ChatID) (model.RetentionSnapshot, error)
+	ApplyPrune(context.Context, model.PrunePlan) (model.PruneResult, error)
+	Usage(context.Context) (model.CacheUsage, error)
+}
+
+// RetentionPolicy makes pure retention and pruning decisions.
+type RetentionPolicy interface {
+	Decide(model.Message, model.RetentionState) (model.RetentionDecision, error)
+	PlanPrune(model.RetentionSnapshot, model.RetentionState) (model.PrunePlan, error)
+}
+
 // Clock supplies current time and selectable timers to service components.
 type Clock interface {
 	Now() time.Time

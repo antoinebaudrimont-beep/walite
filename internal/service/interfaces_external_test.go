@@ -6,14 +6,18 @@ import (
 
 	"github.com/antoinebaudrimont-beep/walite/internal/model"
 	"github.com/antoinebaudrimont-beep/walite/internal/service"
+	"github.com/antoinebaudrimont-beep/walite/internal/store"
+	"github.com/antoinebaudrimont-beep/walite/internal/syncpolicy"
 	"github.com/antoinebaudrimont-beep/walite/internal/wa"
 )
 
 var (
-	_ service.EventSource = (*contractSource)(nil)
-	_ service.EventSource = (*wa.FakeSource)(nil)
-	_ service.Clock       = (*contractClock)(nil)
-	_ service.Timer       = (*contractTimer)(nil)
+	_ service.EventSource     = (*contractSource)(nil)
+	_ service.EventSource     = (*wa.FakeSource)(nil)
+	_ service.Clock           = (*contractClock)(nil)
+	_ service.Timer           = (*contractTimer)(nil)
+	_ service.MessageStore    = (*store.Memory)(nil)
+	_ service.RetentionPolicy = (*syncpolicy.Policy)(nil)
 )
 
 type contractSource struct{}
