@@ -17,15 +17,54 @@ type writeObservation struct {
 	origin model.WriteOrigin
 	count  int
 	ids    [model.MaxWriteBatchMessages]string
+	bodies [model.MaxWriteBatchMessages]bool
 }
 
 type writerStore struct {
-	mu      sync.Mutex
-	calls   [32]writeObservation
-	count   int
-	entered chan struct{}
-	release <-chan struct{}
-	fail    error
+	mu             sync.Mutex
+	calls          [32]writeObservation
+	count          int
+	entered        chan struct{}
+	release        <-chan struct{}
+	fail           error
+	historyEntered chan struct{}
+	historyRelease <-chan struct{}
+}
+
+type panicWriterStore struct{ writerStore }
+
+func (*panicWriterStore) Write(context.Context, model.WriteBatch) error {
+	panic("private writer panic")
+}
+
+type discardPruneStore struct {
+	writerStore
+	snapshots int
+	usages    int
+	prunes    int
+}
+
+func (store *discardPruneStore) RetentionSnapshot(_ context.Context, id model.ChatID) (model.RetentionSnapshot, error) {
+	store.snapshots++
+	return model.NewRetentionSnapshot(id, nil, nil)
+}
+func (store *discardPruneStore) Usage(context.Context) (model.CacheUsage, error) {
+	store.usages++
+	return model.NewCacheUsage(0, 0, 0, 0, 0)
+}
+func (store *discardPruneStore) ApplyPrune(context.Context, model.PrunePlan) (model.PruneResult, error) {
+	store.prunes++
+	return model.NewPruneResult(0, 0, false)
+}
+
+type discardPrunePolicy struct{ plans int }
+
+func (*discardPrunePolicy) Decide(model.Message, model.RetentionState) (model.RetentionDecision, error) {
+	return model.NewRetentionDecision(model.Discard, model.RetentionEligible)
+}
+func (policy *discardPrunePolicy) PlanPrune(model.RetentionSnapshot, model.RetentionState) (model.PrunePlan, error) {
+	policy.plans++
+	return model.PrunePlan{}, nil
 }
 
 func (store *writerStore) Write(ctx context.Context, batch model.WriteBatch) error {
@@ -40,9 +79,13 @@ func (store *writerStore) Write(ctx context.Context, batch model.WriteBatch) err
 	for index := 0; index < batch.Len(); index++ {
 		message, _ := batch.At(index)
 		observation.ids[index] = message.MessageID().String()
+		observation.bodies[index] = message.BodyRetained()
 	}
 	store.count++
 	entered, release, failure := store.entered, store.release, store.fail
+	if batch.Origin() == model.WriteHistory && store.historyEntered != nil {
+		entered, release = store.historyEntered, store.historyRelease
+	}
 	store.mu.Unlock()
 	if entered != nil {
 		select {
@@ -227,6 +270,7 @@ func TestWriterTimerCommitsPartialAndCancellation(t *testing.T) {
 	go func() { done <- writer.Run(ctx) }()
 	clock.fireLatest(t)
 	<-entered
+	<-live.budgetChanges()
 	if live.budget.usedBytes() != 0 {
 		t.Fatalf("lease not released after timer write: %d", live.budget.usedBytes())
 	}
@@ -463,6 +507,231 @@ func TestWriterMalformedMessageAndResultBackpressureCancellation(t *testing.T) {
 		t.Fatalf("backpressure Run=%v", err)
 	}
 	assertWriterBudgetsZero(t, live, history)
+}
+
+func TestWriterAuthoritativeRetentionCounts(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		action     model.RetentionAction
+		wantWrites int
+		wantKept   int
+		wantDrop   int
+	}{
+		{name: "keep metadata", action: model.KeepMetadata, wantWrites: 1, wantKept: 1},
+		{name: "discard", action: model.Discard, wantDrop: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := &writerStore{}
+			policy := &historyPolicy{actions: [model.MaxHistoryChunkRecords]model.RetentionAction{test.action}}
+			live, history, results := writerQueues(t)
+			putMessage(t, live, "live", 0)
+			live.Close()
+			history.Close()
+			writer, err := newLiveFirstWriter(store, live, history, results, newWriterClock(), time.Second, 1, writerRetention{policy: policy, snapshotLimit: model.MaxRetentionSnapshotSummaries})
+			if err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			go func() { done <- writer.Run(context.Background()) }()
+			var observed writeResult
+			for {
+				if owned, ok := results.TryTake(); ok {
+					observed = owned.Value()
+					_ = owned.Release()
+				}
+				select {
+				case runErr := <-done:
+					if runErr != nil {
+						t.Fatal(runErr)
+					}
+					if owned, ok := results.TryTake(); ok {
+						observed = owned.Value()
+						_ = owned.Release()
+					}
+					results.drainAndRelease()
+					if len(store.observations()) != test.wantWrites || observed.Written != test.wantKept || observed.Discarded != test.wantDrop {
+						t.Fatalf("writes=%d result=%+v", len(store.observations()), observed)
+					}
+					if test.action == model.KeepMetadata && store.observations()[0].bodies[0] {
+						t.Fatal("KeepMetadata reached store with a body")
+					}
+					return
+				case <-results.notEmptyChanges():
+				}
+			}
+		})
+	}
+}
+
+func TestWriterHistoryStoreCancellationAbandonsHistoryButKeepsLive(t *testing.T) {
+	historyEntered := make(chan struct{}, 1)
+	store := &writerStore{historyEntered: historyEntered, historyRelease: make(chan struct{})}
+	live, history, results := writerQueues(t)
+	putMessage(t, history, "history", 0)
+	historyCtx, cancelHistory := context.WithCancel(context.Background())
+	writer, err := newLiveFirstWriter(store, live, history, results, newWriterClock(), time.Second, 1, writerRetention{policy: &historyPolicy{}, snapshotLimit: model.MaxRetentionSnapshotSummaries, historyStoreCtx: historyCtx})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- writer.Run(context.Background()) }()
+	<-historyEntered
+	cancelHistory()
+	putMessage(t, live, "live", 0)
+	live.Close()
+	history.Close()
+	runResultDrainUntilDone(t, done, results)
+	calls := store.observations()
+	if len(calls) != 2 || calls[0].origin != model.WriteHistory || calls[1].origin != model.WriteRealtime {
+		t.Fatalf("calls=%+v", calls)
+	}
+	assertWriterBudgetsZero(t, live, history)
+}
+
+func TestWriterHistoryPerformsAuthoritativeRetentionDecision(t *testing.T) {
+	store := &writerStore{}
+	policy := &historyPolicy{actions: [model.MaxHistoryChunkRecords]model.RetentionAction{model.KeepMetadata}}
+	live, history, results := writerQueues(t)
+	putMessage(t, history, "history", 0)
+	live.Close()
+	history.Close()
+	writer, err := newLiveFirstWriter(store, live, history, results, newWriterClock(), time.Second, 1, writerRetention{policy: policy, snapshotLimit: model.MaxRetentionSnapshotSummaries})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runWithResultDrain(t, writer, results)
+	calls := store.observations()
+	if policy.count != 1 || len(calls) != 1 || calls[0].origin != model.WriteHistory || calls[0].bodies[0] {
+		t.Fatalf("decisions=%d calls=%+v", policy.count, calls)
+	}
+}
+
+func TestWriterCancelledHistoryContextPreventsHistoryStoreCall(t *testing.T) {
+	store := &writerStore{}
+	live, history, results := writerQueues(t)
+	putMessage(t, history, "history", 0)
+	live.Close()
+	history.Close()
+	historyCtx, cancelHistory := context.WithCancel(context.Background())
+	cancelHistory()
+	writer, err := newLiveFirstWriter(store, live, history, results, newWriterClock(), time.Second, 1, writerRetention{policy: &historyPolicy{}, snapshotLimit: model.MaxRetentionSnapshotSummaries, historyStoreCtx: historyCtx})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls := store.observations(); len(calls) != 0 {
+		t.Fatalf("calls=%+v", calls)
+	}
+	assertWriterBudgetsZero(t, live, history)
+}
+
+func TestWriterShutdownAbandonsHistoryAndWritesOneFinalLiveQuantum(t *testing.T) {
+	store := &writerStore{}
+	live, history, results := writerQueues(t)
+	for index := 0; index < 10; index++ {
+		putMessage(t, live, "live", index)
+		putMessage(t, history, "history", index)
+	}
+	live.Close()
+	history.Close()
+	shutdown := make(chan struct{})
+	close(shutdown)
+	writer, err := newLiveFirstWriter(store, live, history, results, newWriterClock(), time.Second, 7, writerRetention{policy: &historyPolicy{}, snapshotLimit: model.MaxRetentionSnapshotSummaries, historyStoreCtx: context.Background(), shutdown: shutdown, finalLiveLimit: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runWithResultDrain(t, writer, results)
+	calls := store.observations()
+	if len(calls) != 1 || calls[0].origin != model.WriteRealtime || calls[0].count != 7 {
+		t.Fatalf("calls=%+v", calls)
+	}
+	assertWriterBudgetsZero(t, live, history)
+}
+
+func TestWriterReleasesLiveBatchWhenStorePanics(t *testing.T) {
+	store := &panicWriterStore{}
+	live, history, results := writerQueues(t)
+	putMessage(t, live, "live", 0)
+	live.Close()
+	history.Close()
+	writer := mustWriter(t, store, live, history, results, newWriterClock(), 1)
+	panicValue := runWriterAndRecover(writer)
+	if panicValue == nil {
+		t.Fatal("store panic was not propagated")
+	}
+	assertWriterBudgetsZero(t, live, history)
+}
+
+func TestWriterReleasesHistoryBatchWhenPolicyPanics(t *testing.T) {
+	live, history, results := writerQueues(t)
+	putMessage(t, history, "history", 0)
+	live.Close()
+	history.Close()
+	writer, err := newLiveFirstWriter(&writerStore{}, live, history, results, newWriterClock(), time.Second, 1, writerRetention{policy: panicWriterPolicy{}, snapshotLimit: model.MaxRetentionSnapshotSummaries})
+	if err != nil {
+		t.Fatal(err)
+	}
+	panicValue := runWriterAndRecover(writer)
+	if panicValue == nil {
+		t.Fatal("policy panic was not propagated")
+	}
+	assertWriterBudgetsZero(t, live, history)
+}
+
+type panicWriterPolicy struct{}
+
+func (panicWriterPolicy) Decide(model.Message, model.RetentionState) (model.RetentionDecision, error) {
+	panic("private policy panic")
+}
+func (panicWriterPolicy) PlanPrune(model.RetentionSnapshot, model.RetentionState) (model.PrunePlan, error) {
+	return model.PrunePlan{}, nil
+}
+
+func runWriterAndRecover(writer *liveFirstWriter) (panicValue any) {
+	func() {
+		defer func() { panicValue = recover() }()
+		_ = writer.Run(context.Background())
+	}()
+	return panicValue
+}
+
+func TestWriterPrunesAffectedDiscardedChats(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		chatIDs   [2]string
+		wantChats int
+	}{
+		{name: "same chat", chatIDs: [2]string{"discard-chat", "discard-chat"}, wantChats: 1},
+		{name: "different chats", chatIDs: [2]string{"discard-chat-a", "discard-chat-b"}, wantChats: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := &discardPruneStore{}
+			policy := &discardPrunePolicy{}
+			live, history, results := writerQueues(t)
+			for index, chatID := range test.chatIDs {
+				message, err := model.NewMessage(model.MessageInput{ChatID: chatID, MessageID: "discard-" + strconv.Itoa(index), SentAt: writerTestTime.Add(time.Duration(index) * time.Second), Text: "body"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				putRawMessage(t, live, message)
+			}
+			live.Close()
+			history.Close()
+			writer, err := newLiveFirstWriter(store, live, history, results, newWriterClock(), time.Second, 2, writerRetention{policy: policy, snapshotLimit: model.MaxRetentionSnapshotSummaries})
+			if err != nil {
+				t.Fatal(err)
+			}
+			runWithResultDrain(t, writer, results)
+			if len(store.observations()) != 0 || policy.plans != test.wantChats || store.prunes != test.wantChats {
+				t.Fatalf("writes=%d plans=%d prunes=%d", len(store.observations()), policy.plans, store.prunes)
+			}
+			if store.snapshots != 2+test.wantChats || store.usages != 2+test.wantChats {
+				t.Fatalf("snapshots=%d usages=%d", store.snapshots, store.usages)
+			}
+		})
+	}
 }
 
 func writerQueues(t *testing.T) (*boundedQueue[model.Message], *boundedQueue[model.Message], *boundedQueue[writeResult]) {

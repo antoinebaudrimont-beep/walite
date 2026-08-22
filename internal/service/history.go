@@ -214,59 +214,56 @@ func (ingester *historyIngester) Run(ctx context.Context) error {
 			}
 			return err
 		}
-		chunk := chunkLease.Value()
-		for index := 0; index < chunk.Len(); index++ {
-			if err := ctx.Err(); err != nil {
-				_ = chunkLease.Release()
-				return err
-			}
-			message, ok := chunk.At(index)
-			if !ok {
-				_ = chunkLease.Release()
-				return errQueueInvariant
-			}
-			normalized, err := normalizeHistoryMessage(message)
-			if err != nil {
-				_ = chunkLease.Release()
-				return err
-			}
-			snapshot, err := ingester.store.RetentionSnapshot(ctx, normalized.ChatID())
-			if err != nil {
-				_ = chunkLease.Release()
-				return err
-			}
-			usage, err := ingester.store.Usage(ctx)
-			if err != nil {
-				_ = chunkLease.Release()
-				return err
-			}
-			state := model.RetentionState{Now: ingester.clock.Now(), NewerBodies: countNewerBodies(snapshot, normalized), Usage: usage, Origin: model.WriteHistory}
-			decision, err := ingester.policy.Decide(normalized, state)
-			if err != nil {
-				_ = chunkLease.Release()
-				return err
-			}
-			var downstream model.Message
-			switch decision.Action() {
-			case model.KeepBody:
-				downstream = normalized
-			case model.KeepMetadata:
-				downstream = normalized.WithoutBody()
-			case model.Discard:
-				continue
-			default:
-				_ = chunkLease.Release()
-				return errQueueInvariant
-			}
-			if err := ingester.historyWriteQ.Put(ctx, downstream); err != nil {
-				_ = chunkLease.Release()
-				return err
-			}
-		}
-		if err := chunkLease.Release(); err != nil {
+		if err := ingester.processHistoryChunk(ctx, chunkLease); err != nil {
 			return err
 		}
 	}
+}
+
+func (ingester *historyIngester) processHistoryChunk(ctx context.Context, chunkLease lease[model.HistoryChunk]) error {
+	defer chunkLease.Release()
+	chunk := chunkLease.Value()
+	for index := 0; index < chunk.Len(); index++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		message, ok := chunk.At(index)
+		if !ok {
+			return errQueueInvariant
+		}
+		normalized, err := normalizeHistoryMessage(message)
+		if err != nil {
+			return err
+		}
+		snapshot, err := ingester.store.RetentionSnapshot(ctx, normalized.ChatID())
+		if err != nil {
+			return err
+		}
+		usage, err := ingester.store.Usage(ctx)
+		if err != nil {
+			return err
+		}
+		state := model.RetentionState{Now: ingester.clock.Now(), NewerBodies: countNewerBodies(snapshot, normalized), Usage: usage, Origin: model.WriteHistory}
+		decision, err := ingester.policy.Decide(normalized, state)
+		if err != nil {
+			return err
+		}
+		var downstream model.Message
+		switch decision.Action() {
+		case model.KeepBody:
+			downstream = normalized
+		case model.KeepMetadata:
+			downstream = normalized.WithoutBody()
+		case model.Discard:
+			continue
+		default:
+			return errQueueInvariant
+		}
+		if err := ingester.historyWriteQ.Put(ctx, downstream); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func normalizeHistoryMessage(message model.Message) (model.Message, error) {

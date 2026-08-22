@@ -337,6 +337,12 @@ type historyStore struct {
 	usageCalls    int
 }
 
+type panicHistoryStore struct{ historyStore }
+
+func (*panicHistoryStore) RetentionSnapshot(context.Context, model.ChatID) (model.RetentionSnapshot, error) {
+	panic("private history panic")
+}
+
 func (*historyStore) EnsureChat(context.Context, model.Chat) error  { return nil }
 func (*historyStore) Write(context.Context, model.WriteBatch) error { return nil }
 func (*historyStore) Page(context.Context, model.ChatID, model.Cursor, int) ([]model.Message, model.Cursor, error) {
@@ -352,6 +358,33 @@ func (*historyStore) ApplyPrune(context.Context, model.PrunePlan) (model.PruneRe
 func (store *historyStore) Usage(context.Context) (model.CacheUsage, error) {
 	store.usageCalls++
 	return store.usage, store.usageErr
+}
+
+func TestHistoryIngesterReleasesCurrentAndBufferedChunksOnPanic(t *testing.T) {
+	historyQ := newChunkQueue(t, 2)
+	historyWrites := newMessageQueue(t, 2)
+	putRawChunk(t, historyQ, mustChunk(t, historyMessage(t, "panic-current", 0)))
+	putRawChunk(t, historyQ, mustChunk(t, historyMessage(t, "panic-tail", 1)))
+	historyQ.Close()
+	ingester, err := newHistoryIngester(&panicHistoryStore{}, &historyPolicy{}, newManualClock(writerTestTime), historyQ, historyWrites)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var panicValue any
+	func() {
+		defer func() { panicValue = recover() }()
+		_ = ingester.Run(context.Background())
+	}()
+	if panicValue == nil {
+		t.Fatal("store panic was not propagated")
+	}
+	stats := historyQ.Stats()
+	if stats.Entries != 0 || stats.UsedBytes != 0 {
+		t.Fatalf("historyQ=%+v", stats)
+	}
+	if !historyWrites.Stats().Stopped || historyWrites.Stats().UsedBytes != 0 {
+		t.Fatalf("historyWriteQ=%+v", historyWrites.Stats())
+	}
 }
 
 type historyPolicy struct {

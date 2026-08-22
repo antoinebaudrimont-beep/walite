@@ -242,13 +242,26 @@ func TestBoundedQueueTakeFIFOLeaseCloseAndDrain(t *testing.T) {
 
 func TestBoundedQueueTakeWaitCancellationAndWakes(t *testing.T) {
 	queue := mustQueue(t, 1, mustBudget(t, 2))
-	result := make(chan int, 1)
-	go func() { lease, _ := queue.Take(context.Background()); result <- lease.Value(); _ = lease.Release() }()
+	type takeResult struct {
+		value int
+		err   error
+	}
+	result := make(chan takeResult, 1)
+	go func() {
+		lease, err := queue.Take(context.Background())
+		if err != nil {
+			result <- takeResult{err: err}
+			return
+		}
+		value := lease.Value()
+		releaseErr := lease.Release()
+		result <- takeResult{value: value, err: releaseErr}
+	}()
 	if err := queue.TryPut(1); err != nil {
 		t.Fatal(err)
 	}
-	if value := <-result; value != 1 {
-		t.Fatalf("value=%d", value)
+	if observed := <-result; observed.value != 1 || observed.err != nil {
+		t.Fatalf("result=%+v", observed)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
