@@ -90,7 +90,7 @@ func TestDrawNarrowFallback(t *testing.T) {
 	draw(screen, defaultDemoView())
 	screen.Show()
 	text := screenText(screen)
-	for _, want := range []string{"walite", "Demo Chat", "Synthetic message one", "Synthetic reply", "Esc quit"} {
+	for _, want := range []string{"walite", "Demo Chat", "Demo synthetic message 18", "Esc quit"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("narrow frame missing %q:\n%s", want, text)
 		}
@@ -121,8 +121,95 @@ func TestRunRedrawsNarrowFallbackAfterResize(t *testing.T) {
 	}
 	<-screen.shown
 	text := screenText(screen)
-	if !strings.Contains(text, "Synthetic message one") || strings.Contains(text, "┬") {
+	if !strings.Contains(text, "Demo synthetic message 18") || strings.Contains(text, "┬") {
 		t.Fatalf("resized frame is not narrow fallback:\n%s", text)
+	}
+
+	screen.InjectKey(tcell.KeyEscape, 0, tcell.ModNone)
+	if err := <-result; err != nil {
+		t.Fatalf("Run=%v", err)
+	}
+}
+
+func TestRunChangesSelectionAndConversation(t *testing.T) {
+	screen := newObservedScreen(100, 30)
+	result := make(chan error, 1)
+	go func() { result <- Run(context.Background(), screen) }()
+
+	<-screen.shown
+	screen.InjectKey(tcell.KeyDown, 0, tcell.ModNone)
+	<-screen.shown
+	text := screenText(screen)
+	for _, want := range []string{"Project Room", "Project synthetic message 15"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("selection-down frame missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "Synthetic message one") {
+		t.Fatalf("old conversation remained after selection:\n%s", text)
+	}
+
+	screen.InjectKey(tcell.KeyUp, 0, tcell.ModNone)
+	<-screen.shown
+	text = screenText(screen)
+	if !strings.Contains(text, "Synthetic message one") {
+		t.Fatalf("selection-up did not restore Demo Chat:\n%s", text)
+	}
+
+	screen.InjectKey(tcell.KeyEscape, 0, tcell.ModNone)
+	if err := <-result; err != nil {
+		t.Fatalf("Run=%v", err)
+	}
+}
+
+func TestRunPreservesSelectionAcrossWideNarrowWideResize(t *testing.T) {
+	screen := newObservedScreen(100, 20)
+	result := make(chan error, 1)
+	go func() { result <- Run(context.Background(), screen) }()
+
+	<-screen.shown
+	screen.InjectKey(tcell.KeyRune, 'j', tcell.ModNone)
+	<-screen.shown
+	resizeObservedScreen(t, screen, 60, 20)
+	text := screenText(screen)
+	if !strings.Contains(text, "Project Room") || !strings.Contains(text, "Project synthetic") {
+		t.Fatalf("narrow resize lost selection:\n%s", text)
+	}
+	resizeObservedScreen(t, screen, 100, 20)
+	text = screenText(screen)
+	if !strings.Contains(text, "Project Room") || !strings.Contains(text, "Project synthetic") {
+		t.Fatalf("wide resize lost selection:\n%s", text)
+	}
+
+	screen.InjectKey(tcell.KeyEscape, 0, tcell.ModNone)
+	if err := <-result; err != nil {
+		t.Fatalf("Run=%v", err)
+	}
+}
+
+func TestRunNarrowSelectionAndScrolling(t *testing.T) {
+	screen := newObservedScreen(60, 10)
+	result := make(chan error, 1)
+	go func() { result <- Run(context.Background(), screen) }()
+
+	<-screen.shown
+	screen.InjectKey(tcell.KeyRune, 'j', tcell.ModNone)
+	<-screen.shown
+	newest := screenText(screen)
+	if !strings.Contains(newest, "Project Room") || !strings.Contains(newest, "Project synthetic message 15") {
+		t.Fatalf("narrow selection failed:\n%s", newest)
+	}
+	screen.InjectKey(tcell.KeyPgUp, 0, tcell.ModNone)
+	<-screen.shown
+	older := screenText(screen)
+	if older == newest || strings.Contains(older, "Project synthetic message 15") {
+		t.Fatalf("narrow PageUp did not reveal older messages:\n%s", older)
+	}
+	screen.InjectKey(tcell.KeyRune, 'k', tcell.ModNone)
+	<-screen.shown
+	reset := screenText(screen)
+	if !strings.Contains(reset, "Demo Chat") || !strings.Contains(reset, "Demo synthetic message 18") {
+		t.Fatalf("chat change did not reset to newest Demo messages:\n%s", reset)
 	}
 
 	screen.InjectKey(tcell.KeyEscape, 0, tcell.ModNone)
@@ -194,6 +281,15 @@ func initializedSimulationScreen(t *testing.T, width, height int) tcell.Simulati
 	screen.SetSize(width, height)
 	t.Cleanup(screen.Fini)
 	return screen
+}
+
+func resizeObservedScreen(t *testing.T, screen *observedScreen, width, height int) {
+	t.Helper()
+	screen.SetSize(width, height)
+	if err := screen.PostEvent(tcell.NewEventResize(width, height)); err != nil {
+		t.Fatal(err)
+	}
+	<-screen.shown
 }
 
 func screenText(screen tcell.SimulationScreen) string {

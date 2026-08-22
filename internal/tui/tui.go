@@ -49,11 +49,19 @@ func Run(ctx context.Context, screen tcell.Screen) error {
 			}
 			switch event := event.(type) {
 			case *tcell.EventKey:
-				if event.Key() == tcell.KeyEscape || event.Key() == tcell.KeyCtrlC {
+				width, height := screen.Size()
+				changed, exit := handleKey(&model, event, width, height)
+				if exit {
 					return nil
+				}
+				if changed {
+					draw(screen, model)
+					screen.Show()
 				}
 			case *tcell.EventResize:
 				screen.Sync()
+				width, height := screen.Size()
+				clampView(&model, width, height)
 				draw(screen, model)
 				screen.Show()
 			}
