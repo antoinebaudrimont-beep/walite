@@ -8,7 +8,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/antoinebaudrimont-beep/walite/internal/config"
+	"github.com/antoinebaudrimont-beep/walite/internal/tui"
+	"github.com/gdamore/tcell/v2"
 )
 
 func main() { os.Exit(runMain()) }
@@ -16,13 +17,13 @@ func main() { os.Exit(runMain()) }
 func runMain() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	scenario, err := newDemoScenario(config.DefaultValues())
+	screen, err := tcell.NewScreen()
 	if err == nil {
-		err = runDemo(ctx, os.Stdout, scenario)
+		err = tui.Run(ctx, screen)
 	}
 	if err == nil || errors.Is(err, context.Canceled) {
 		return 0
 	}
-	_, _ = fmt.Fprintln(os.Stderr, "walite demo failed")
+	_, _ = fmt.Fprintln(os.Stderr, "walite failed")
 	return 1
 }

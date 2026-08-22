@@ -22,9 +22,9 @@ func Run(ctx context.Context, screen tcell.Screen) error {
 	}
 	defer screen.Fini()
 
-	screen.Clear()
 	screen.HideCursor()
-	screen.PutStr(0, 0, title)
+	model := defaultDemoView()
+	draw(screen, model)
 	screen.Show()
 
 	events := make(chan tcell.Event, 1)
@@ -47,9 +47,15 @@ func Run(ctx context.Context, screen tcell.Screen) error {
 			if !ok {
 				return nil
 			}
-			key, ok := event.(*tcell.EventKey)
-			if ok && (key.Key() == tcell.KeyEscape || key.Key() == tcell.KeyCtrlC) {
-				return nil
+			switch event := event.(type) {
+			case *tcell.EventKey:
+				if event.Key() == tcell.KeyEscape || event.Key() == tcell.KeyCtrlC {
+					return nil
+				}
+			case *tcell.EventResize:
+				screen.Sync()
+				draw(screen, model)
+				screen.Show()
 			}
 		}
 	}
