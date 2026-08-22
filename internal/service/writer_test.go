@@ -392,6 +392,57 @@ func TestWriterRechecksLiveAfterHistoryBatch(t *testing.T) {
 	}
 }
 
+func TestWriterRescansBufferedHistoryAfterWakeConsumed(t *testing.T) {
+	entered := make(chan struct{}, 1)
+	store := &writerStore{entered: entered}
+	live, history, results := writerQueues(t)
+	putMessage(t, history, "history", 0)
+	<-history.notEmptyChanges()
+	live.Close()
+	writer := mustWriter(t, store, live, history, results, newWriterClock(), 1)
+	done := make(chan error, 1)
+	go func() { done <- writer.Run(context.Background()) }()
+	guard, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	select {
+	case <-entered:
+	case <-guard.Done():
+		t.Fatal("writer did not rescan buffered history")
+	}
+	history.Close()
+	runResultDrainUntilDone(t, done, results)
+	assertWriterBudgetsZero(t, live, history)
+}
+
+func TestWriterRescansHistoryAfterBoundedBatch(t *testing.T) {
+	entered := make(chan struct{}, 2)
+	store := &writerStore{entered: entered}
+	live, history, results := writerQueues(t)
+	for index := 0; index < 26; index++ {
+		putMessage(t, history, "history", index)
+	}
+	live.Close()
+	writer := mustWriter(t, store, live, history, results, newWriterClock(), 25)
+	done := make(chan error, 1)
+	go func() { done <- writer.Run(context.Background()) }()
+	guard, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	for observed := 0; observed < 2; observed++ {
+		select {
+		case <-entered:
+		case <-guard.Done():
+			t.Fatalf("observed %d history store calls", observed)
+		}
+	}
+	history.Close()
+	runResultDrainUntilDone(t, done, results)
+	calls := store.observations()
+	if len(calls) != 2 || calls[0].count != 25 || calls[1].count != 1 {
+		t.Fatalf("calls=%+v", calls)
+	}
+	assertWriterBudgetsZero(t, live, history)
+}
+
 func TestWriterCancellationDrainsPendingAndBuffered(t *testing.T) {
 	store := &writerStore{}
 	live, history, results := writerQueues(t)

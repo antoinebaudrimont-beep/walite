@@ -142,6 +142,16 @@ func (writer *liveFirstWriter) Run(ctx context.Context) error {
 			}
 			continue
 		}
+		if !hasPendingHistory && historyOpen && historyCtx.Err() == nil {
+			if first, ok := writer.historyQ.TryTake(); ok {
+				pendingHistory = first
+				hasPendingHistory = true
+				if writer.afterHistorySelected != nil {
+					writer.afterHistorySelected()
+				}
+				continue
+			}
+		}
 
 		if liveOpen && queueEnded(writer.liveQ) {
 			liveOpen = false
