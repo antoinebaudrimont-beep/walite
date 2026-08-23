@@ -41,7 +41,8 @@ func TestHandleKeySelectionBoundsDoNotRedraw(t *testing.T) {
 
 func TestDrawUsesAdjacentRowsAndWrapsWithoutBlankLine(t *testing.T) {
 	screen := initializedSimulationScreen(t, 100, 30)
-	draw(screen, defaultDemoView())
+	model := defaultDemoView()
+	draw(screen, &model)
 	screen.Show()
 	text := screenText(screen)
 	first := rowContaining(text, "Synthetic message one")
@@ -59,7 +60,7 @@ func TestDrawUsesAdjacentRowsAndWrapsWithoutBlankLine(t *testing.T) {
 func TestHandleKeyScrollsAndClamps(t *testing.T) {
 	model := defaultDemoView()
 	width, height := 100, 12
-	newestStart, newestEnd := visibleMessageRange(model, width, height)
+	newestStart, newestEnd := visibleMessageRange(&model, width, height)
 	if newestEnd != model.chats[0].messageCount || newestStart == 0 {
 		t.Fatalf("newest range=%d:%d", newestStart, newestEnd)
 	}
@@ -74,7 +75,7 @@ func TestHandleKeyScrollsAndClamps(t *testing.T) {
 			break
 		}
 	}
-	maximum := maximumScrollOffset(model, width, height)
+	maximum := maximumScrollOffset(&model, width, height)
 	if model.scrollOffset != maximum || maximum <= 0 {
 		t.Fatalf("oldest offset=%d maximum=%d", model.scrollOffset, maximum)
 	}
@@ -120,12 +121,12 @@ func TestClampViewPreservesSelectionAndBoundsScroll(t *testing.T) {
 	if model.selectedChat != 2 {
 		t.Fatalf("selected=%d", model.selectedChat)
 	}
-	maximum := maximumScrollOffset(model, 60, 10)
+	maximum := maximumScrollOffset(&model, 60, 10)
 	if model.scrollOffset != maximum {
 		t.Fatalf("offset=%d maximum=%d", model.scrollOffset, maximum)
 	}
 	clampView(&model, 100, 30)
-	if model.selectedChat != 2 || model.scrollOffset < 0 || model.scrollOffset > maximumScrollOffset(model, 100, 30) {
+	if model.selectedChat != 2 || model.scrollOffset < 0 || model.scrollOffset > maximumScrollOffset(&model, 100, 30) {
 		t.Fatalf("selected=%d offset=%d", model.selectedChat, model.scrollOffset)
 	}
 }

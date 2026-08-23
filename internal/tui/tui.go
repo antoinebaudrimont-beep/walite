@@ -24,7 +24,7 @@ func Run(ctx context.Context, screen tcell.Screen) error {
 
 	screen.HideCursor()
 	model := defaultDemoView()
-	draw(screen, model)
+	draw(screen, &model)
 	screen.Show()
 
 	events := make(chan tcell.Event, 1)
@@ -55,14 +55,14 @@ func Run(ctx context.Context, screen tcell.Screen) error {
 					return nil
 				}
 				if changed {
-					draw(screen, model)
+					draw(screen, &model)
 					screen.Show()
 				}
 			case *tcell.EventResize:
 				screen.Sync()
 				width, height := screen.Size()
 				clampView(&model, width, height)
-				draw(screen, model)
+				draw(screen, &model)
 				screen.Show()
 			}
 		}

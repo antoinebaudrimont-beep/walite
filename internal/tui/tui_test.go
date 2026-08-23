@@ -87,7 +87,8 @@ func TestRunShowsFirstFrameAndFinalizesOnCancellation(t *testing.T) {
 
 func TestDrawNarrowFallback(t *testing.T) {
 	screen := initializedSimulationScreen(t, 60, 20)
-	draw(screen, defaultDemoView())
+	model := defaultDemoView()
+	draw(screen, &model)
 	screen.Show()
 	text := screenText(screen)
 	for _, want := range []string{"walite", "Demo Chat", "Demo synthetic message 18", "Esc quit"} {
@@ -99,7 +100,8 @@ func TestDrawNarrowFallback(t *testing.T) {
 
 func TestDrawShortFallback(t *testing.T) {
 	screen := initializedSimulationScreen(t, 40, 6)
-	draw(screen, defaultDemoView())
+	model := defaultDemoView()
+	draw(screen, &model)
 	screen.Show()
 	text := screenText(screen)
 	for _, want := range []string{"walite", "terminal too small", "Esc quit"} {
