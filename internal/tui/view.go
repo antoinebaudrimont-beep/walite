@@ -2,9 +2,10 @@ package tui
 
 import (
 	"strconv"
-	"unicode/utf8"
+	"strings"
 
 	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/uniseg"
 )
 
 const (
@@ -16,8 +17,11 @@ const (
 )
 
 type messageView struct {
-	time string
-	text string
+	id        messageID
+	time      string
+	text      string
+	replyToID messageID
+	hasReply  bool
 }
 
 type chatView struct {
@@ -25,15 +29,22 @@ type chatView struct {
 	messages     [maxMessages]messageView
 	messageCount int
 	unreadCount  uint16
+	activity     uint64
 }
 
 type viewModel struct {
-	chats        [maxChats]chatView
-	chatCount    int
-	selectedChat int
-	scrollOffset int
-	mode         inputMode
-	composer     composerState
+	chats           [maxChats]chatView
+	chatCount       int
+	selectedChat    int
+	scrollOffset    int
+	mode            inputMode
+	composer        composerState
+	emojiPicker     emojiPickerState
+	replySelect     replySelectionState
+	replyTarget     replyTarget
+	nextMessageID   messageID
+	nextActivity    uint64
+	preferencesPath string
 }
 
 func defaultDemoView() viewModel {
@@ -44,7 +55,11 @@ func defaultDemoView() viewModel {
 			newDemoChat("Family Demo", "Family-demo", 12),
 			newDemoChat("Test Contact", "Test-contact", 10),
 		},
-		chatCount: maxChats,
+		chatCount:    maxChats,
+		nextActivity: maxChats + 1,
+	}
+	for index := 0; index < model.chatCount; index++ {
+		model.chats[index].activity = uint64(model.chatCount - index)
 	}
 	model.chats[0].messages[0] = messageView{time: "09:42", text: "Synthetic message one"}
 	model.chats[0].messages[1] = messageView{time: "09:45", text: "Synthetic reply"}
@@ -53,6 +68,7 @@ func defaultDemoView() viewModel {
 	model.chats[1].unreadCount = 3
 	model.chats[2].unreadCount = 1
 	model.chats[3].unreadCount = 12
+	model.assignMessageIDs()
 	return model
 }
 
@@ -83,13 +99,14 @@ func draw(screen tcell.Screen, model *viewModel) {
 	}
 	if height < shortHeight {
 		drawCompact(screen, model, width, height)
-		return
-	}
-	if width < narrowWidth {
+	} else if width < narrowWidth {
 		drawNarrow(screen, model, width, height)
-		return
+	} else {
+		drawTwoPane(screen, model, width, height)
 	}
-	drawTwoPane(screen, model, width, height)
+	if model.emojiPicker.open {
+		drawEmojiPicker(screen, model, width, height)
+	}
 }
 
 func drawCompact(screen tcell.Screen, model *viewModel, width, height int) {
@@ -99,7 +116,9 @@ func drawCompact(screen tcell.Screen, model *viewModel, width, height int) {
 	}
 	if height > 4 {
 		escapeAction := "Esc quit"
-		if model.mode == modeCompose {
+		if model.emojiPicker.open {
+			escapeAction = "Esc close"
+		} else if model.mode == modeCompose || model.replySelect.valid {
 			escapeAction = "Esc cancel"
 		}
 		putText(screen, 0, height-2, width, escapeAction, tcell.StyleDefault.Dim(true))
@@ -108,23 +127,36 @@ func drawCompact(screen tcell.Screen, model *viewModel, width, height int) {
 
 func drawNarrow(screen tcell.Screen, model *viewModel, width, height int) {
 	chat := &model.chats[model.selectedChat]
-	composeSeparator := height - 3
+	replyRows := 0
+	if model.replyTarget.valid {
+		replyRows = 1
+	}
+	composeSeparator := height - 3 - replyRows
 	putText(screen, 0, 0, width, title, tcell.StyleDefault.Bold(true))
 	putText(screen, 0, 2, width, chat.title, tcell.StyleDefault.Bold(true))
 	start, end := visibleMessageRange(model, width, height)
-	drawMessages(screen, chat, start, end, 0, 4, width, composeSeparator)
+	drawMessages(screen, model, chat, start, end, 0, 4, width, composeSeparator)
 	drawHorizontal(screen, 0, width-1, composeSeparator, '─')
+	if replyRows > 0 {
+		drawReplyPreview(screen, model, chat, 0, composeSeparator+1, width, replyRows)
+	}
 	drawComposer(screen, model, 0, height-2, width)
-	footer := "j/k select  PgUp/PgDn scroll  Enter compose  Esc quit"
-	if model.mode == modeCompose {
-		footer = "Enter send  Esc cancel  ←/→ move"
+	footer := navigationFooter(model, true)
+	if model.replySelect.valid {
+		footer = navigationFooter(model, true)
+	} else if model.mode == modeCompose {
+		footer = "Enter send  Ctrl-R reply  Ctrl-E emoji  Esc cancel"
 	}
 	putText(screen, 0, height-1, width, footer, tcell.StyleDefault.Dim(true))
 }
 
 func drawTwoPane(screen tcell.Screen, model *viewModel, width, height int) {
 	footerTop := height - 3
-	composeSeparator := footerTop - 2
+	replyRows := 0
+	if model.replyTarget.valid {
+		replyRows = 2
+	}
+	composeSeparator := footerTop - 2 - replyRows
 	composeRow := footerTop - 1
 	separator := paneSeparator(width)
 
@@ -169,11 +201,16 @@ func drawTwoPane(screen tcell.Screen, model *viewModel, width, height int) {
 	}
 
 	start, end := visibleMessageRange(model, width, height)
-	drawMessages(screen, chat, start, end, separator+2, 3, width-2, composeSeparator)
+	drawMessages(screen, model, chat, start, end, separator+2, 3, width-2, composeSeparator)
+	if replyRows > 0 {
+		drawReplyPreview(screen, model, chat, separator+2, composeSeparator+1, width-2, replyRows)
+	}
 	drawComposer(screen, model, separator+2, composeRow, width-2)
-	footer := "↑/↓ j/k select  PgUp/PgDn scroll  Enter compose  Esc quit"
-	if model.mode == modeCompose {
-		footer = "Enter send demo  Esc cancel  ←/→ move  Backspace delete"
+	footer := navigationFooter(model, false)
+	if model.replySelect.valid {
+		footer = navigationFooter(model, false)
+	} else if model.mode == modeCompose {
+		footer = "Enter send  Ctrl-R reply  Ctrl-E emoji  Esc cancel"
 	}
 	putText(screen, 2, height-2, width-2, footer, tcell.StyleDefault.Dim(true))
 }
@@ -190,27 +227,12 @@ func drawComposer(screen tcell.Screen, model *viewModel, x, y, limit int) {
 	}
 	model.composer.normalize()
 	available := limit - inputX
-	start, end := visibleDraftSpan(&model.composer, available)
-	visible := string(model.composer.data[start:end])
-	cursorX := inputX
-	draftCursorX := -1
-	position := start
-	for visible != "" && cursorX < limit {
-		if position == model.composer.cursor {
-			draftCursorX = cursorX
-		}
-		rest, width := screen.Put(cursorX, y, visible, tcell.StyleDefault)
-		if width <= 0 || rest == visible {
-			break
-		}
-		consumed := len(visible) - len(rest)
-		position += consumed
-		cursorX += width
-		visible = rest
+	start, end, cursorOffset := visibleDraftSpan(&model.composer, available)
+	putText(screen, inputX, y, limit, string(model.composer.data[start:end]), tcell.StyleDefault)
+	if model.replySelect.valid {
+		return
 	}
-	if position == model.composer.cursor {
-		draftCursorX = cursorX
-	}
+	draftCursorX := inputX + cursorOffset
 	if draftCursorX < inputX {
 		draftCursorX = inputX
 	}
@@ -220,71 +242,110 @@ func drawComposer(screen tcell.Screen, model *viewModel, x, y, limit int) {
 	screen.ShowCursor(draftCursorX, y)
 }
 
-func visibleDraftSpan(composer *composerState, width int) (int, int) {
+func navigationFooter(model *viewModel, narrow bool) string {
+	if model.replySelect.valid {
+		escape := "Esc clear"
+		if model.replySelect.fromCompose {
+			escape = "Esc cancel"
+		}
+		if narrow {
+			return "↑/↓ messages  Enter reply  " + escape
+		}
+		return "↑/↓ messages  Enter reply  " + escape
+	}
+	if narrow {
+		return "↑/↓ messages  Enter compose  Esc quit"
+	}
+	return "↑/↓ messages  j/k chats  Enter compose  Esc quit"
+}
+
+func visibleDraftSpan(composer *composerState, width int) (start, end, cursorCells int) {
 	composer.normalize()
 	if width <= 0 {
-		return composer.cursor, composer.cursor
+		return composer.cursor, composer.cursor, 0
 	}
-	after := runeCountForward(composer.data[composer.cursor:composer.length], width/2)
-	beforeLimit := width - 1 - after
-	if beforeLimit < 0 {
-		beforeLimit = 0
+	data := composer.data[:composer.length]
+	position := 0
+	state := -1
+	for position < composer.cursor {
+		cluster, _, clusterWidth, nextState := uniseg.FirstGraphemeCluster(data[position:], state)
+		position += len(cluster)
+		cursorCells += clusterWidth
+		state = nextState
 	}
-	start := moveBytesLeft(composer.data[:composer.cursor], composer.cursor, beforeLimit)
-	used := utf8.RuneCount(composer.data[start:composer.cursor])
-	end := moveBytesRight(composer.data[:composer.length], composer.cursor, width-used)
-	return start, end
+	start = 0
+	state = -1
+	for cursorCells > width-1 && start < composer.cursor {
+		cluster, _, clusterWidth, nextState := uniseg.FirstGraphemeCluster(data[start:], state)
+		start += len(cluster)
+		cursorCells -= clusterWidth
+		state = nextState
+	}
+	end = start
+	used := 0
+	for end < len(data) {
+		cluster, _, clusterWidth, nextState := uniseg.FirstGraphemeCluster(data[end:], state)
+		if used+clusterWidth > width {
+			break
+		}
+		end += len(cluster)
+		used += clusterWidth
+		state = nextState
+	}
+	return start, end, cursorCells
 }
 
-func runeCountForward(data []byte, limit int) int {
-	count := 0
-	for len(data) > 0 && count < limit {
-		_, size := utf8.DecodeRune(data)
-		data = data[size:]
-		count++
+func drawReplyPreview(screen tcell.Screen, model *viewModel, chat *chatView, x, y, limit, rows int) {
+	reference := "original message unavailable"
+	if original, ok := findMessageByID(chat, model.replyTarget.id); ok {
+		reference = original.time + "  " + original.text
 	}
-	return count
+	if rows == 1 {
+		putText(screen, x, y, limit, truncateDisplayWidth("Replying to: "+reference, limit-x), tcell.StyleDefault.Bold(true))
+		return
+	}
+	putText(screen, x, y, limit, "Replying to:", tcell.StyleDefault.Bold(true))
+	putText(screen, x, y+1, limit, truncateDisplayWidth(reference, limit-x), tcell.StyleDefault)
 }
 
-func moveBytesLeft(data []byte, cursor, count int) int {
-	for cursor > 0 && count > 0 {
-		_, size := utf8.DecodeLastRune(data[:cursor])
-		cursor -= size
-		count--
-	}
-	return cursor
-}
-
-func moveBytesRight(data []byte, cursor, count int) int {
-	for cursor < len(data) && count > 0 {
-		_, size := utf8.DecodeRune(data[cursor:])
-		cursor += size
-		count--
-	}
-	return cursor
-}
-
-func drawMessages(screen tcell.Screen, chat *chatView, start, end, x, y, limit, bottom int) {
+func drawMessages(screen tcell.Screen, model *viewModel, chat *chatView, start, end, x, y, limit, bottom int) {
 	for index := start; index < end && y < bottom; index++ {
-		y += drawMessage(screen, chat.messages[index], x, y, limit, bottom)
+		selected := model.replySelect.valid && model.replySelect.index == index
+		y += drawMessage(screen, chat, chat.messages[index], x, y, limit, bottom, selected)
 	}
 }
 
-func drawMessage(screen tcell.Screen, message messageView, x, y, limit, bottom int) int {
+func drawMessage(screen tcell.Screen, chat *chatView, message messageView, x, y, limit, bottom int, selected bool) int {
 	if y >= bottom || x >= limit {
 		return 0
 	}
+	style := tcell.StyleDefault.Reverse(selected)
 	width := limit - x
 	bodyX := x
 	if width > prefixWidth {
-		putText(screen, x, y, x+5, message.time, tcell.StyleDefault)
 		bodyX += prefixWidth
 	}
-	remaining := message.text
 	rows := 0
+	if message.hasReply && y+rows < bottom {
+		fillMessageRow(screen, x, y+rows, limit, style)
+		if width > prefixWidth {
+			putText(screen, x, y+rows, x+5, message.time, style)
+		}
+		reference := "↪ original message unavailable"
+		if original, ok := findMessageByID(chat, message.replyToID); ok {
+			reference = "↪ " + original.time + " " + original.text
+		}
+		putText(screen, bodyX, y+rows, limit, truncateDisplayWidth(reference, limit-bodyX), style)
+		rows++
+	}
+	remaining := message.text
 	for remaining != "" && y+rows < bottom {
+		fillMessageRow(screen, x, y+rows, limit, style)
+		if rows == 0 && width > prefixWidth {
+			putText(screen, x, y+rows, x+5, message.time, style)
+		}
 		line, rest := nextWrappedLine(remaining, limit-bodyX)
-		putText(screen, bodyX, y+rows, limit, line, tcell.StyleDefault)
+		putText(screen, bodyX, y+rows, limit, line, style)
 		remaining = rest
 		rows++
 	}
@@ -294,12 +355,18 @@ func drawMessage(screen tcell.Screen, message messageView, x, y, limit, bottom i
 	return rows
 }
 
+func fillMessageRow(screen tcell.Screen, x, y, limit int, style tcell.Style) {
+	for column := x; column < limit; column++ {
+		screen.SetContent(column, y, ' ', nil, style)
+	}
+}
+
 func visibleMessageRange(model *viewModel, width, height int) (int, int) {
 	if model.chatCount == 0 || model.selectedChat < 0 || model.selectedChat >= model.chatCount {
 		return 0, 0
 	}
 	chat := &model.chats[model.selectedChat]
-	messageWidth, rows := conversationViewport(width, height)
+	messageWidth, rows := conversationViewport(model, width, height)
 	if chat.messageCount == 0 || messageWidth <= 0 || rows <= 0 {
 		return 0, 0
 	}
@@ -333,7 +400,7 @@ func maximumScrollOffset(model *viewModel, width, height int) int {
 		return 0
 	}
 	chat := &model.chats[model.selectedChat]
-	messageWidth, rows := conversationViewport(width, height)
+	messageWidth, rows := conversationViewport(model, width, height)
 	if chat.messageCount == 0 || messageWidth <= 0 || rows <= 0 {
 		return 0
 	}
@@ -365,12 +432,18 @@ func wrappedMessageLines(message messageView, width int) int {
 		bodyWidth = 1
 	}
 	if message.text == "" {
+		if message.hasReply {
+			return 1
+		}
 		return 1
 	}
 	lines := 0
 	remaining := message.text
 	for remaining != "" {
 		_, remaining = nextWrappedLine(remaining, bodyWidth)
+		lines++
+	}
+	if message.hasReply {
 		lines++
 	}
 	return lines
@@ -380,41 +453,54 @@ func nextWrappedLine(value string, width int) (string, string) {
 	if value == "" || width <= 0 {
 		return "", ""
 	}
-	if utf8.RuneCountInString(value) <= width {
+	if uniseg.StringWidth(value) <= width {
 		return value, ""
 	}
-	cut := len(value)
+	cut := 0
 	lastSpace := -1
-	runes := 0
-	for index, character := range value {
-		if runes == width {
-			cut = index
+	used := 0
+	graphemes := uniseg.NewGraphemes(value)
+	for graphemes.Next() {
+		from, to := graphemes.Positions()
+		if used+graphemes.Width() > width {
+			if cut == 0 {
+				cut = to
+			}
 			break
 		}
-		if character == ' ' {
-			lastSpace = index
+		used += graphemes.Width()
+		cut = to
+		if graphemes.Str() == " " {
+			lastSpace = from
 		}
-		runes++
+	}
+	if cut >= len(value) {
+		return value, ""
 	}
 	if lastSpace > 0 && lastSpace < cut {
 		cut = lastSpace
 	}
-	rest := value[cut:]
-	for len(rest) > 0 && rest[0] == ' ' {
-		rest = rest[1:]
-	}
+	rest := strings.TrimLeft(value[cut:], " ")
 	return value[:cut], rest
 }
 
-func conversationViewport(width, height int) (int, int) {
+func conversationViewport(model *viewModel, width, height int) (int, int) {
 	if height < shortHeight || width <= 0 {
 		return 0, 0
 	}
 	if width < narrowWidth {
-		return width, height - 7
+		rows := height - 7
+		if model.replyTarget.valid {
+			rows--
+		}
+		return width, rows
 	}
 	separator := paneSeparator(width)
-	return width - separator - 4, height - 8
+	rows := height - 8
+	if model.replyTarget.valid {
+		rows -= 2
+	}
+	return width - separator - 4, rows
 }
 
 func paneSeparator(width int) int {

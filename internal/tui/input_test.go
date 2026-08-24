@@ -7,18 +7,18 @@ import (
 	"github.com/gdamore/tcell/v2"
 )
 
-func TestHandleKeyArrowAndJKSelection(t *testing.T) {
+func TestHandleKeyJKChangesChatsAndArrowsFocusMessages(t *testing.T) {
 	model := defaultDemoView()
-	assertKeyChange(t, &model, tcell.NewEventKey(tcell.KeyDown, 0, tcell.ModNone), true)
-	if model.selectedChat != 1 {
-		t.Fatalf("Down selected=%d", model.selectedChat)
-	}
 	assertKeyChange(t, &model, tcell.NewEventKey(tcell.KeyUp, 0, tcell.ModNone), true)
+	if model.selectedChat != 0 || !model.replySelect.valid {
+		t.Fatalf("Up selected chat=%d message=%+v", model.selectedChat, model.replySelect)
+	}
+	assertKeyChange(t, &model, tcell.NewEventKey(tcell.KeyDown, 0, tcell.ModNone), false)
 	if model.selectedChat != 0 {
-		t.Fatalf("Up selected=%d", model.selectedChat)
+		t.Fatalf("Down changed chat=%d", model.selectedChat)
 	}
 	assertKeyChange(t, &model, tcell.NewEventKey(tcell.KeyRune, 'j', tcell.ModNone), true)
-	if model.selectedChat != 1 {
+	if model.selectedChat != 1 || model.replySelect.valid {
 		t.Fatalf("j selected=%d", model.selectedChat)
 	}
 	assertKeyChange(t, &model, tcell.NewEventKey(tcell.KeyRune, 'k', tcell.ModNone), true)
@@ -29,10 +29,8 @@ func TestHandleKeyArrowAndJKSelection(t *testing.T) {
 
 func TestHandleKeySelectionBoundsDoNotRedraw(t *testing.T) {
 	model := defaultDemoView()
-	assertKeyChange(t, &model, tcell.NewEventKey(tcell.KeyUp, 0, tcell.ModNone), false)
 	assertKeyChange(t, &model, tcell.NewEventKey(tcell.KeyRune, 'k', tcell.ModNone), false)
 	model.selectedChat = model.chatCount - 1
-	assertKeyChange(t, &model, tcell.NewEventKey(tcell.KeyDown, 0, tcell.ModNone), false)
 	assertKeyChange(t, &model, tcell.NewEventKey(tcell.KeyRune, 'j', tcell.ModNone), false)
 	if model.selectedChat != model.chatCount-1 {
 		t.Fatalf("selected=%d", model.selectedChat)
@@ -107,7 +105,7 @@ func TestControlScrollKeysAndChatChangeReset(t *testing.T) {
 	}
 	assertKeyChangeAtSize(t, &model, tcell.NewEventKey(tcell.KeyCtrlD, 0, tcell.ModNone), width, height, true)
 	assertKeyChangeAtSize(t, &model, tcell.NewEventKey(tcell.KeyPgUp, 0, tcell.ModNone), width, height, true)
-	assertKeyChangeAtSize(t, &model, tcell.NewEventKey(tcell.KeyDown, 0, tcell.ModNone), width, height, true)
+	assertKeyChangeAtSize(t, &model, tcell.NewEventKey(tcell.KeyRune, 'j', tcell.ModNone), width, height, true)
 	if model.selectedChat != 1 || model.scrollOffset != 0 {
 		t.Fatalf("selected=%d offset=%d", model.selectedChat, model.scrollOffset)
 	}

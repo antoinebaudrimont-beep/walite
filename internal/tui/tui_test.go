@@ -139,7 +139,7 @@ func TestRunChangesSelectionAndConversation(t *testing.T) {
 	go func() { result <- Run(context.Background(), screen) }()
 
 	<-screen.shown
-	screen.InjectKey(tcell.KeyDown, 0, tcell.ModNone)
+	screen.InjectKey(tcell.KeyRune, 'j', tcell.ModNone)
 	<-screen.shown
 	text := screenText(screen)
 	for _, want := range []string{"Project Room", "Project synthetic message 15"} {
@@ -151,7 +151,7 @@ func TestRunChangesSelectionAndConversation(t *testing.T) {
 		t.Fatalf("old conversation remained after selection:\n%s", text)
 	}
 
-	screen.InjectKey(tcell.KeyUp, 0, tcell.ModNone)
+	screen.InjectKey(tcell.KeyRune, 'k', tcell.ModNone)
 	<-screen.shown
 	text = screenText(screen)
 	if !strings.Contains(text, "Synthetic message one") {

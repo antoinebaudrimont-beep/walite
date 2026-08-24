@@ -30,7 +30,7 @@ func TestDrawComposeDraftAndCursor(t *testing.T) {
 	draw(screen, &model)
 	screen.Show()
 	text := screenText(screen)
-	if !strings.Contains(text, "> hello") || !strings.Contains(text, "Demo synthetic message") || !strings.Contains(text, "Enter send demo") {
+	if !strings.Contains(text, "> hello") || !strings.Contains(text, "Demo synthetic message") || !strings.Contains(text, "Ctrl-E emoji") {
 		t.Fatalf("compose frame incomplete:\n%s", text)
 	}
 	x, y, visible := screen.GetCursor()
@@ -102,7 +102,7 @@ func TestRunPreservesDraftAcrossNarrowAndShortResize(t *testing.T) {
 		t.Fatalf("short compose action is wrong:\n%s", text)
 	}
 	resizeObservedScreen(t, screen, 100, 20)
-	if text := screenText(screen); !strings.Contains(text, "héλ🙂") || !strings.Contains(text, "Enter send demo") {
+	if text := screenText(screen); !strings.Contains(text, "héλ🙂") || !strings.Contains(text, "Ctrl-E emoji") {
 		t.Fatalf("wide resize lost compose state:\n%s", text)
 	}
 

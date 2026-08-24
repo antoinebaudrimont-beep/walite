@@ -42,7 +42,7 @@ func TestDrawSelectedUnreadChatKeepsBoldAndReverse(t *testing.T) {
 
 func TestSelectionClearsOnlyNewChatUnreadCount(t *testing.T) {
 	model := defaultDemoView()
-	changed, exit := handleKey(&model, tcell.NewEventKey(tcell.KeyDown, 0, tcell.ModNone), 100, 30)
+	changed, exit := handleKey(&model, tcell.NewEventKey(tcell.KeyRune, 'j', tcell.ModNone), 100, 30)
 	if !changed || exit || model.selectedChat != 1 || model.chats[1].unreadCount != 0 {
 		t.Fatalf("changed=%t exit=%t selected=%d unread=%d", changed, exit, model.selectedChat, model.chats[1].unreadCount)
 	}
@@ -51,7 +51,7 @@ func TestSelectionClearsOnlyNewChatUnreadCount(t *testing.T) {
 func TestBoundarySelectionPreservesUnreadCounts(t *testing.T) {
 	model := defaultDemoView()
 	before := unreadCounts(model)
-	if changed, _ := handleKey(&model, tcell.NewEventKey(tcell.KeyUp, 0, tcell.ModNone), 100, 30); changed {
+	if changed, _ := handleKey(&model, tcell.NewEventKey(tcell.KeyRune, 'k', tcell.ModNone), 100, 30); changed {
 		t.Fatal("top boundary requested redraw")
 	}
 	if after := unreadCounts(model); !reflect.DeepEqual(after, before) {
@@ -60,7 +60,7 @@ func TestBoundarySelectionPreservesUnreadCounts(t *testing.T) {
 
 	model.selectedChat = model.chatCount - 1
 	before = unreadCounts(model)
-	if changed, _ := handleKey(&model, tcell.NewEventKey(tcell.KeyDown, 0, tcell.ModNone), 100, 30); changed {
+	if changed, _ := handleKey(&model, tcell.NewEventKey(tcell.KeyRune, 'j', tcell.ModNone), 100, 30); changed {
 		t.Fatal("bottom boundary requested redraw")
 	}
 	if after := unreadCounts(model); !reflect.DeepEqual(after, before) {

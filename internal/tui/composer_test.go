@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/uniseg"
 )
 
 func TestEnterComposeMode(t *testing.T) {
@@ -86,6 +87,74 @@ func TestComposerCapacityAndMalformedState(t *testing.T) {
 	composer.normalize()
 	if composer.cursor != 0 {
 		t.Fatalf("cursor split rune at %d", composer.cursor)
+	}
+}
+
+func TestComposerInsertTextIsAtomic(t *testing.T) {
+	var composer composerState
+	if composer.insertText("") || composer.insertText("\xff") {
+		t.Fatal("empty or invalid UTF-8 insertion changed composer")
+	}
+	insertComposerText(t, &composer, strings.Repeat("x", maxDraftBytes-len("❤️")+1))
+	before := composer.text()
+	beforeCursor := composer.cursor
+	if composer.insertText("❤️") || composer.text() != before || composer.cursor != beforeCursor {
+		t.Fatal("oversized emoji insertion was not atomic")
+	}
+	composer.clear()
+	if !composer.insertText("👍🏽") || composer.text() != "👍🏽" || composer.cursor != len("👍🏽") {
+		t.Fatalf("atomic emoji text=%q cursor=%d", composer.text(), composer.cursor)
+	}
+}
+
+func TestComposerEditsWholeGraphemeClusters(t *testing.T) {
+	var composer composerState
+	if !composer.insertText("❤️👍🏽✌️") {
+		t.Fatal("emoji sequence insertion failed")
+	}
+	for _, want := range []string{"❤️👍🏽", "❤️", ""} {
+		if !composer.backspace() || composer.text() != want {
+			t.Fatalf("backspace text=%q want %q", composer.text(), want)
+		}
+	}
+	if composer.backspace() {
+		t.Fatal("backspace changed empty composer")
+	}
+
+	if !composer.insertText("❤️👍🏽✌️") {
+		t.Fatal("emoji reinsertion failed")
+	}
+	composer.cursor = 0
+	for _, want := range []string{"👍🏽✌️", "✌️", ""} {
+		if !composer.delete() || composer.text() != want || composer.cursor != 0 {
+			t.Fatalf("delete text=%q cursor=%d want %q", composer.text(), composer.cursor, want)
+		}
+	}
+}
+
+func TestComposerMovementAndViewportUseGraphemeCellWidth(t *testing.T) {
+	var composer composerState
+	if !composer.insertText("abc🙂def") {
+		t.Fatal("insert failed")
+	}
+	composer.cursor = len("abc🙂")
+	composer.normalize()
+	start, end, cursorCells := visibleDraftSpan(&composer, 5)
+	visible := string(composer.data[start:end])
+	if cursorCells < 0 || cursorCells >= 5 {
+		t.Fatalf("cursor cells=%d", cursorCells)
+	}
+	if width := uniseg.StringWidth(visible); width > 5 {
+		t.Fatalf("visible width=%d span=%q", width, visible)
+	}
+	if start > composer.cursor || end < composer.cursor || !utf8.ValidString(visible) {
+		t.Fatalf("span=%d:%d cursor=%d visible=%q", start, end, composer.cursor, visible)
+	}
+	if !composer.moveLeft() || composer.cursor != len("abc") {
+		t.Fatalf("left crossed part of emoji cursor=%d", composer.cursor)
+	}
+	if !composer.moveRight() || composer.cursor != len("abc🙂") {
+		t.Fatalf("right crossed part of emoji cursor=%d", composer.cursor)
 	}
 }
 

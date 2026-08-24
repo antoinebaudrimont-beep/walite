@@ -14,6 +14,14 @@ const title = "walite"
 // events until the context is canceled or the user requests exit. Run always
 // finalizes a successfully initialized screen before returning.
 func Run(ctx context.Context, screen tcell.Screen) error {
+	preferencesPath := ""
+	if path, err := defaultPreferencesPath(); err == nil {
+		preferencesPath = path
+	}
+	return runWithPreferences(ctx, screen, preferencesPath)
+}
+
+func runWithPreferences(ctx context.Context, screen tcell.Screen, preferencesPath string) error {
 	if ctx == nil || screen == nil {
 		return errors.New("tui rejected")
 	}
@@ -24,6 +32,10 @@ func Run(ctx context.Context, screen tcell.Screen) error {
 
 	screen.HideCursor()
 	model := defaultDemoView()
+	if preferencesPath != "" {
+		model.preferencesPath = preferencesPath
+		_ = loadEmojiPreferences(preferencesPath, &model.emojiPicker)
+	}
 	draw(screen, &model)
 	screen.Show()
 
