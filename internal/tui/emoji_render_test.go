@@ -117,6 +117,84 @@ func TestEmojiCategoryRedrawDoesNotLeavePreviousCategory(t *testing.T) {
 	}
 }
 
+func TestEmojiPickerRepeatedOpenCloseFullyRedraws(t *testing.T) {
+	screen := initializedSimulationScreen(t, 80, 24)
+	model := defaultDemoView()
+	model.mode = modeCompose
+	for cycle := 0; cycle < 4; cycle++ {
+		model.emojiPicker.prepareOpen()
+		draw(screen, &model)
+		screen.Show()
+		if text := screenText(screen); !strings.Contains(text, "Emoji") || !screenContainsRuneSequence(screen, "😀") {
+			t.Fatalf("cycle %d open picker incomplete:\n%s", cycle, text)
+		}
+		model.emojiPicker.close()
+		draw(screen, &model)
+		screen.Show()
+		if text := screenText(screen); strings.Contains(text, " Emoji ") || screenContainsRuneSequence(screen, "😀") {
+			t.Fatalf("cycle %d close left picker cells:\n%s", cycle, text)
+		}
+	}
+}
+
+func TestEmojiCategorySwitchThenResizeDoesNotLeaveStaleCells(t *testing.T) {
+	screen := initializedSimulationScreen(t, 100, 30)
+	model := defaultDemoView()
+	model.mode = modeCompose
+	model.emojiPicker.prepareOpen()
+	draw(screen, &model)
+	screen.Show()
+	if !screenContainsRuneSequence(screen, "🙂") {
+		t.Fatal("initial category missing")
+	}
+
+	if !model.emojiPicker.moveCategory(1) {
+		t.Fatal("category switch failed")
+	}
+	screen.SetSize(60, 20)
+	clampView(&model, 60, 20)
+	draw(screen, &model)
+	screen.Show()
+	if screenContainsRuneSequence(screen, "🙂") || !screenContainsRuneSequence(screen, "👍") {
+		t.Fatalf("medium redraw contains stale or missing category:\n%s", screenText(screen))
+	}
+
+	if !model.emojiPicker.moveCategory(1) {
+		t.Fatal("second category switch failed")
+	}
+	screen.SetSize(40, 8)
+	clampView(&model, 40, 8)
+	draw(screen, &model)
+	screen.Show()
+	if screenContainsRuneSequence(screen, "👍") || !screenContainsRuneSequence(screen, "🐶") {
+		t.Fatalf("narrow redraw contains stale or missing category:\n%s", screenText(screen))
+	}
+}
+
+func TestEmojiGridClearsEmptyAndSmallCategories(t *testing.T) {
+	screen := initializedSimulationScreen(t, 30, 8)
+	for y := 1; y < 4; y++ {
+		for x := 2; x < 18; x++ {
+			screen.SetContent(x, y, 'X', nil, tcell.StyleDefault)
+		}
+	}
+	drawEmojiCategoryGrid(screen, nil, 99, true, 2, 1, 18, 3, 4)
+	for y := 1; y < 4; y++ {
+		for x := 2; x < 18; x++ {
+			main, _, _, _ := screen.GetContent(x, y)
+			if main != ' ' {
+				t.Fatalf("empty grid left %q at %d,%d", main, x, y)
+			}
+		}
+	}
+
+	drawEmojiCategoryGrid(screen, []string{"❤️"}, 99, true, 2, 1, 18, 3, 4)
+	screen.Show()
+	if !screenContainsRuneSequence(screen, "❤️") {
+		t.Fatal("small category did not clamp and render its only emoji")
+	}
+}
+
 func TestEmojiCellUsesVisibleFallbackInsteadOfDroppingUnsupportedValue(t *testing.T) {
 	screen := initializedSimulationScreen(t, 20, 4)
 	drawEmojiCell(screen, "🙂🙂", true, 2, 1, 18)

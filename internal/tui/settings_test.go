@@ -90,7 +90,7 @@ func TestComposeFooterIncludesSettingsShortcut(t *testing.T) {
 
 func TestNavigationFooterIncludesSettingsShortcut(t *testing.T) {
 	model := defaultDemoView()
-	want := "↑/↓ messages  j/k chats  Enter compose  Ctrl-P settings  Esc quit"
+	want := "↑/↓ scroll  PgUp/PgDn  j/k chats  Ctrl-R reply  Enter compose  Ctrl-P settings  Esc quit"
 	if got := navigationFooter(&model, false); got != want {
 		t.Fatalf("navigation footer=%q want=%q", got, want)
 	}

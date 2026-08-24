@@ -16,7 +16,7 @@ const (
 
 type viewModel struct {
 	chats           *chatState
-	scrollOffset    int
+	chatView        chatViewState
 	mode            inputMode
 	composer        composerState
 	emojiPicker     emojiPickerState
@@ -86,6 +86,7 @@ func drawNarrow(screen tcell.Screen, model *viewModel, width, height int) {
 	composeSeparator := height - 3 - replyRows
 	putText(screen, 0, 0, width, title, tcell.StyleDefault.Bold(true))
 	putText(screen, 0, 2, width, chat.title, tcell.StyleDefault.Bold(true))
+	drawNewerMessagesIndicator(screen, model, width, height, 0, 3, width)
 	start, end := visibleMessageRange(model, width, height)
 	drawMessages(screen, model, selectedIndex, chat, start, end, 0, 4, width, composeSeparator)
 	drawHorizontal(screen, 0, width-1, composeSeparator, '─')
@@ -97,7 +98,7 @@ func drawNarrow(screen tcell.Screen, model *viewModel, width, height int) {
 	if model.replySelect.valid {
 		footer = navigationFooter(model, true)
 	} else if model.mode == modeCompose {
-		footer = "Enter send  Ctrl-R reply  Ctrl-E emoji  Ctrl-P settings  Esc cancel"
+		footer = "Enter send  Ctrl-R  Ctrl-E  Ctrl-P settings  Esc cancel"
 	}
 	putText(screen, 0, height-1, width, footer, tcell.StyleDefault.Dim(true))
 }
@@ -140,6 +141,7 @@ func drawTwoPane(screen tcell.Screen, model *viewModel, width, height int) {
 	}
 	putText(screen, 2, 1, separator-2, title, tcell.StyleDefault.Bold(true))
 	putText(screen, separator+2, 1, width-2, chat.title, tcell.StyleDefault.Bold(true))
+	drawNewerMessagesIndicator(screen, model, width, height, separator+2, 2, width-2)
 
 	chatY := 3
 	for index := 0; index < model.chats.count() && chatY+index < footerTop; index++ {
@@ -208,14 +210,14 @@ func navigationFooter(model *viewModel, narrow bool) string {
 			escape = "Esc cancel"
 		}
 		if narrow {
-			return "↑/↓ messages  Enter reply  Ctrl-P settings  " + escape
+			return "↑/↓ target  Enter reply  Ctrl-P settings  " + escape
 		}
-		return "↑/↓ messages  Enter reply  Ctrl-P settings  " + escape
+		return "↑/↓ target  Enter reply  Ctrl-P settings  " + escape
 	}
 	if narrow {
-		return "↑/↓ messages  Enter compose  Ctrl-P settings  Esc quit"
+		return "↑/↓ scroll  Ctrl-R reply  Enter  Ctrl-P settings  Esc quit"
 	}
-	return "↑/↓ messages  j/k chats  Enter compose  Ctrl-P settings  Esc quit"
+	return "↑/↓ scroll  PgUp/PgDn  j/k chats  Ctrl-R reply  Enter compose  Ctrl-P settings  Esc quit"
 }
 
 func visibleDraftSpan(composer *composerState, width int) (start, end, cursorCells int) {
@@ -329,7 +331,7 @@ func visibleMessageRange(model *viewModel, width, height int) (int, int) {
 	if chat.messageCount == 0 || messageWidth <= 0 || rows <= 0 {
 		return 0, 0
 	}
-	offset := model.scrollOffset
+	offset := model.chatView.scrollOffset
 	maximum := maximumScrollOffset(model, width, height)
 	if offset < 0 {
 		offset = 0

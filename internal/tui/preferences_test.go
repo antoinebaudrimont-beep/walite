@@ -79,7 +79,7 @@ func TestEmojiPreferencesLoadSanitizesOrderAndMaximum(t *testing.T) {
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	var picker emojiPickerState
+	picker := emojiPickerState{recentCursor: 99, recentCount: maxRecentEmoji, focus: emojiFocusRecent}
 	if err := loadEmojiPreferences(path, &picker); err != nil {
 		t.Fatal(err)
 	}
@@ -87,6 +87,9 @@ func TestEmojiPreferencesLoadSanitizesOrderAndMaximum(t *testing.T) {
 	want := []string{"😂", "❤️", "👍", "🙂", "🎉", "🇦🇹", "✌️", "👍🏽", "😀", "😃"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("recents=%q want=%q", got, want)
+	}
+	if picker.recentCursor != 0 || picker.recentCursor >= picker.recentCount {
+		t.Fatalf("recent cursor=%d count=%d", picker.recentCursor, picker.recentCount)
 	}
 }
 

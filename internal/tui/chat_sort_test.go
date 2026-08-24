@@ -68,7 +68,7 @@ func TestSyntheticIncomingMovesChatToTopAndPreservesSelectedChat(t *testing.T) {
 	selectedTitle := model.chats.chats[model.chats.selected].title
 	beforeUnread := model.chats.chats[2].unreadCount
 	beforeCount := model.chats.chats[2].messageCount
-	if !model.chats.recordIncomingMessage(2, "synthetic incoming activity") {
+	if !recordIncomingMessage(&model, 2, "synthetic incoming activity") {
 		t.Fatal("incoming activity rejected")
 	}
 	if model.chats.chats[0].title != "Family Demo" {

@@ -78,14 +78,19 @@ type emojiPickerState struct {
 }
 
 func (picker *emojiPickerState) prepareOpen() {
-	picker.open = true
 	picker.clamp()
+	picker.open = true
 	if picker.recentCount > 0 {
 		picker.focus = emojiFocusRecent
 		picker.recentCursor = 0
 	} else {
 		picker.focus = emojiFocusCategory
 	}
+}
+
+func (picker *emojiPickerState) close() {
+	picker.open = false
+	picker.clamp()
 }
 
 func (picker *emojiPickerState) selectedEmoji() string {
@@ -101,6 +106,7 @@ func (picker *emojiPickerState) selectedEmoji() string {
 }
 
 func (picker *emojiPickerState) moveHorizontal(delta int) bool {
+	picker.clamp()
 	if delta == 0 {
 		return false
 	}
@@ -122,6 +128,7 @@ func (picker *emojiPickerState) moveHorizontal(delta int) bool {
 }
 
 func (picker *emojiPickerState) moveVertical(delta, columns int) bool {
+	picker.clamp()
 	if delta == 0 {
 		return false
 	}
@@ -149,6 +156,7 @@ func (picker *emojiPickerState) moveVertical(delta, columns int) bool {
 }
 
 func (picker *emojiPickerState) moveCategory(delta int) bool {
+	picker.clamp()
 	if len(emojiCategories) == 0 || delta == 0 {
 		return false
 	}
@@ -276,11 +284,7 @@ func drawEmojiPicker(screen tcell.Screen, model *viewModel, width, height int) {
 		drawCompactEmojiPicker(screen, width, height)
 		return
 	}
-	for y := layout.top; y <= layout.bottom; y++ {
-		for x := layout.left; x <= layout.right; x++ {
-			screen.SetContent(x, y, ' ', nil, tcell.StyleDefault)
-		}
-	}
+	clearEmojiRegion(screen, layout.left, layout.top, layout.right+1, layout.bottom+1)
 	drawHorizontal(screen, layout.left+1, layout.right-1, layout.top, '─')
 	drawHorizontal(screen, layout.left+1, layout.right-1, layout.bottom, '─')
 	drawVertical(screen, layout.top+1, layout.bottom-1, layout.left, '│')
@@ -313,10 +317,12 @@ func drawEmojiPicker(screen tcell.Screen, model *viewModel, width, height int) {
 }
 
 func drawEmojiRowWindow(screen tcell.Screen, values []string, selected int, active bool, x, y, limit int) {
+	clearEmojiRegion(screen, x, y, limit, y+1)
 	capacity := (limit - x) / emojiCellWidth
 	if capacity < 1 {
 		return
 	}
+	selected = clampIndex(selected, len(values))
 	start := 0
 	if selected >= capacity {
 		start = selected - capacity + 1
@@ -335,6 +341,8 @@ func drawEmojiCategoryGrid(screen tcell.Screen, values []string, selected int, a
 	if rows < 1 || columns < 1 {
 		return
 	}
+	clearEmojiRegion(screen, x, y, limit, y+rows)
+	selected = clampIndex(selected, len(values))
 	startRow := 0
 	if selected/columns >= rows {
 		startRow = selected/columns - rows + 1
@@ -348,6 +356,14 @@ func drawEmojiCategoryGrid(screen tcell.Screen, values []string, selected int, a
 		position := index - start
 		drawEmojiCell(screen, values[index], active && selected == index,
 			x+(position%columns)*emojiCellWidth, y+position/columns, limit)
+	}
+}
+
+func clearEmojiRegion(screen tcell.Screen, left, top, right, bottom int) {
+	for y := top; y < bottom; y++ {
+		for x := left; x < right; x++ {
+			screen.SetContent(x, y, ' ', nil, tcell.StyleDefault)
+		}
 	}
 }
 

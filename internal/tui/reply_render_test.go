@@ -82,7 +82,7 @@ func TestRunPreservesReplySelectionAndTargetAcrossResize(t *testing.T) {
 	go func() { result <- runWithPreferences(context.Background(), screen, "") }()
 
 	<-screen.shown
-	injectKeyAndWait(screen, tcell.KeyUp, 0)
+	injectKeyAndWait(screen, tcell.KeyCtrlR, 0)
 	injectKeyAndWait(screen, tcell.KeyUp, 0)
 	resizeObservedScreen(t, screen, 60, 20)
 	resizeObservedScreen(t, screen, 30, 6)

@@ -26,27 +26,29 @@ func handleKey(model *viewModel, event *tcell.EventKey, width, height int) (chan
 	if model.mode == modeCompose {
 		return handleComposeKey(model, event, width, height), false
 	}
+	if model.replySelect.valid {
+		return handleReplySelectionKey(model, event, width, height), false
+	}
 
 	switch {
 	case event.Key() == tcell.KeyEscape:
-		if model.replySelect.valid {
-			model.replySelect = replySelectionState{}
-			return true, false
-		}
 		return false, true
 	case event.Key() == tcell.KeyEnter:
-		if model.replySelect.valid {
-			return chooseReplyTarget(model), false
-		}
 		model.mode = modeCompose
 		model.composer.clear()
 		model.replyTarget = replyTarget{}
 		model.replySelect = replySelectionState{}
 		return true, false
+	case event.Key() == tcell.KeyCtrlR:
+		return focusNewestVisibleMessage(model, width, height), false
 	case event.Key() == tcell.KeyUp:
-		return moveMessageFocus(model, -1, width, height), false
+		return scrollMessages(model, width, height, true), false
 	case event.Key() == tcell.KeyDown:
-		return moveMessageFocus(model, 1, width, height), false
+		return scrollMessages(model, width, height, false), false
+	case event.Key() == tcell.KeyHome:
+		return jumpMessageViewport(model, width, height, true), false
+	case event.Key() == tcell.KeyEnd:
+		return jumpMessageViewport(model, width, height, false), false
 	case event.Key() == tcell.KeyRune && event.Rune() == 'k':
 		return moveChatSelection(model, -1), false
 	case event.Key() == tcell.KeyRune && event.Rune() == 'j':
@@ -63,10 +65,25 @@ func moveChatSelection(model *viewModel, delta int) bool {
 	if !model.chats.moveSelection(delta) {
 		return false
 	}
-	model.scrollOffset = 0
+	model.chatView.reset()
 	model.replySelect = replySelectionState{}
 	model.replyTarget = replyTarget{}
 	return true
+}
+
+func handleReplySelectionKey(model *viewModel, event *tcell.EventKey, width, height int) bool {
+	switch {
+	case event.Key() == tcell.KeyEscape:
+		model.replySelect = replySelectionState{}
+		return true
+	case event.Key() == tcell.KeyEnter:
+		return chooseReplyTarget(model)
+	case event.Key() == tcell.KeyUp || event.Key() == tcell.KeyRune && event.Rune() == 'k':
+		return moveMessageFocus(model, -1, width, height)
+	case event.Key() == tcell.KeyDown || event.Key() == tcell.KeyRune && event.Rune() == 'j':
+		return moveMessageFocus(model, 1, width, height)
+	}
+	return false
 }
 
 func handleComposeKey(model *viewModel, event *tcell.EventKey, width, height int) bool {
@@ -83,6 +100,16 @@ func handleComposeKey(model *viewModel, event *tcell.EventKey, width, height int
 		return true
 	case tcell.KeyCtrlR:
 		return focusReplyFromCompose(model, width, height)
+	case tcell.KeyUp:
+		return scrollMessages(model, width, height, true)
+	case tcell.KeyDown:
+		return scrollMessages(model, width, height, false)
+	case tcell.KeyPgUp:
+		return scrollPage(model, width, height, true)
+	case tcell.KeyPgDn:
+		return scrollPage(model, width, height, false)
+	case tcell.KeyEnd:
+		return jumpMessageViewport(model, width, height, false)
 	case tcell.KeyBackspace, tcell.KeyBackspace2:
 		return model.composer.backspace()
 	case tcell.KeyDelete:
@@ -117,7 +144,7 @@ func handleEmojiKey(model *viewModel, event *tcell.EventKey, width, height int) 
 	columns := emojiGridColumnsForSize(width, height)
 	switch event.Key() {
 	case tcell.KeyEscape, tcell.KeyCtrlE:
-		model.emojiPicker.open = false
+		model.emojiPicker.close()
 		return true
 	case tcell.KeyLeft:
 		return model.emojiPicker.moveHorizontal(-1)
@@ -140,7 +167,7 @@ func handleEmojiKey(model *viewModel, event *tcell.EventKey, width, height int) 
 		if model.preferencesPath != "" {
 			_ = saveEmojiPreferences(model.preferencesPath, &model.emojiPicker)
 		}
-		model.emojiPicker.open = false
+		model.emojiPicker.close()
 		return true
 	case tcell.KeyRune:
 		switch event.Rune() {
@@ -174,7 +201,7 @@ func submitLocalMessage(model *viewModel) bool {
 	model.composer.clear()
 	model.replyTarget = replyTarget{}
 	model.replySelect = replySelectionState{}
-	model.scrollOffset = 0
+	model.chatView.reset()
 	model.chats.promoteChatActivity(selectedIndex)
 	return true
 }
@@ -185,20 +212,20 @@ func scrollPage(model *viewModel, width, height int, older bool) bool {
 	if page < 1 {
 		page = 1
 	}
-	previous := model.scrollOffset
+	previous := model.chatView.scrollOffset
 	if older {
-		model.scrollOffset += page
+		model.chatView.scrollOffset += page
 		maximum := maximumScrollOffset(model, width, height)
-		if model.scrollOffset > maximum {
-			model.scrollOffset = maximum
+		if model.chatView.scrollOffset > maximum {
+			model.chatView.scrollOffset = maximum
 		}
 	} else {
-		model.scrollOffset -= page
-		if model.scrollOffset < 0 {
-			model.scrollOffset = 0
+		model.chatView.scrollOffset -= page
+		if model.chatView.scrollOffset < 0 {
+			model.chatView.scrollOffset = 0
 		}
 	}
-	return model.scrollOffset != previous
+	return model.chatView.scrollOffset != previous
 }
 
 func clampView(model *viewModel, width, height int) {
@@ -206,17 +233,12 @@ func clampView(model *viewModel, width, height int) {
 	model.terminalHeight = height
 	if model.chats.count() < 1 {
 		model.chats.clampSelection()
-		model.scrollOffset = 0
+		model.chatView.reset()
 		return
 	}
 	model.composer.normalize()
 	model.emojiPicker.clamp()
 	model.chats.clampSelection()
-	if model.scrollOffset < 0 {
-		model.scrollOffset = 0
-	}
-	if maximum := maximumScrollOffset(model, width, height); model.scrollOffset > maximum {
-		model.scrollOffset = maximum
-	}
+	clampMessageViewport(model, width, height)
 	clampReplySelection(model, width, height)
 }

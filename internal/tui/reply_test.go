@@ -23,10 +23,10 @@ func TestDefaultMessagesHaveDeterministicStableIDs(t *testing.T) {
 	}
 }
 
-func TestArrowFocusesNewestVisibleMessageInsideConversation(t *testing.T) {
+func TestControlRFocusesNewestVisibleMessageInsideConversation(t *testing.T) {
 	model := defaultDemoView()
 	_, end := visibleMessageRange(&model, 100, 20)
-	changed, exit := handleKey(&model, tcell.NewEventKey(tcell.KeyUp, 0, tcell.ModNone), 100, 20)
+	changed, exit := handleKey(&model, tcell.NewEventKey(tcell.KeyCtrlR, 0, tcell.ModNone), 100, 20)
 	if !changed || exit || model.mode != modeNavigate || !model.replySelect.valid || model.replySelect.index != end-1 {
 		t.Fatalf("changed=%t exit=%t mode=%d selection=%+v visibleEnd=%d", changed, exit, model.mode, model.replySelect, end)
 	}
@@ -35,7 +35,7 @@ func TestArrowFocusesNewestVisibleMessageInsideConversation(t *testing.T) {
 func TestReplySelectionDoesNothingForEmptyChat(t *testing.T) {
 	model := defaultDemoView()
 	model.chats.chats[0].messageCount = 0
-	if changed, exit := handleKey(&model, tcell.NewEventKey(tcell.KeyUp, 0, tcell.ModNone), 100, 20); changed || exit || model.mode != modeNavigate {
+	if changed, exit := handleKey(&model, tcell.NewEventKey(tcell.KeyCtrlR, 0, tcell.ModNone), 100, 20); changed || exit || model.mode != modeNavigate {
 		t.Fatalf("changed=%t exit=%t mode=%d", changed, exit, model.mode)
 	}
 }
@@ -120,8 +120,8 @@ func TestSubmitSyntheticReplyUsesStableTargetAndClearsState(t *testing.T) {
 	if chat.messageCount != before+1 || !message.hasReply || message.replyToID != targetID || message.id == 0 {
 		t.Fatalf("count=%d message=%+v target=%d", chat.messageCount, message, targetID)
 	}
-	if model.replyTarget.valid || model.composer.length != 0 || model.scrollOffset != 0 || model.mode != modeCompose {
-		t.Fatalf("target=%+v draft=%q offset=%d mode=%d", model.replyTarget, model.composer.text(), model.scrollOffset, model.mode)
+	if model.replyTarget.valid || model.composer.length != 0 || model.chatView.scrollOffset != 0 || model.mode != modeCompose {
+		t.Fatalf("target=%+v draft=%q offset=%d mode=%d", model.replyTarget, model.composer.text(), model.chatView.scrollOffset, model.mode)
 	}
 }
 

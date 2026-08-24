@@ -113,11 +113,11 @@ func ensureReplySelectionVisible(model *viewModel, width, height int) {
 	if !ok {
 		return
 	}
-	model.scrollOffset = chat.messageCount - model.replySelect.index - 1
-	if model.scrollOffset < 0 {
-		model.scrollOffset = 0
+	model.chatView.scrollOffset = chat.messageCount - model.replySelect.index - 1
+	if model.chatView.scrollOffset < 0 {
+		model.chatView.scrollOffset = 0
 	}
-	if maximum := maximumScrollOffset(model, width, height); model.scrollOffset > maximum {
-		model.scrollOffset = maximum
+	if maximum := maximumScrollOffset(model, width, height); model.chatView.scrollOffset > maximum {
+		model.chatView.scrollOffset = maximum
 	}
 }

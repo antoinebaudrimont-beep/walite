@@ -197,13 +197,13 @@ func TestSubmitLocalMessageAndEmptySend(t *testing.T) {
 		t.Fatalf("empty send changed=%t count=%d", changed, chat.messageCount)
 	}
 	insertComposerText(t, &model.composer, "hello demo")
-	model.scrollOffset = 2
+	model.chatView.scrollOffset = 2
 	if changed, exit := handleKey(&model, tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone), 100, 30); !changed || exit {
 		t.Fatalf("send changed=%t exit=%t", changed, exit)
 	}
 	last := chat.messages[chat.messageCount-1]
-	if chat.messageCount != before+1 || last.text != "hello demo" || last.time != "now" || model.composer.length != 0 || model.scrollOffset != 0 || model.mode != modeCompose {
-		t.Fatalf("count=%d last=%+v draft=%q offset=%d mode=%d", chat.messageCount, last, model.composer.text(), model.scrollOffset, model.mode)
+	if chat.messageCount != before+1 || last.text != "hello demo" || last.time != "now" || model.composer.length != 0 || model.chatView.scrollOffset != 0 || model.mode != modeCompose {
+		t.Fatalf("count=%d last=%+v draft=%q offset=%d mode=%d", chat.messageCount, last, model.composer.text(), model.chatView.scrollOffset, model.mode)
 	}
 }
 

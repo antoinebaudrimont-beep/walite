@@ -7,23 +7,45 @@ import (
 	"github.com/gdamore/tcell/v2"
 )
 
-func TestHandleKeyJKChangesChatsAndArrowsFocusMessages(t *testing.T) {
+func TestHandleKeyJKChangesChatsAndArrowsScrollMessages(t *testing.T) {
 	model := defaultDemoView()
-	assertKeyChange(t, &model, tcell.NewEventKey(tcell.KeyUp, 0, tcell.ModNone), true)
-	if model.chats.selected != 0 || !model.replySelect.valid {
-		t.Fatalf("Up selected chat=%d message=%+v", model.chats.selected, model.replySelect)
+	width, height := 100, 12
+	assertKeyChangeAtSize(t, &model, tcell.NewEventKey(tcell.KeyUp, 0, tcell.ModNone), width, height, true)
+	if model.chats.selected != 0 || model.replySelect.valid || model.chatView.scrollOffset != 1 {
+		t.Fatalf("Up selected chat=%d selection=%+v offset=%d", model.chats.selected, model.replySelect, model.chatView.scrollOffset)
 	}
-	assertKeyChange(t, &model, tcell.NewEventKey(tcell.KeyDown, 0, tcell.ModNone), false)
-	if model.chats.selected != 0 {
-		t.Fatalf("Down changed chat=%d", model.chats.selected)
+	assertKeyChangeAtSize(t, &model, tcell.NewEventKey(tcell.KeyDown, 0, tcell.ModNone), width, height, true)
+	if model.chats.selected != 0 || model.chatView.scrollOffset != 0 {
+		t.Fatalf("Down selected chat=%d offset=%d", model.chats.selected, model.chatView.scrollOffset)
 	}
-	assertKeyChange(t, &model, tcell.NewEventKey(tcell.KeyRune, 'j', tcell.ModNone), true)
+	assertKeyChangeAtSize(t, &model, tcell.NewEventKey(tcell.KeyRune, 'j', tcell.ModNone), width, height, true)
 	if model.chats.selected != 1 || model.replySelect.valid {
 		t.Fatalf("j selected=%d", model.chats.selected)
 	}
-	assertKeyChange(t, &model, tcell.NewEventKey(tcell.KeyRune, 'k', tcell.ModNone), true)
+	assertKeyChangeAtSize(t, &model, tcell.NewEventKey(tcell.KeyRune, 'k', tcell.ModNone), width, height, true)
 	if model.chats.selected != 0 {
 		t.Fatalf("k selected=%d", model.chats.selected)
+	}
+}
+
+func TestHomeAndEndJumpBetweenOldestAndNewest(t *testing.T) {
+	model := defaultDemoView()
+	width, height := 100, 12
+	if changed, exit := handleKey(&model, tcell.NewEventKey(tcell.KeyHome, 0, tcell.ModNone), width, height); !changed || exit {
+		t.Fatalf("Home changed=%t exit=%t", changed, exit)
+	}
+	maximum := maximumScrollOffset(&model, width, height)
+	if maximum <= 0 || model.chatView.scrollOffset != maximum {
+		t.Fatalf("Home offset=%d maximum=%d", model.chatView.scrollOffset, maximum)
+	}
+	if changed, exit := handleKey(&model, tcell.NewEventKey(tcell.KeyEnd, 0, tcell.ModNone), width, height); !changed || exit {
+		t.Fatalf("End changed=%t exit=%t", changed, exit)
+	}
+	if model.chatView.scrollOffset != 0 {
+		t.Fatalf("End offset=%d", model.chatView.scrollOffset)
+	}
+	if changed, _ := handleKey(&model, tcell.NewEventKey(tcell.KeyEnd, 0, tcell.ModNone), width, height); changed {
+		t.Fatal("End redrew at newest boundary")
 	}
 }
 
@@ -74,8 +96,8 @@ func TestHandleKeyScrollsAndClamps(t *testing.T) {
 		}
 	}
 	maximum := maximumScrollOffset(&model, width, height)
-	if model.scrollOffset != maximum || maximum <= 0 {
-		t.Fatalf("oldest offset=%d maximum=%d", model.scrollOffset, maximum)
+	if model.chatView.scrollOffset != maximum || maximum <= 0 {
+		t.Fatalf("oldest offset=%d maximum=%d", model.chatView.scrollOffset, maximum)
 	}
 	if changed, _ := handleKey(&model, pageUp, width, height); changed {
 		t.Fatal("PageUp redrew at oldest bound")
@@ -88,8 +110,8 @@ func TestHandleKeyScrollsAndClamps(t *testing.T) {
 			break
 		}
 	}
-	if model.scrollOffset != 0 {
-		t.Fatalf("newest offset=%d", model.scrollOffset)
+	if model.chatView.scrollOffset != 0 {
+		t.Fatalf("newest offset=%d", model.chatView.scrollOffset)
 	}
 	if changed, _ := handleKey(&model, pageDown, width, height); changed {
 		t.Fatal("PageDown redrew at newest bound")
@@ -100,32 +122,53 @@ func TestControlScrollKeysAndChatChangeReset(t *testing.T) {
 	model := defaultDemoView()
 	width, height := 60, 10
 	assertKeyChangeAtSize(t, &model, tcell.NewEventKey(tcell.KeyCtrlU, 0, tcell.ModNone), width, height, true)
-	if model.scrollOffset <= 0 {
-		t.Fatalf("Ctrl-U offset=%d", model.scrollOffset)
+	if model.chatView.scrollOffset <= 0 {
+		t.Fatalf("Ctrl-U offset=%d", model.chatView.scrollOffset)
 	}
 	assertKeyChangeAtSize(t, &model, tcell.NewEventKey(tcell.KeyCtrlD, 0, tcell.ModNone), width, height, true)
 	assertKeyChangeAtSize(t, &model, tcell.NewEventKey(tcell.KeyPgUp, 0, tcell.ModNone), width, height, true)
 	assertKeyChangeAtSize(t, &model, tcell.NewEventKey(tcell.KeyRune, 'j', tcell.ModNone), width, height, true)
-	if model.chats.selected != 1 || model.scrollOffset != 0 {
-		t.Fatalf("selected=%d offset=%d", model.chats.selected, model.scrollOffset)
+	if model.chats.selected != 1 || model.chatView.scrollOffset != 0 {
+		t.Fatalf("selected=%d offset=%d", model.chats.selected, model.chatView.scrollOffset)
 	}
 }
 
 func TestClampViewPreservesSelectionAndBoundsScroll(t *testing.T) {
 	model := defaultDemoView()
 	model.chats.selected = 2
-	model.scrollOffset = maxMessages
+	model.chatView.scrollOffset = maxMessages
 	clampView(&model, 60, 10)
 	if model.chats.selected != 2 {
 		t.Fatalf("selected=%d", model.chats.selected)
 	}
 	maximum := maximumScrollOffset(&model, 60, 10)
-	if model.scrollOffset != maximum {
-		t.Fatalf("offset=%d maximum=%d", model.scrollOffset, maximum)
+	if model.chatView.scrollOffset != maximum {
+		t.Fatalf("offset=%d maximum=%d", model.chatView.scrollOffset, maximum)
 	}
 	clampView(&model, 100, 30)
-	if model.chats.selected != 2 || model.scrollOffset < 0 || model.scrollOffset > maximumScrollOffset(&model, 100, 30) {
-		t.Fatalf("selected=%d offset=%d", model.chats.selected, model.scrollOffset)
+	if model.chats.selected != 2 || model.chatView.scrollOffset < 0 || model.chatView.scrollOffset > maximumScrollOffset(&model, 100, 30) {
+		t.Fatalf("selected=%d offset=%d", model.chats.selected, model.chatView.scrollOffset)
+	}
+}
+
+func TestIncomingMessagePreservesOlderReadingPosition(t *testing.T) {
+	model := defaultDemoView()
+	width, height := 60, 10
+	clampView(&model, width, height)
+	model.chatView.scrollOffset = 4
+	beforeStart, beforeEnd := visibleMessageRange(&model, width, height)
+	chat, _ := model.chats.selectedChat()
+	wantFirst := chat.messages[beforeStart].id
+	wantLast := chat.messages[beforeEnd-1].id
+
+	if !recordIncomingMessage(&model, model.chats.selectedIndex(), "synthetic incoming while reading") {
+		t.Fatal("incoming message rejected")
+	}
+	afterStart, afterEnd := visibleMessageRange(&model, width, height)
+	chat, _ = model.chats.selectedChat()
+	if chat.messages[afterStart].id != wantFirst || chat.messages[afterEnd-1].id != wantLast {
+		t.Fatalf("viewport changed from IDs %d:%d to %d:%d", wantFirst, wantLast,
+			chat.messages[afterStart].id, chat.messages[afterEnd-1].id)
 	}
 }
 
