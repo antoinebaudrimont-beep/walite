@@ -4,6 +4,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/gdamore/tcell/v2"
 )
@@ -14,28 +15,56 @@ const title = "walite"
 // events until the context is canceled or the user requests exit. Run always
 // finalizes a successfully initialized screen before returning.
 func Run(ctx context.Context, screen tcell.Screen) error {
+	if ctx == nil || screen == nil {
+		return errors.New("tui rejected")
+	}
 	preferencesPath := ""
 	if path, err := defaultPreferencesPath(); err == nil {
 		preferencesPath = path
 	}
-	return runWithPreferences(ctx, screen, preferencesPath)
+	store, err := newDefaultChatStateStore()
+	if err != nil {
+		return fmt.Errorf("chat state store: %w", err)
+	}
+	return runWithStore(ctx, screen, preferencesPath, store)
 }
 
 func runWithPreferences(ctx context.Context, screen tcell.Screen, preferencesPath string) error {
+	return runWithStore(ctx, screen, preferencesPath, nil)
+}
+
+func runWithStore(ctx context.Context, screen tcell.Screen, preferencesPath string, store ChatStateStore) (runErr error) {
 	if ctx == nil || screen == nil {
 		return errors.New("tui rejected")
 	}
 	if err := screen.Init(); err != nil {
 		return err
 	}
-	defer screen.Fini()
 
 	screen.HideCursor()
-	model := defaultDemoView()
+	state, err := loadChatStateOrDemo(store)
+	if err != nil {
+		screen.Fini()
+		return fmt.Errorf("load chat state: %w", err)
+	}
+	model := viewModel{chats: state}
 	if preferencesPath != "" {
 		model.preferencesPath = preferencesPath
 		_ = loadEmojiPreferences(preferencesPath, &model.emojiPicker)
 	}
+	if store != nil {
+		defer func() {
+			if err := store.Save(model.chats); err != nil {
+				saveErr := fmt.Errorf("save chat state: %w", err)
+				if runErr == nil {
+					runErr = saveErr
+				} else {
+					runErr = errors.Join(runErr, saveErr)
+				}
+			}
+		}()
+	}
+	defer screen.Fini()
 	draw(screen, &model)
 	screen.Show()
 

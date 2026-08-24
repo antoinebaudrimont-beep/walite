@@ -59,7 +59,7 @@ func TestRunShowsFirstFrameAndFinalizesOnCancellation(t *testing.T) {
 	screen := newObservedScreen(100, 30)
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
-	go func() { result <- Run(ctx, screen) }()
+	go func() { result <- runWithPreferences(ctx, screen, "") }()
 
 	<-screen.shown
 	text := screenText(screen)
@@ -114,7 +114,7 @@ func TestDrawShortFallback(t *testing.T) {
 func TestRunRedrawsNarrowFallbackAfterResize(t *testing.T) {
 	screen := newObservedScreen(100, 30)
 	result := make(chan error, 1)
-	go func() { result <- Run(context.Background(), screen) }()
+	go func() { result <- runWithPreferences(context.Background(), screen, "") }()
 
 	<-screen.shown
 	screen.SetSize(60, 20)
@@ -136,7 +136,7 @@ func TestRunRedrawsNarrowFallbackAfterResize(t *testing.T) {
 func TestRunChangesSelectionAndConversation(t *testing.T) {
 	screen := newObservedScreen(100, 30)
 	result := make(chan error, 1)
-	go func() { result <- Run(context.Background(), screen) }()
+	go func() { result <- runWithPreferences(context.Background(), screen, "") }()
 
 	<-screen.shown
 	screen.InjectKey(tcell.KeyRune, 'j', tcell.ModNone)
@@ -167,7 +167,7 @@ func TestRunChangesSelectionAndConversation(t *testing.T) {
 func TestRunPreservesSelectionAcrossWideNarrowWideResize(t *testing.T) {
 	screen := newObservedScreen(100, 20)
 	result := make(chan error, 1)
-	go func() { result <- Run(context.Background(), screen) }()
+	go func() { result <- runWithPreferences(context.Background(), screen, "") }()
 
 	<-screen.shown
 	screen.InjectKey(tcell.KeyRune, 'j', tcell.ModNone)
@@ -192,7 +192,7 @@ func TestRunPreservesSelectionAcrossWideNarrowWideResize(t *testing.T) {
 func TestRunNarrowSelectionAndScrolling(t *testing.T) {
 	screen := newObservedScreen(60, 10)
 	result := make(chan error, 1)
-	go func() { result <- Run(context.Background(), screen) }()
+	go func() { result <- runWithPreferences(context.Background(), screen, "") }()
 
 	<-screen.shown
 	screen.InjectKey(tcell.KeyRune, 'j', tcell.ModNone)
@@ -223,7 +223,7 @@ func TestRunNarrowSelectionAndScrolling(t *testing.T) {
 func TestRunFinalizesOnEscape(t *testing.T) {
 	screen := newObservedScreen()
 	result := make(chan error, 1)
-	go func() { result <- Run(context.Background(), screen) }()
+	go func() { result <- runWithPreferences(context.Background(), screen, "") }()
 
 	<-screen.shown
 	screen.InjectKey(tcell.KeyEscape, 0, tcell.ModNone)
@@ -240,7 +240,7 @@ func TestRunFinalizesOnEscape(t *testing.T) {
 func TestRunFinalizesOnControlC(t *testing.T) {
 	screen := newObservedScreen()
 	result := make(chan error, 1)
-	go func() { result <- Run(context.Background(), screen) }()
+	go func() { result <- runWithPreferences(context.Background(), screen, "") }()
 
 	<-screen.shown
 	screen.InjectKey(tcell.KeyCtrlC, 0, tcell.ModNone)

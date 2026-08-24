@@ -78,7 +78,7 @@ func TestDrawNarrowComposeAndSend(t *testing.T) {
 func TestRunPreservesDraftAcrossNarrowAndShortResize(t *testing.T) {
 	screen := newObservedScreen(100, 20)
 	result := make(chan error, 1)
-	go func() { result <- Run(context.Background(), screen) }()
+	go func() { result <- runWithPreferences(context.Background(), screen, "") }()
 
 	<-screen.shown
 	resizeObservedScreen(t, screen, 40, 6)

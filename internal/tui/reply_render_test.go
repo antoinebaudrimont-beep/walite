@@ -79,7 +79,7 @@ func TestDrawReplyToEvictedOriginalUsesFallback(t *testing.T) {
 func TestRunPreservesReplySelectionAndTargetAcrossResize(t *testing.T) {
 	screen := newObservedScreen(100, 30)
 	result := make(chan error, 1)
-	go func() { result <- Run(context.Background(), screen) }()
+	go func() { result <- runWithPreferences(context.Background(), screen, "") }()
 
 	<-screen.shown
 	injectKeyAndWait(screen, tcell.KeyUp, 0)
