@@ -6,6 +6,17 @@ func handleKey(model *viewModel, event *tcell.EventKey, width, height int) (chan
 	if event.Key() == tcell.KeyCtrlC {
 		return false, true
 	}
+	if model.settingsOpen {
+		if event.Key() == tcell.KeyEscape {
+			model.settingsOpen = false
+			return true, false
+		}
+		return false, false
+	}
+	if event.Key() == tcell.KeyCtrlP {
+		model.settingsOpen = true
+		return true, false
+	}
 	if model.emojiPicker.open {
 		return handleEmojiKey(model, event, width, height), false
 	}

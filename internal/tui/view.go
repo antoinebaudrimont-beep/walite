@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 
+	"github.com/antoinebaudrimont-beep/walite/internal/config"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/uniseg"
 )
@@ -21,13 +22,15 @@ type viewModel struct {
 	emojiPicker     emojiPickerState
 	replySelect     replySelectionState
 	replyTarget     replyTarget
+	configuration   config.UI
+	settingsOpen    bool
 	terminalWidth   int
 	terminalHeight  int
 	preferencesPath string
 }
 
 func defaultDemoView() viewModel {
-	return viewModel{chats: newDemoChatState()}
+	return viewModel{chats: newDemoChatState(), configuration: config.DefaultUI()}
 }
 
 func draw(screen tcell.Screen, model *viewModel) {
@@ -49,6 +52,9 @@ func draw(screen tcell.Screen, model *viewModel) {
 	if model.emojiPicker.open {
 		drawEmojiPicker(screen, model, width, height)
 	}
+	if model.settingsOpen {
+		drawSettingsPopup(screen, model, width, height)
+	}
 }
 
 func drawCompact(screen tcell.Screen, model *viewModel, width, height int) {
@@ -58,7 +64,7 @@ func drawCompact(screen tcell.Screen, model *viewModel, width, height int) {
 	}
 	if height > 4 {
 		escapeAction := "Esc quit"
-		if model.emojiPicker.open {
+		if model.settingsOpen || model.emojiPicker.open {
 			escapeAction = "Esc close"
 		} else if model.mode == modeCompose || model.replySelect.valid {
 			escapeAction = "Esc cancel"
@@ -91,7 +97,7 @@ func drawNarrow(screen tcell.Screen, model *viewModel, width, height int) {
 	if model.replySelect.valid {
 		footer = navigationFooter(model, true)
 	} else if model.mode == modeCompose {
-		footer = "Enter send  Ctrl-R reply  Ctrl-E emoji  Esc cancel"
+		footer = "Enter send  Ctrl-R reply  Ctrl-E emoji  Ctrl-P settings  Esc cancel"
 	}
 	putText(screen, 0, height-1, width, footer, tcell.StyleDefault.Dim(true))
 }
@@ -163,7 +169,7 @@ func drawTwoPane(screen tcell.Screen, model *viewModel, width, height int) {
 	if model.replySelect.valid {
 		footer = navigationFooter(model, false)
 	} else if model.mode == modeCompose {
-		footer = "Enter send  Ctrl-R reply  Ctrl-E emoji  Esc cancel"
+		footer = "Enter send  Ctrl-R reply  Ctrl-E emoji  Ctrl-P settings  Esc cancel"
 	}
 	putText(screen, 2, height-2, width-2, footer, tcell.StyleDefault.Dim(true))
 }
@@ -202,14 +208,14 @@ func navigationFooter(model *viewModel, narrow bool) string {
 			escape = "Esc cancel"
 		}
 		if narrow {
-			return "↑/↓ messages  Enter reply  " + escape
+			return "↑/↓ messages  Enter reply  Ctrl-P settings  " + escape
 		}
-		return "↑/↓ messages  Enter reply  " + escape
+		return "↑/↓ messages  Enter reply  Ctrl-P settings  " + escape
 	}
 	if narrow {
-		return "↑/↓ messages  Enter compose  Esc quit"
+		return "↑/↓ messages  Enter compose  Ctrl-P settings  Esc quit"
 	}
-	return "↑/↓ messages  j/k chats  Enter compose  Esc quit"
+	return "↑/↓ messages  j/k chats  Enter compose  Ctrl-P settings  Esc quit"
 }
 
 func visibleDraftSpan(composer *composerState, width int) (start, end, cursorCells int) {

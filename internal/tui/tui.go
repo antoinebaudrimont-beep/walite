@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/antoinebaudrimont-beep/walite/internal/config"
 	"github.com/gdamore/tcell/v2"
 )
 
@@ -22,18 +23,32 @@ func Run(ctx context.Context, screen tcell.Screen) error {
 	if path, err := defaultPreferencesPath(); err == nil {
 		preferencesPath = path
 	}
+	configurationStore, err := config.NewDefaultUIStore()
+	if err != nil {
+		return fmt.Errorf("configuration store: %w", err)
+	}
 	store, err := newDefaultChatStateStore()
 	if err != nil {
 		return fmt.Errorf("chat state store: %w", err)
 	}
-	return runWithStore(ctx, screen, preferencesPath, store)
+	return runWithDependencies(ctx, screen, configurationStore, preferencesPath, store)
 }
 
 func runWithPreferences(ctx context.Context, screen tcell.Screen, preferencesPath string) error {
-	return runWithStore(ctx, screen, preferencesPath, nil)
+	return runWithDependencies(ctx, screen, nil, preferencesPath, nil)
 }
 
 func runWithStore(ctx context.Context, screen tcell.Screen, preferencesPath string, store ChatStateStore) (runErr error) {
+	return runWithDependencies(ctx, screen, nil, preferencesPath, store)
+}
+
+func runWithDependencies(
+	ctx context.Context,
+	screen tcell.Screen,
+	configurationStore config.UIStore,
+	preferencesPath string,
+	store ChatStateStore,
+) (runErr error) {
 	if ctx == nil || screen == nil {
 		return errors.New("tui rejected")
 	}
@@ -42,12 +57,21 @@ func runWithStore(ctx context.Context, screen tcell.Screen, preferencesPath stri
 	}
 
 	screen.HideCursor()
+	configuration := config.DefaultUI()
+	if configurationStore != nil {
+		loadedConfiguration, err := configurationStore.Load()
+		if err != nil {
+			screen.Fini()
+			return fmt.Errorf("load configuration: %w", err)
+		}
+		configuration = loadedConfiguration
+	}
 	state, err := loadChatStateOrDemo(store)
 	if err != nil {
 		screen.Fini()
 		return fmt.Errorf("load chat state: %w", err)
 	}
-	model := viewModel{chats: state}
+	model := viewModel{chats: state, configuration: configuration}
 	if preferencesPath != "" {
 		model.preferencesPath = preferencesPath
 		_ = loadEmojiPreferences(preferencesPath, &model.emojiPicker)
