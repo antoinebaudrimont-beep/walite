@@ -27,7 +27,7 @@ func TestDrawUnreadChatLabelAndStyle(t *testing.T) {
 func TestDrawSelectedUnreadChatKeepsBoldAndReverse(t *testing.T) {
 	screen := initializedSimulationScreen(t, 100, 30)
 	model := defaultDemoView()
-	model.selectedChat = 1
+	model.chats.selected = 1
 	draw(screen, &model)
 	screen.Show()
 
@@ -43,8 +43,8 @@ func TestDrawSelectedUnreadChatKeepsBoldAndReverse(t *testing.T) {
 func TestSelectionClearsOnlyNewChatUnreadCount(t *testing.T) {
 	model := defaultDemoView()
 	changed, exit := handleKey(&model, tcell.NewEventKey(tcell.KeyRune, 'j', tcell.ModNone), 100, 30)
-	if !changed || exit || model.selectedChat != 1 || model.chats[1].unreadCount != 0 {
-		t.Fatalf("changed=%t exit=%t selected=%d unread=%d", changed, exit, model.selectedChat, model.chats[1].unreadCount)
+	if !changed || exit || model.chats.selected != 1 || model.chats.chats[1].unreadCount != 0 {
+		t.Fatalf("changed=%t exit=%t selected=%d unread=%d", changed, exit, model.chats.selected, model.chats.chats[1].unreadCount)
 	}
 }
 
@@ -58,7 +58,7 @@ func TestBoundarySelectionPreservesUnreadCounts(t *testing.T) {
 		t.Fatalf("top boundary unread=%v want %v", after, before)
 	}
 
-	model.selectedChat = model.chatCount - 1
+	model.chats.selected = model.chats.chatCount - 1
 	before = unreadCounts(model)
 	if changed, _ := handleKey(&model, tcell.NewEventKey(tcell.KeyRune, 'j', tcell.ModNone), 100, 30); changed {
 		t.Fatal("bottom boundary requested redraw")
@@ -112,8 +112,8 @@ func attributesAt(screen tcell.SimulationScreen, x, y int) tcell.AttrMask {
 
 func unreadCounts(model viewModel) [maxChats]uint16 {
 	var counts [maxChats]uint16
-	for index := range model.chats {
-		counts[index] = model.chats[index].unreadCount
+	for index := range model.chats.chats {
+		counts[index] = model.chats.chats[index].unreadCount
 	}
 	return counts
 }

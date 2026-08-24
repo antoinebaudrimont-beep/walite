@@ -9,8 +9,8 @@ import (
 func TestDefaultMessagesHaveDeterministicStableIDs(t *testing.T) {
 	model := defaultDemoView()
 	want := messageID(1)
-	for chatIndex := 0; chatIndex < model.chatCount; chatIndex++ {
-		chat := &model.chats[chatIndex]
+	for chatIndex := 0; chatIndex < model.chats.chatCount; chatIndex++ {
+		chat := &model.chats.chats[chatIndex]
 		for messageIndex := 0; messageIndex < chat.messageCount; messageIndex++ {
 			if chat.messages[messageIndex].id != want {
 				t.Fatalf("chat=%d message=%d id=%d want=%d", chatIndex, messageIndex, chat.messages[messageIndex].id, want)
@@ -18,8 +18,8 @@ func TestDefaultMessagesHaveDeterministicStableIDs(t *testing.T) {
 			want++
 		}
 	}
-	if model.nextMessageID != want {
-		t.Fatalf("next ID=%d want=%d", model.nextMessageID, want)
+	if model.chats.nextMessageID != want {
+		t.Fatalf("next ID=%d want=%d", model.chats.nextMessageID, want)
 	}
 }
 
@@ -34,7 +34,7 @@ func TestArrowFocusesNewestVisibleMessageInsideConversation(t *testing.T) {
 
 func TestReplySelectionDoesNothingForEmptyChat(t *testing.T) {
 	model := defaultDemoView()
-	model.chats[0].messageCount = 0
+	model.chats.chats[0].messageCount = 0
 	if changed, exit := handleKey(&model, tcell.NewEventKey(tcell.KeyUp, 0, tcell.ModNone), 100, 20); changed || exit || model.mode != modeNavigate {
 		t.Fatalf("changed=%t exit=%t mode=%d", changed, exit, model.mode)
 	}
@@ -74,7 +74,7 @@ func TestReplySelectionCancelAndChoose(t *testing.T) {
 	if !focusNewestVisibleMessage(&model, 100, 20) {
 		t.Fatal("reply selection did not reopen")
 	}
-	wantID := model.chats[0].messages[model.replySelect.index].id
+	wantID := model.chats.chats[0].messages[model.replySelect.index].id
 	insertComposerText(t, &model.composer, "stale")
 	if changed, exit := handleKey(&model, tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone), 100, 20); !changed || exit {
 		t.Fatalf("choose changed=%t exit=%t", changed, exit)
@@ -111,7 +111,7 @@ func TestSubmitSyntheticReplyUsesStableTargetAndClearsState(t *testing.T) {
 		t.Fatal("reply target setup failed")
 	}
 	targetID := model.replyTarget.id
-	chat := &model.chats[0]
+	chat := &model.chats.chats[0]
 	before := chat.messageCount
 	if !model.composer.insertText("Thanks, that makes sense") || !submitLocalMessage(&model) {
 		t.Fatal("reply send failed")
@@ -127,12 +127,12 @@ func TestSubmitSyntheticReplyUsesStableTargetAndClearsState(t *testing.T) {
 
 func TestReplyToEvictedOriginalRetainsIDWithoutPointer(t *testing.T) {
 	model := defaultDemoView()
-	chat := &model.chats[0]
+	chat := &model.chats.chats[0]
 	chat.messageCount = maxMessages
 	for index := 0; index < maxMessages; index++ {
 		chat.messages[index] = messageView{id: messageID(100 + index), time: "old", text: "old-" + twoDigits(index)}
 	}
-	model.nextMessageID = 1000
+	model.chats.nextMessageID = 1000
 	model.mode = modeCompose
 	model.replyTarget = replyTarget{valid: true, id: chat.messages[0].id}
 	if !model.composer.insertText("reply after eviction") || !submitLocalMessage(&model) {
@@ -142,7 +142,7 @@ func TestReplyToEvictedOriginalRetainsIDWithoutPointer(t *testing.T) {
 	if !reply.hasReply || reply.replyToID != 100 {
 		t.Fatalf("reply=%+v", reply)
 	}
-	if _, found := findMessageByID(chat, reply.replyToID); found {
+	if _, found := model.chats.findMessageByID(0, reply.replyToID); found {
 		t.Fatal("oldest original was not evicted")
 	}
 }
@@ -150,7 +150,7 @@ func TestReplyToEvictedOriginalRetainsIDWithoutPointer(t *testing.T) {
 func TestEscapeFromReplyComposeClearsDraftAndTarget(t *testing.T) {
 	model := defaultDemoView()
 	model.mode = modeCompose
-	model.replyTarget = replyTarget{valid: true, id: model.chats[0].messages[0].id}
+	model.replyTarget = replyTarget{valid: true, id: model.chats.chats[0].messages[0].id}
 	insertComposerText(t, &model.composer, "cancel me")
 	changed, exit := handleKey(&model, tcell.NewEventKey(tcell.KeyEscape, 0, tcell.ModNone), 100, 20)
 	if !changed || exit || model.mode != modeNavigate || model.replyTarget.valid || model.composer.length != 0 {
@@ -180,7 +180,7 @@ func TestControlRFromComposePreservesDraftAndCursor(t *testing.T) {
 func TestCancelComposeReplySelectionPreservesDraftCursorAndTarget(t *testing.T) {
 	model := defaultDemoView()
 	model.mode = modeCompose
-	model.replyTarget = replyTarget{valid: true, id: model.chats[0].messages[0].id}
+	model.replyTarget = replyTarget{valid: true, id: model.chats.chats[0].messages[0].id}
 	if !model.composer.insertText("keep this draft") {
 		t.Fatal("draft setup failed")
 	}
@@ -216,7 +216,7 @@ func TestConfirmComposeReplySelectionSetsTargetWithoutChangingDraft(t *testing.T
 	if changed, _ := handleKey(&model, tcell.NewEventKey(tcell.KeyUp, 0, tcell.ModNone), 100, 24); !changed {
 		t.Fatal("message selection did not move")
 	}
-	wantID := model.chats[model.selectedChat].messages[model.replySelect.index].id
+	wantID := model.chats.chats[model.chats.selected].messages[model.replySelect.index].id
 	if changed, exit := handleKey(&model, tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone), 100, 24); !changed || exit {
 		t.Fatalf("confirm changed=%t exit=%t", changed, exit)
 	}

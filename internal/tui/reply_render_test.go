@@ -58,12 +58,12 @@ func TestDrawComposeReplyPreviewAndSentReference(t *testing.T) {
 func TestDrawReplyToEvictedOriginalUsesFallback(t *testing.T) {
 	screen := initializedSimulationScreen(t, 100, 30)
 	model := defaultDemoView()
-	chat := &model.chats[0]
+	chat := &model.chats.chats[0]
 	chat.messageCount = maxMessages
 	for index := 0; index < maxMessages; index++ {
 		chat.messages[index] = messageView{id: messageID(100 + index), time: "old", text: "old-" + twoDigits(index)}
 	}
-	model.nextMessageID = 1000
+	model.chats.nextMessageID = 1000
 	model.mode = modeCompose
 	model.replyTarget = replyTarget{valid: true, id: 100}
 	if !model.composer.insertText("reply after eviction") || !submitLocalMessage(&model) {

@@ -11,10 +11,10 @@ import (
 
 func TestEnterComposeMode(t *testing.T) {
 	model := defaultDemoView()
-	selected := model.selectedChat
+	selected := model.chats.selected
 	changed, exit := handleKey(&model, tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone), 100, 30)
-	if !changed || exit || model.mode != modeCompose || model.selectedChat != selected || model.composer.length != 0 {
-		t.Fatalf("changed=%t exit=%t mode=%d selected=%d draft=%q", changed, exit, model.mode, model.selectedChat, model.composer.text())
+	if !changed || exit || model.mode != modeCompose || model.chats.selected != selected || model.composer.length != 0 {
+		t.Fatalf("changed=%t exit=%t mode=%d selected=%d draft=%q", changed, exit, model.mode, model.chats.selected, model.composer.text())
 	}
 }
 
@@ -176,22 +176,22 @@ func TestComposeEscapeCancelsAndControlCExits(t *testing.T) {
 func TestComposeRunesDoNotNavigate(t *testing.T) {
 	model := defaultDemoView()
 	model.mode = modeCompose
-	selected := model.selectedChat
+	selected := model.chats.selected
 	for _, character := range "jk" {
 		changed, exit := handleKey(&model, tcell.NewEventKey(tcell.KeyRune, character, tcell.ModNone), 100, 30)
 		if !changed || exit {
 			t.Fatalf("rune %q changed=%t exit=%t", character, changed, exit)
 		}
 	}
-	if model.composer.text() != "jk" || model.selectedChat != selected {
-		t.Fatalf("draft=%q selected=%d", model.composer.text(), model.selectedChat)
+	if model.composer.text() != "jk" || model.chats.selected != selected {
+		t.Fatalf("draft=%q selected=%d", model.composer.text(), model.chats.selected)
 	}
 }
 
 func TestSubmitLocalMessageAndEmptySend(t *testing.T) {
 	model := defaultDemoView()
 	model.mode = modeCompose
-	chat := &model.chats[model.selectedChat]
+	chat := &model.chats.chats[model.chats.selected]
 	before := chat.messageCount
 	if changed, _ := handleKey(&model, tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone), 100, 30); changed || chat.messageCount != before {
 		t.Fatalf("empty send changed=%t count=%d", changed, chat.messageCount)
@@ -210,7 +210,7 @@ func TestSubmitLocalMessageAndEmptySend(t *testing.T) {
 func TestSubmitFullChatDropsOldest(t *testing.T) {
 	model := defaultDemoView()
 	model.mode = modeCompose
-	chat := &model.chats[0]
+	chat := &model.chats.chats[0]
 	chat.messageCount = maxMessages
 	for index := 0; index < maxMessages; index++ {
 		chat.messages[index] = messageView{time: "old", text: "old-" + twoDigits(index)}
@@ -227,12 +227,12 @@ func TestSubmitFullChatDropsOldest(t *testing.T) {
 func TestSyntheticSendIsIsolatedToSelectedChat(t *testing.T) {
 	model := defaultDemoView()
 	model.mode = modeCompose
-	otherCount := model.chats[1].messageCount
+	otherCount := model.chats.chats[1].messageCount
 	insertComposerText(t, &model.composer, "chat zero only")
 	if !submitLocalMessage(&model) {
 		t.Fatal("send rejected")
 	}
-	if model.chats[1].messageCount != otherCount || strings.Contains(model.chats[1].messages[otherCount-1].text, "chat zero only") {
+	if model.chats.chats[1].messageCount != otherCount || strings.Contains(model.chats.chats[1].messages[otherCount-1].text, "chat zero only") {
 		t.Fatal("message leaked into another chat")
 	}
 }

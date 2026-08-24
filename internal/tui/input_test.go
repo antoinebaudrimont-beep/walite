@@ -10,30 +10,30 @@ import (
 func TestHandleKeyJKChangesChatsAndArrowsFocusMessages(t *testing.T) {
 	model := defaultDemoView()
 	assertKeyChange(t, &model, tcell.NewEventKey(tcell.KeyUp, 0, tcell.ModNone), true)
-	if model.selectedChat != 0 || !model.replySelect.valid {
-		t.Fatalf("Up selected chat=%d message=%+v", model.selectedChat, model.replySelect)
+	if model.chats.selected != 0 || !model.replySelect.valid {
+		t.Fatalf("Up selected chat=%d message=%+v", model.chats.selected, model.replySelect)
 	}
 	assertKeyChange(t, &model, tcell.NewEventKey(tcell.KeyDown, 0, tcell.ModNone), false)
-	if model.selectedChat != 0 {
-		t.Fatalf("Down changed chat=%d", model.selectedChat)
+	if model.chats.selected != 0 {
+		t.Fatalf("Down changed chat=%d", model.chats.selected)
 	}
 	assertKeyChange(t, &model, tcell.NewEventKey(tcell.KeyRune, 'j', tcell.ModNone), true)
-	if model.selectedChat != 1 || model.replySelect.valid {
-		t.Fatalf("j selected=%d", model.selectedChat)
+	if model.chats.selected != 1 || model.replySelect.valid {
+		t.Fatalf("j selected=%d", model.chats.selected)
 	}
 	assertKeyChange(t, &model, tcell.NewEventKey(tcell.KeyRune, 'k', tcell.ModNone), true)
-	if model.selectedChat != 0 {
-		t.Fatalf("k selected=%d", model.selectedChat)
+	if model.chats.selected != 0 {
+		t.Fatalf("k selected=%d", model.chats.selected)
 	}
 }
 
 func TestHandleKeySelectionBoundsDoNotRedraw(t *testing.T) {
 	model := defaultDemoView()
 	assertKeyChange(t, &model, tcell.NewEventKey(tcell.KeyRune, 'k', tcell.ModNone), false)
-	model.selectedChat = model.chatCount - 1
+	model.chats.selected = model.chats.chatCount - 1
 	assertKeyChange(t, &model, tcell.NewEventKey(tcell.KeyRune, 'j', tcell.ModNone), false)
-	if model.selectedChat != model.chatCount-1 {
-		t.Fatalf("selected=%d", model.selectedChat)
+	if model.chats.selected != model.chats.chatCount-1 {
+		t.Fatalf("selected=%d", model.chats.selected)
 	}
 }
 
@@ -59,7 +59,7 @@ func TestHandleKeyScrollsAndClamps(t *testing.T) {
 	model := defaultDemoView()
 	width, height := 100, 12
 	newestStart, newestEnd := visibleMessageRange(&model, width, height)
-	if newestEnd != model.chats[0].messageCount || newestStart == 0 {
+	if newestEnd != model.chats.chats[0].messageCount || newestStart == 0 {
 		t.Fatalf("newest range=%d:%d", newestStart, newestEnd)
 	}
 
@@ -106,26 +106,26 @@ func TestControlScrollKeysAndChatChangeReset(t *testing.T) {
 	assertKeyChangeAtSize(t, &model, tcell.NewEventKey(tcell.KeyCtrlD, 0, tcell.ModNone), width, height, true)
 	assertKeyChangeAtSize(t, &model, tcell.NewEventKey(tcell.KeyPgUp, 0, tcell.ModNone), width, height, true)
 	assertKeyChangeAtSize(t, &model, tcell.NewEventKey(tcell.KeyRune, 'j', tcell.ModNone), width, height, true)
-	if model.selectedChat != 1 || model.scrollOffset != 0 {
-		t.Fatalf("selected=%d offset=%d", model.selectedChat, model.scrollOffset)
+	if model.chats.selected != 1 || model.scrollOffset != 0 {
+		t.Fatalf("selected=%d offset=%d", model.chats.selected, model.scrollOffset)
 	}
 }
 
 func TestClampViewPreservesSelectionAndBoundsScroll(t *testing.T) {
 	model := defaultDemoView()
-	model.selectedChat = 2
+	model.chats.selected = 2
 	model.scrollOffset = maxMessages
 	clampView(&model, 60, 10)
-	if model.selectedChat != 2 {
-		t.Fatalf("selected=%d", model.selectedChat)
+	if model.chats.selected != 2 {
+		t.Fatalf("selected=%d", model.chats.selected)
 	}
 	maximum := maximumScrollOffset(&model, 60, 10)
 	if model.scrollOffset != maximum {
 		t.Fatalf("offset=%d maximum=%d", model.scrollOffset, maximum)
 	}
 	clampView(&model, 100, 30)
-	if model.selectedChat != 2 || model.scrollOffset < 0 || model.scrollOffset > maximumScrollOffset(&model, 100, 30) {
-		t.Fatalf("selected=%d offset=%d", model.selectedChat, model.scrollOffset)
+	if model.chats.selected != 2 || model.scrollOffset < 0 || model.scrollOffset > maximumScrollOffset(&model, 100, 30) {
+		t.Fatalf("selected=%d offset=%d", model.chats.selected, model.scrollOffset)
 	}
 }
 

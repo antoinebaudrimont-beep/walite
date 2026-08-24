@@ -49,12 +49,9 @@ func handleKey(model *viewModel, event *tcell.EventKey, width, height int) (chan
 }
 
 func moveChatSelection(model *viewModel, delta int) bool {
-	next := model.selectedChat + delta
-	if next < 0 || next >= model.chatCount {
+	if !model.chats.moveSelection(delta) {
 		return false
 	}
-	model.selectedChat = next
-	model.chats[next].unreadCount = 0
 	model.scrollOffset = 0
 	model.replySelect = replySelectionState{}
 	model.replyTarget = replyTarget{}
@@ -151,21 +148,23 @@ func handleEmojiKey(model *viewModel, event *tcell.EventKey, width, height int) 
 
 func submitLocalMessage(model *viewModel) bool {
 	model.composer.normalize()
-	if model.composer.length == 0 || model.selectedChat < 0 || model.selectedChat >= model.chatCount {
+	if model.composer.length == 0 {
 		return false
 	}
-	chat := &model.chats[model.selectedChat]
-	message := messageView{id: model.allocateMessageID(), time: "now", text: model.composer.text()}
+	selectedIndex := model.chats.selectedIndex()
+	message := messageView{time: "now", text: model.composer.text()}
 	if model.replyTarget.valid {
 		message.replyToID = model.replyTarget.id
 		message.hasReply = true
 	}
-	appendBoundedMessage(chat, message)
+	if !model.chats.appendMessage(selectedIndex, message) {
+		return false
+	}
 	model.composer.clear()
 	model.replyTarget = replyTarget{}
 	model.replySelect = replySelectionState{}
 	model.scrollOffset = 0
-	touchChatActivity(model, model.selectedChat)
+	model.chats.promoteChatActivity(selectedIndex)
 	return true
 }
 
@@ -192,19 +191,16 @@ func scrollPage(model *viewModel, width, height int, older bool) bool {
 }
 
 func clampView(model *viewModel, width, height int) {
-	if model.chatCount < 1 {
-		model.selectedChat = 0
+	model.terminalWidth = width
+	model.terminalHeight = height
+	if model.chats.count() < 1 {
+		model.chats.clampSelection()
 		model.scrollOffset = 0
 		return
 	}
 	model.composer.normalize()
 	model.emojiPicker.clamp()
-	if model.selectedChat < 0 {
-		model.selectedChat = 0
-	}
-	if model.selectedChat >= model.chatCount {
-		model.selectedChat = model.chatCount - 1
-	}
+	model.chats.clampSelection()
 	if model.scrollOffset < 0 {
 		model.scrollOffset = 0
 	}

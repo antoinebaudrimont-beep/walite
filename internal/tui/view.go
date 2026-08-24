@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"strconv"
 	"strings"
 
 	"github.com/gdamore/tcell/v2"
@@ -11,87 +10,30 @@ import (
 const (
 	narrowWidth = 70
 	shortHeight = 8
-	maxChats    = 4
-	maxMessages = 32
 	prefixWidth = 7
 )
 
-type messageView struct {
-	id        messageID
-	time      string
-	text      string
-	replyToID messageID
-	hasReply  bool
-}
-
-type chatView struct {
-	title        string
-	messages     [maxMessages]messageView
-	messageCount int
-	unreadCount  uint16
-	activity     uint64
-}
-
 type viewModel struct {
-	chats           [maxChats]chatView
-	chatCount       int
-	selectedChat    int
+	chats           *chatState
 	scrollOffset    int
 	mode            inputMode
 	composer        composerState
 	emojiPicker     emojiPickerState
 	replySelect     replySelectionState
 	replyTarget     replyTarget
-	nextMessageID   messageID
-	nextActivity    uint64
+	terminalWidth   int
+	terminalHeight  int
 	preferencesPath string
 }
 
 func defaultDemoView() viewModel {
-	model := viewModel{
-		chats: [maxChats]chatView{
-			newDemoChat("Demo Chat", "Demo", 18),
-			newDemoChat("Project Room", "Project", 15),
-			newDemoChat("Family Demo", "Family-demo", 12),
-			newDemoChat("Test Contact", "Test-contact", 10),
-		},
-		chatCount:    maxChats,
-		nextActivity: maxChats + 1,
-	}
-	for index := 0; index < model.chatCount; index++ {
-		model.chats[index].activity = uint64(model.chatCount - index)
-	}
-	model.chats[0].messages[0] = messageView{time: "09:42", text: "Synthetic message one"}
-	model.chats[0].messages[1] = messageView{time: "09:45", text: "Synthetic reply"}
-	model.chats[0].messages[2] = messageView{time: "09:47", text: "Synthetic terminal preview"}
-	model.chats[0].messages[3] = messageView{time: "09:49", text: "Synthetic wrapping preview that stays bounded while demonstrating a longer conversation line"}
-	model.chats[1].unreadCount = 3
-	model.chats[2].unreadCount = 1
-	model.chats[3].unreadCount = 12
-	model.assignMessageIDs()
-	return model
-}
-
-func newDemoChat(title, label string, count int) chatView {
-	chat := chatView{title: title, messageCount: count}
-	for index := 0; index < count; index++ {
-		chat.messages[index] = messageView{
-			time: "10:" + twoDigits(index),
-			text: label + " synthetic message " + strconv.Itoa(index+1),
-		}
-	}
-	return chat
-}
-
-func twoDigits(value int) string {
-	if value < 10 {
-		return "0" + strconv.Itoa(value)
-	}
-	return strconv.Itoa(value)
+	return viewModel{chats: newDemoChatState()}
 }
 
 func draw(screen tcell.Screen, model *viewModel) {
 	width, height := screen.Size()
+	model.terminalWidth = width
+	model.terminalHeight = height
 	screen.Clear()
 	screen.HideCursor()
 	if width <= 0 || height <= 0 {
@@ -126,7 +68,11 @@ func drawCompact(screen tcell.Screen, model *viewModel, width, height int) {
 }
 
 func drawNarrow(screen tcell.Screen, model *viewModel, width, height int) {
-	chat := &model.chats[model.selectedChat]
+	selectedIndex := model.chats.selectedIndex()
+	chat, ok := model.chats.selectedChat()
+	if !ok {
+		return
+	}
 	replyRows := 0
 	if model.replyTarget.valid {
 		replyRows = 1
@@ -135,10 +81,10 @@ func drawNarrow(screen tcell.Screen, model *viewModel, width, height int) {
 	putText(screen, 0, 0, width, title, tcell.StyleDefault.Bold(true))
 	putText(screen, 0, 2, width, chat.title, tcell.StyleDefault.Bold(true))
 	start, end := visibleMessageRange(model, width, height)
-	drawMessages(screen, model, chat, start, end, 0, 4, width, composeSeparator)
+	drawMessages(screen, model, selectedIndex, chat, start, end, 0, 4, width, composeSeparator)
 	drawHorizontal(screen, 0, width-1, composeSeparator, '─')
 	if replyRows > 0 {
-		drawReplyPreview(screen, model, chat, 0, composeSeparator+1, width, replyRows)
+		drawReplyPreview(screen, model, selectedIndex, 0, composeSeparator+1, width, replyRows)
 	}
 	drawComposer(screen, model, 0, height-2, width)
 	footer := navigationFooter(model, true)
@@ -181,15 +127,22 @@ func drawTwoPane(screen tcell.Screen, model *viewModel, width, height int) {
 	setRune(screen, 0, height-1, '└')
 	setRune(screen, width-1, height-1, '┘')
 
-	chat := &model.chats[model.selectedChat]
+	selectedIndex := model.chats.selectedIndex()
+	chat, ok := model.chats.selectedChat()
+	if !ok {
+		return
+	}
 	putText(screen, 2, 1, separator-2, title, tcell.StyleDefault.Bold(true))
 	putText(screen, separator+2, 1, width-2, chat.title, tcell.StyleDefault.Bold(true))
 
 	chatY := 3
-	for index := 0; index < model.chatCount && chatY+index < footerTop; index++ {
+	for index := 0; index < model.chats.count() && chatY+index < footerTop; index++ {
 		y := chatY + index
-		chat := &model.chats[index]
-		selected := index == model.selectedChat
+		chat, ok := model.chats.chatAt(index)
+		if !ok {
+			break
+		}
+		selected := index == selectedIndex
 		style := tcell.StyleDefault.Bold(chat.unreadCount > 0).Reverse(selected)
 		if selected {
 			for x := 1; x < separator; x++ {
@@ -201,9 +154,9 @@ func drawTwoPane(screen tcell.Screen, model *viewModel, width, height int) {
 	}
 
 	start, end := visibleMessageRange(model, width, height)
-	drawMessages(screen, model, chat, start, end, separator+2, 3, width-2, composeSeparator)
+	drawMessages(screen, model, selectedIndex, chat, start, end, separator+2, 3, width-2, composeSeparator)
 	if replyRows > 0 {
-		drawReplyPreview(screen, model, chat, separator+2, composeSeparator+1, width-2, replyRows)
+		drawReplyPreview(screen, model, selectedIndex, separator+2, composeSeparator+1, width-2, replyRows)
 	}
 	drawComposer(screen, model, separator+2, composeRow, width-2)
 	footer := navigationFooter(model, false)
@@ -295,9 +248,9 @@ func visibleDraftSpan(composer *composerState, width int) (start, end, cursorCel
 	return start, end, cursorCells
 }
 
-func drawReplyPreview(screen tcell.Screen, model *viewModel, chat *chatView, x, y, limit, rows int) {
+func drawReplyPreview(screen tcell.Screen, model *viewModel, chatIndex, x, y, limit, rows int) {
 	reference := "original message unavailable"
-	if original, ok := findMessageByID(chat, model.replyTarget.id); ok {
+	if original, ok := model.chats.findMessageByID(chatIndex, model.replyTarget.id); ok {
 		reference = original.time + "  " + original.text
 	}
 	if rows == 1 {
@@ -308,14 +261,14 @@ func drawReplyPreview(screen tcell.Screen, model *viewModel, chat *chatView, x, 
 	putText(screen, x, y+1, limit, truncateDisplayWidth(reference, limit-x), tcell.StyleDefault)
 }
 
-func drawMessages(screen tcell.Screen, model *viewModel, chat *chatView, start, end, x, y, limit, bottom int) {
+func drawMessages(screen tcell.Screen, model *viewModel, chatIndex int, chat *chatView, start, end, x, y, limit, bottom int) {
 	for index := start; index < end && y < bottom; index++ {
 		selected := model.replySelect.valid && model.replySelect.index == index
-		y += drawMessage(screen, chat, chat.messages[index], x, y, limit, bottom, selected)
+		y += drawMessage(screen, model.chats, chatIndex, chat.messages[index], x, y, limit, bottom, selected)
 	}
 }
 
-func drawMessage(screen tcell.Screen, chat *chatView, message messageView, x, y, limit, bottom int, selected bool) int {
+func drawMessage(screen tcell.Screen, chats *chatState, chatIndex int, message messageView, x, y, limit, bottom int, selected bool) int {
 	if y >= bottom || x >= limit {
 		return 0
 	}
@@ -332,7 +285,7 @@ func drawMessage(screen tcell.Screen, chat *chatView, message messageView, x, y,
 			putText(screen, x, y+rows, x+5, message.time, style)
 		}
 		reference := "↪ original message unavailable"
-		if original, ok := findMessageByID(chat, message.replyToID); ok {
+		if original, ok := chats.findMessageByID(chatIndex, message.replyToID); ok {
 			reference = "↪ " + original.time + " " + original.text
 		}
 		putText(screen, bodyX, y+rows, limit, truncateDisplayWidth(reference, limit-bodyX), style)
@@ -362,10 +315,10 @@ func fillMessageRow(screen tcell.Screen, x, y, limit int, style tcell.Style) {
 }
 
 func visibleMessageRange(model *viewModel, width, height int) (int, int) {
-	if model.chatCount == 0 || model.selectedChat < 0 || model.selectedChat >= model.chatCount {
+	chat, ok := model.chats.selectedChat()
+	if !ok {
 		return 0, 0
 	}
-	chat := &model.chats[model.selectedChat]
 	messageWidth, rows := conversationViewport(model, width, height)
 	if chat.messageCount == 0 || messageWidth <= 0 || rows <= 0 {
 		return 0, 0
@@ -396,10 +349,10 @@ func visibleMessageRange(model *viewModel, width, height int) (int, int) {
 }
 
 func maximumScrollOffset(model *viewModel, width, height int) int {
-	if model.chatCount == 0 || model.selectedChat < 0 || model.selectedChat >= model.chatCount {
+	chat, ok := model.chats.selectedChat()
+	if !ok {
 		return 0
 	}
-	chat := &model.chats[model.selectedChat]
 	messageWidth, rows := conversationViewport(model, width, height)
 	if chat.messageCount == 0 || messageWidth <= 0 || rows <= 0 {
 		return 0
