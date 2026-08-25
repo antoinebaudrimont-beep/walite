@@ -16,20 +16,27 @@ import (
 
 type startupObservedScreen struct {
 	tcell.SimulationScreen
-	shown    chan struct{}
-	finiOnce sync.Once
+	shown       chan struct{}
+	finiOnce    sync.Once
+	initErr     error
+	initialized bool
 }
 
-func newStartupObservedScreen(t *testing.T) *startupObservedScreen {
-	t.Helper()
-	screen := &startupObservedScreen{SimulationScreen: tcell.NewSimulationScreen("UTF-8"), shown: make(chan struct{}, 2)}
-	return screen
+func newStartupObservedScreen() *startupObservedScreen {
+	return &startupObservedScreen{
+		SimulationScreen: tcell.NewSimulationScreen("UTF-8"),
+		shown:            make(chan struct{}, 4),
+	}
 }
 
 func (screen *startupObservedScreen) Init() error {
+	if screen.initErr != nil {
+		return screen.initErr
+	}
 	if err := screen.SimulationScreen.Init(); err != nil {
 		return err
 	}
+	screen.initialized = true
 	screen.SetSize(100, 30)
 	return nil
 }
@@ -43,32 +50,85 @@ func (screen *startupObservedScreen) Fini() {
 	screen.finiOnce.Do(screen.SimulationScreen.Fini)
 }
 
-func TestTUIInteractiveBeforeFakeHistoryRelease(t *testing.T) {
-	privateHome := t.TempDir()
-	t.Setenv("HOME", privateHome)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(privateHome, "config"))
+type staticUIStore struct {
+	settings config.UI
+	loadErr  error
+}
 
+func (store staticUIStore) Load() (config.UI, error) { return store.settings, store.loadErr }
+func (staticUIStore) Save(config.UI) error           { return nil }
+
+type observedApplicationService struct {
+	delegate applicationService
+	started  chan struct{}
+	done     chan struct{}
+}
+
+func observeApplicationService(delegate applicationService) *observedApplicationService {
+	return &observedApplicationService{
+		delegate: delegate,
+		started:  make(chan struct{}),
+		done:     make(chan struct{}),
+	}
+}
+
+func (observed *observedApplicationService) Run(ctx context.Context) error {
+	close(observed.started)
+	defer close(observed.done)
+	return observed.delegate.Run(ctx)
+}
+
+func (observed *observedApplicationService) Updates() <-chan model.Update {
+	return observed.delegate.Updates()
+}
+
+func TestConfigOptionsMapping(t *testing.T) {
+	settings := config.UI{
+		Theme:          config.ThemeDefault,
+		ShowTimestamps: false,
+		ConfirmQuit:    true,
+	}
+	if got, want := optionsFromConfig(settings), (tui.Options{
+		Theme:          tui.ThemeDefault,
+		ShowTimestamps: false,
+		ConfirmQuit:    true,
+	}); got != want {
+		t.Fatalf("optionsFromConfig()=%+v want=%+v", got, want)
+	}
+}
+
+func TestProductionServiceStartsBeforeInteractiveTUIAndIsJoined(t *testing.T) {
+	isolateApplicationFiles(t)
 	scenario, err := newDemoScenario(defaultDemoValues(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	serviceDone := make(chan error, 1)
-	go func() { serviceDone <- scenario.core.Run(context.Background()) }()
-	first, ok := <-scenario.core.Updates()
-	if !ok || first.Kind() != model.UpdateReady {
-		t.Fatalf("first service update=%v open=%t", first.Kind(), ok)
-	}
+	observedService := observeApplicationService(scenario.core)
+	screen := newStartupObservedScreen()
+	applicationDone := make(chan error, 1)
+	go func() {
+		applicationDone <- runApplication(context.Background(), screen, applicationDependencies{
+			configuration: staticUIStore{settings: config.UI{
+				Theme:          config.ThemeDefault,
+				ShowTimestamps: false,
+				ConfirmQuit:    true,
+			}},
+			newService: func() (applicationService, error) {
+				return observedService, nil
+			},
+			runTUI: tui.Run,
+		})
+	}()
 
-	screen := newStartupObservedScreen(t)
-	tuiCtx, cancelTUI := context.WithCancel(context.Background())
-	defer cancelTUI()
-	tuiDone := make(chan error, 1)
-	go func() { tuiDone <- tui.Run(tuiCtx, screen) }()
+	<-observedService.started
 	<-screen.shown
-	screen.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
-	<-screen.shown
-	if text := startupScreenText(screen); !strings.Contains(text, "Enter send") {
-		t.Fatalf("TUI was not interactive before history release:\n%s", text)
+	if text := startupScreenText(screen); strings.Contains(text, "09:42") || !strings.Contains(text, "Synthetic message one") {
+		t.Fatalf("mapped hidden-timestamp option not applied:\n%s", text)
+	}
+	select {
+	case err := <-applicationDone:
+		t.Fatalf("application stopped before input: %v", err)
+	default:
 	}
 	select {
 	case <-scenario.historyStart:
@@ -76,23 +136,188 @@ func TestTUIInteractiveBeforeFakeHistoryRelease(t *testing.T) {
 	default:
 	}
 
-	close(scenario.historyStart)
-	for update := range scenario.core.Updates() {
-		if update.Kind() == model.UpdateLive {
-			select {
-			case <-scenario.gated.releaseFirstHistory:
-			default:
-				close(scenario.gated.releaseFirstHistory)
-			}
-		}
+	screen.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
+	<-screen.shown
+	if text := startupScreenText(screen); !strings.Contains(text, "Enter send") {
+		t.Fatalf("TUI did not process input while service was alive:\n%s", text)
 	}
-	if err := <-serviceDone; err != nil {
+	screen.InjectKey(tcell.KeyCtrlC, 0, tcell.ModNone)
+	if err := <-applicationDone; err != nil {
+		t.Fatalf("runApplication=%v", err)
+	}
+	select {
+	case <-observedService.done:
+	default:
+		t.Fatal("service owner was not joined before application return")
+	}
+}
+
+func TestConfigLoadFailureDoesNotConstructServiceOrInitializeScreen(t *testing.T) {
+	failure := errors.New("synthetic config failure")
+	serviceConstructed := false
+	screen := newStartupObservedScreen()
+	err := runApplication(context.Background(), screen, applicationDependencies{
+		configuration: staticUIStore{loadErr: failure},
+		newService: func() (applicationService, error) {
+			serviceConstructed = true
+			return nil, nil
+		},
+		runTUI: tui.Run,
+	})
+	if !errors.Is(err, failure) || !strings.Contains(err.Error(), "load configuration") {
+		t.Fatalf("runApplication=%v", err)
+	}
+	if serviceConstructed || screen.initialized {
+		t.Fatalf("serviceConstructed=%t screenInitialized=%t", serviceConstructed, screen.initialized)
+	}
+}
+
+func TestServiceConstructionFailureDoesNotInitializeScreen(t *testing.T) {
+	failure := errors.New("synthetic construction failure")
+	screen := newStartupObservedScreen()
+	err := runApplication(context.Background(), screen, applicationDependencies{
+		configuration: staticUIStore{settings: config.DefaultUI()},
+		newService: func() (applicationService, error) {
+			return nil, failure
+		},
+		runTUI: tui.Run,
+	})
+	if !errors.Is(err, failure) || !strings.Contains(err.Error(), "construct service") {
+		t.Fatalf("runApplication=%v", err)
+	}
+	if screen.initialized {
+		t.Fatal("screen initialized after service construction failure")
+	}
+}
+
+type startupFailingService struct {
+	updates chan model.Update
+	failure error
+	done    chan struct{}
+}
+
+func newStartupFailingService(failure error) *startupFailingService {
+	return &startupFailingService{updates: make(chan model.Update), failure: failure, done: make(chan struct{})}
+}
+
+func (failing *startupFailingService) Run(context.Context) error {
+	close(failing.updates)
+	close(failing.done)
+	return failing.failure
+}
+
+func (failing *startupFailingService) Updates() <-chan model.Update { return failing.updates }
+
+func TestServiceStartFailureDoesNotInitializeScreen(t *testing.T) {
+	failure := errors.New("synthetic service start failure")
+	failingService := newStartupFailingService(failure)
+	screen := newStartupObservedScreen()
+	err := runApplication(context.Background(), screen, applicationDependencies{
+		configuration: staticUIStore{settings: config.DefaultUI()},
+		newService: func() (applicationService, error) {
+			return failingService, nil
+		},
+		runTUI: tui.Run,
+	})
+	if !errors.Is(err, failure) || !strings.Contains(err.Error(), "start service") {
+		t.Fatalf("runApplication=%v", err)
+	}
+	if screen.initialized {
+		t.Fatal("screen initialized after service start failure")
+	}
+	select {
+	case <-failingService.done:
+	default:
+		t.Fatal("failed service owner was not joined")
+	}
+}
+
+func TestScreenInitializationFailureStopsAndJoinsService(t *testing.T) {
+	scenario, err := newDemoScenario(defaultDemoValues(t))
+	if err != nil {
 		t.Fatal(err)
 	}
-	cancelTUI()
-	if err := <-tuiDone; !errors.Is(err, context.Canceled) {
-		t.Fatalf("TUI Run=%v", err)
+	observedService := observeApplicationService(scenario.core)
+	failure := errors.New("synthetic screen initialization failure")
+	screen := newStartupObservedScreen()
+	screen.initErr = failure
+	err = runApplication(context.Background(), screen, applicationDependencies{
+		configuration: staticUIStore{settings: config.DefaultUI()},
+		newService: func() (applicationService, error) {
+			return observedService, nil
+		},
+		runTUI: tui.Run,
+	})
+	if !errors.Is(err, failure) || !strings.Contains(err.Error(), "run tui") {
+		t.Fatalf("runApplication=%v", err)
 	}
+	select {
+	case <-observedService.done:
+	default:
+		t.Fatal("service owner was not joined after TUI initialization failure")
+	}
+}
+
+func TestApplicationStopsAndJoinsServiceOnEscapeAndContextCancellation(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		stop func(context.CancelFunc, *startupObservedScreen)
+		want error
+	}{
+		{
+			name: "escape",
+			stop: func(_ context.CancelFunc, screen *startupObservedScreen) {
+				screen.InjectKey(tcell.KeyEscape, 0, tcell.ModNone)
+			},
+		},
+		{
+			name: "context cancellation",
+			stop: func(cancel context.CancelFunc, _ *startupObservedScreen) {
+				cancel()
+			},
+			want: context.Canceled,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			isolateApplicationFiles(t)
+			scenario, err := newDemoScenario(defaultDemoValues(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			observedService := observeApplicationService(scenario.core)
+			screen := newStartupObservedScreen()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			applicationDone := make(chan error, 1)
+			go func() {
+				applicationDone <- runApplication(ctx, screen, applicationDependencies{
+					configuration: staticUIStore{settings: config.DefaultUI()},
+					newService: func() (applicationService, error) {
+						return observedService, nil
+					},
+					runTUI: tui.Run,
+				})
+			}()
+			<-screen.shown
+			test.stop(cancel, screen)
+			err = <-applicationDone
+			if !errors.Is(err, test.want) || (test.want == nil && err != nil) {
+				t.Fatalf("runApplication=%v want=%v", err, test.want)
+			}
+			select {
+			case <-observedService.done:
+			default:
+				t.Fatal("service owner was not joined")
+			}
+		})
+	}
+}
+
+func isolateApplicationFiles(t *testing.T) {
+	t.Helper()
+	privateHome := t.TempDir()
+	t.Setenv("HOME", privateHome)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(privateHome, "config"))
 }
 
 func defaultDemoValues(t *testing.T) config.Values {

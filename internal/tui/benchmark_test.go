@@ -9,45 +9,39 @@ import (
 	"testing"
 	"time"
 
-	"github.com/antoinebaudrimont-beep/walite/internal/config"
 	"github.com/gdamore/tcell/v2"
 )
 
 func BenchmarkFirstFrameCold(b *testing.B) {
 	root := b.TempDir()
-	benchmarkFirstFrame(b, func(iteration int) (config.UIStore, ChatStateStore) {
+	benchmarkFirstFrame(b, func(iteration int) ChatStateStore {
 		directory := filepath.Join(root, strconv.Itoa(iteration))
-		return config.NewUIFileStore(filepath.Join(directory, "config.json")),
-			newFileChatStateStore(filepath.Join(directory, "state.json"))
+		return newFileChatStateStore(filepath.Join(directory, "state.json"))
 	})
 }
 
 func BenchmarkFirstFrameWarm(b *testing.B) {
 	root := b.TempDir()
-	configurationStore := config.NewUIFileStore(filepath.Join(root, "config.json"))
 	chatStore := newFileChatStateStore(filepath.Join(root, "state.json"))
-	if err := configurationStore.Save(config.DefaultUI()); err != nil {
-		b.Fatal(err)
-	}
 	if err := chatStore.Save(newDemoChatState()); err != nil {
 		b.Fatal(err)
 	}
-	benchmarkFirstFrame(b, func(int) (config.UIStore, ChatStateStore) {
-		return configurationStore, chatStore
+	benchmarkFirstFrame(b, func(int) ChatStateStore {
+		return chatStore
 	})
 }
 
-func benchmarkFirstFrame(b *testing.B, stores func(int) (config.UIStore, ChatStateStore)) {
+func benchmarkFirstFrame(b *testing.B, stores func(int) ChatStateStore) {
 	b.ReportAllocs()
 	for iteration := 0; iteration < b.N; iteration++ {
 		b.StopTimer()
-		configurationStore, chatStore := stores(iteration)
+		chatStore := stores(iteration)
 		screen := newObservedScreen(100, 30)
 		ctx, cancel := context.WithCancel(context.Background())
 		result := make(chan error, 1)
 		b.StartTimer()
 		go func() {
-			result <- runWithDependencies(ctx, screen, configurationStore, "", chatStore)
+			result <- runWithDependencies(ctx, screen, DefaultOptions(), "", chatStore)
 		}()
 		<-screen.shown
 		b.StopTimer()

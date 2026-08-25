@@ -13,9 +13,9 @@ func drawSettingsPopup(screen tcell.Screen, model *viewModel, width, height int)
 	}
 	lines := []string{
 		"Settings",
-		"Theme: " + string(model.configuration.Theme),
-		"Time: " + enabledLabel(model.configuration.ShowTimestamps),
-		"Confirm quit: " + yesNoLabel(model.configuration.ConfirmQuit),
+		"Theme: " + model.options.Theme,
+		"Time: " + enabledLabel(model.options.ShowTimestamps),
+		"Confirm quit: " + yesNoLabel(model.options.ConfirmQuit),
 		"",
 		"Esc close",
 	}

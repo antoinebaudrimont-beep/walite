@@ -4,7 +4,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/antoinebaudrimont-beep/walite/internal/config"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/uniseg"
 )
@@ -24,7 +23,7 @@ type viewModel struct {
 	emojiPicker     emojiPickerState
 	replySelect     replySelectionState
 	replyTarget     replyTarget
-	configuration   config.UI
+	options         Options
 	settingsOpen    bool
 	terminalWidth   int
 	terminalHeight  int
@@ -32,7 +31,7 @@ type viewModel struct {
 }
 
 func defaultDemoView() viewModel {
-	return viewModel{chats: newDemoChatState(), configuration: config.DefaultUI()}
+	return viewModel{chats: newDemoChatState(), options: DefaultOptions()}
 }
 
 func draw(screen tcell.Screen, model *viewModel) {
@@ -281,7 +280,7 @@ func drawReplyPreview(screen tcell.Screen, model *viewModel, chatIndex, x, y, li
 	reference := "original message unavailable"
 	if original, ok := model.chats.findMessageByID(chatIndex, model.replyTarget.id); ok {
 		reference = original.text
-		if model.configuration.ShowTimestamps {
+		if model.options.ShowTimestamps {
 			reference = timestampText(original.time) + "  " + reference
 		}
 	}
@@ -314,7 +313,7 @@ func drawMessage(screen tcell.Screen, model *viewModel, chatIndex int, message m
 	style := tcell.StyleDefault.Reverse(selected)
 	width := limit - x
 	bodyX := x
-	showTimestamp := model.configuration.ShowTimestamps && width > prefixWidth
+	showTimestamp := model.options.ShowTimestamps && width > prefixWidth
 	if showTimestamp {
 		bodyX += prefixWidth
 	}
@@ -327,7 +326,7 @@ func drawMessage(screen tcell.Screen, model *viewModel, chatIndex int, message m
 		reference := "↪ original message unavailable"
 		if original, ok := model.chats.findMessageByID(chatIndex, message.replyToID); ok {
 			reference = "↪ " + original.text
-			if model.configuration.ShowTimestamps {
+			if model.options.ShowTimestamps {
 				reference = "↪ " + timestampText(original.time) + " " + original.text
 			}
 		}
@@ -443,7 +442,7 @@ func maximumScrollOffset(model *viewModel, width, height int) int {
 }
 
 func renderedMessageLines(model *viewModel, message messageView, width int) int {
-	lines := wrappedMessageLines(message, width, model.configuration.ShowTimestamps)
+	lines := wrappedMessageLines(message, width, model.options.ShowTimestamps)
 	if model.chatView.hasUnreadBoundary(message) {
 		lines++
 	}

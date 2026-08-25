@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/antoinebaudrimont-beep/walite/internal/config"
 	"github.com/gdamore/tcell/v2"
 )
 
@@ -15,63 +14,56 @@ const title = "walite"
 // Run initializes screen, displays the first frame, and processes terminal
 // events until the context is canceled or the user requests exit. Run always
 // finalizes a successfully initialized screen before returning.
-func Run(ctx context.Context, screen tcell.Screen) error {
+func Run(ctx context.Context, screen tcell.Screen, options Options) error {
 	if ctx == nil || screen == nil {
 		return errors.New("tui rejected")
+	}
+	if err := options.validate(); err != nil {
+		return err
 	}
 	preferencesPath := ""
 	if path, err := defaultPreferencesPath(); err == nil {
 		preferencesPath = path
 	}
-	configurationStore, err := config.NewDefaultUIStore()
-	if err != nil {
-		return fmt.Errorf("configuration store: %w", err)
-	}
 	store, err := newDefaultChatStateStore()
 	if err != nil {
 		return fmt.Errorf("chat state store: %w", err)
 	}
-	return runWithDependencies(ctx, screen, configurationStore, preferencesPath, store)
+	return runWithDependencies(ctx, screen, options, preferencesPath, store)
 }
 
 func runWithPreferences(ctx context.Context, screen tcell.Screen, preferencesPath string) error {
-	return runWithDependencies(ctx, screen, nil, preferencesPath, nil)
+	return runWithDependencies(ctx, screen, DefaultOptions(), preferencesPath, nil)
 }
 
 func runWithStore(ctx context.Context, screen tcell.Screen, preferencesPath string, store ChatStateStore) (runErr error) {
-	return runWithDependencies(ctx, screen, nil, preferencesPath, store)
+	return runWithDependencies(ctx, screen, DefaultOptions(), preferencesPath, store)
 }
 
 func runWithDependencies(
 	ctx context.Context,
 	screen tcell.Screen,
-	configurationStore config.UIStore,
+	options Options,
 	preferencesPath string,
 	store ChatStateStore,
 ) (runErr error) {
 	if ctx == nil || screen == nil {
 		return errors.New("tui rejected")
 	}
+	if err := options.validate(); err != nil {
+		return err
+	}
 	if err := screen.Init(); err != nil {
 		return err
 	}
 
 	screen.HideCursor()
-	configuration := config.DefaultUI()
-	if configurationStore != nil {
-		loadedConfiguration, err := configurationStore.Load()
-		if err != nil {
-			screen.Fini()
-			return fmt.Errorf("load configuration: %w", err)
-		}
-		configuration = loadedConfiguration
-	}
 	state, err := loadChatStateOrDemo(store)
 	if err != nil {
 		screen.Fini()
 		return fmt.Errorf("load chat state: %w", err)
 	}
-	model := viewModel{chats: state, configuration: configuration}
+	model := viewModel{chats: state, options: options}
 	if selectedChat, ok := model.chats.selectedChat(); ok {
 		model.chatView.unreadBoundary = unreadBoundaryForChat(selectedChat)
 		selectedChat.unreadCount = 0

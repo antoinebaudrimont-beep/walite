@@ -1,0 +1,166 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/antoinebaudrimont-beep/walite/internal/config"
+	"github.com/antoinebaudrimont-beep/walite/internal/model"
+	"github.com/antoinebaudrimont-beep/walite/internal/tui"
+	"github.com/gdamore/tcell/v2"
+)
+
+var errServiceStopped = errors.New("service stopped before application shutdown")
+
+type applicationService interface {
+	Run(context.Context) error
+	Updates() <-chan model.Update
+}
+
+type applicationDependencies struct {
+	configuration config.UIStore
+	newService    func() (applicationService, error)
+	runTUI        func(context.Context, tcell.Screen, tui.Options) error
+}
+
+func run(ctx context.Context, screen tcell.Screen) error {
+	configurationStore, err := config.NewDefaultUIStore()
+	if err != nil {
+		return fmt.Errorf("configuration store: %w", err)
+	}
+	return runApplication(ctx, screen, applicationDependencies{
+		configuration: configurationStore,
+		newService:    newOfflineApplicationService,
+		runTUI:        tui.Run,
+	})
+}
+
+func newOfflineApplicationService() (applicationService, error) {
+	scenario, err := newDemoScenario(config.DefaultValues())
+	if err != nil {
+		return nil, err
+	}
+	return scenario.core, nil
+}
+
+func runApplication(ctx context.Context, screen tcell.Screen, dependencies applicationDependencies) error {
+	if ctx == nil || screen == nil || dependencies.configuration == nil ||
+		dependencies.newService == nil || dependencies.runTUI == nil {
+		return errors.New("application rejected")
+	}
+	settings, err := dependencies.configuration.Load()
+	if err != nil {
+		return fmt.Errorf("load configuration: %w", err)
+	}
+	serviceCore, err := dependencies.newService()
+	if err != nil {
+		return fmt.Errorf("construct service: %w", err)
+	}
+	if serviceCore == nil {
+		return errors.New("construct service: no service")
+	}
+	return runStartedApplication(ctx, screen, optionsFromConfig(settings), serviceCore, dependencies.runTUI)
+}
+
+func optionsFromConfig(settings config.UI) tui.Options {
+	return tui.Options{
+		Theme:          string(settings.Theme),
+		ShowTimestamps: settings.ShowTimestamps,
+		ConfirmQuit:    settings.ConfirmQuit,
+	}
+}
+
+func runStartedApplication(
+	parent context.Context,
+	screen tcell.Screen,
+	options tui.Options,
+	serviceCore applicationService,
+	runTUI func(context.Context, tcell.Screen, tui.Options) error,
+) error {
+	runCtx, cancel := context.WithCancel(parent)
+	defer cancel()
+
+	serviceDone := make(chan error, 1)
+	go func() { serviceDone <- serviceCore.Run(runCtx) }()
+	if err := awaitServiceReady(serviceCore.Updates(), serviceDone); err != nil {
+		cancel()
+		return err
+	}
+
+	updatesDone := make(chan struct{})
+	go func() {
+		defer close(updatesDone)
+		for range serviceCore.Updates() {
+		}
+	}()
+
+	tuiDone := make(chan error, 1)
+	go func() { tuiDone <- runTUI(runCtx, screen, options) }()
+
+	select {
+	case tuiErr := <-tuiDone:
+		cancel()
+		serviceErr := <-serviceDone
+		<-updatesDone
+		return applicationResultAfterTUI(parent, tuiErr, serviceErr)
+	case serviceErr := <-serviceDone:
+		cancel()
+		tuiErr := <-tuiDone
+		<-updatesDone
+		return applicationResultAfterService(parent, serviceErr, tuiErr)
+	}
+}
+
+func awaitServiceReady(updates <-chan model.Update, serviceDone <-chan error) error {
+	for {
+		select {
+		case update, ok := <-updates:
+			if !ok {
+				serviceErr := <-serviceDone
+				if serviceErr == nil {
+					serviceErr = errServiceStopped
+				}
+				return fmt.Errorf("start service: %w", serviceErr)
+			}
+			if update.Kind() == model.UpdateReady {
+				return nil
+			}
+		case serviceErr := <-serviceDone:
+			if serviceErr == nil {
+				serviceErr = errServiceStopped
+			}
+			return fmt.Errorf("start service: %w", serviceErr)
+		}
+	}
+}
+
+func applicationResultAfterTUI(parent context.Context, tuiErr, serviceErr error) error {
+	if tuiErr != nil && !errors.Is(tuiErr, context.Canceled) {
+		if serviceErr != nil && !errors.Is(serviceErr, context.Canceled) {
+			return errors.Join(fmt.Errorf("run tui: %w", tuiErr), fmt.Errorf("stop service: %w", serviceErr))
+		}
+		return fmt.Errorf("run tui: %w", tuiErr)
+	}
+	if serviceErr != nil && !errors.Is(serviceErr, context.Canceled) {
+		return fmt.Errorf("stop service: %w", serviceErr)
+	}
+	if err := parent.Err(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func applicationResultAfterService(parent context.Context, serviceErr, tuiErr error) error {
+	if err := parent.Err(); err != nil && errors.Is(serviceErr, context.Canceled) {
+		return err
+	}
+	if serviceErr == nil {
+		serviceErr = errServiceStopped
+	}
+	serviceFailure := fmt.Errorf("run service: %w", serviceErr)
+	if tuiErr != nil && !errors.Is(tuiErr, context.Canceled) {
+		return errors.Join(serviceFailure, fmt.Errorf("run tui: %w", tuiErr))
+	}
+	return serviceFailure
+}

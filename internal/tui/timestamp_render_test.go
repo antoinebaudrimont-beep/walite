@@ -8,7 +8,7 @@ import (
 func TestMessageTimestampsUseFixedPrefixAndAlignedContinuation(t *testing.T) {
 	screen := initializedSimulationScreen(t, 30, 8)
 	model := defaultDemoView()
-	model.configuration.ShowTimestamps = true
+	model.options.ShowTimestamps = true
 
 	first := messageView{time: "now", text: "abcdefghijklmno"}
 	second := messageView{time: "10:14", text: "second"}
@@ -30,7 +30,7 @@ func TestMessageTimestampsUseFixedPrefixAndAlignedContinuation(t *testing.T) {
 func TestHiddenTimestampsReclaimWidthAndChangeWrapping(t *testing.T) {
 	screen := initializedSimulationScreen(t, 30, 8)
 	model := defaultDemoView()
-	model.configuration.ShowTimestamps = false
+	model.options.ShowTimestamps = false
 	message := messageView{time: "10:14", text: strings.Repeat("x", 30)}
 
 	if shown, hidden := wrappedMessageLines(message, 18, true), wrappedMessageLines(message, 18, false); shown != 3 || hidden != 2 {
@@ -50,7 +50,7 @@ func TestReplyAlignmentHonorsTimestampConfiguration(t *testing.T) {
 	for _, show := range []bool{true, false} {
 		screen := initializedSimulationScreen(t, 50, 8)
 		model := defaultDemoView()
-		model.configuration.ShowTimestamps = show
+		model.options.ShowTimestamps = show
 		original := model.chats.chats[0].messages[0]
 		reply := messageView{time: "10:20", text: "reply body", hasReply: true, replyToID: original.id}
 		drawMessage(screen, &model, 0, reply, 0, 0, 48, 8, false)
@@ -76,9 +76,9 @@ func TestTimestampConfigurationAffectsViewportCalculations(t *testing.T) {
 		chat.messages[index] = messageView{id: messageID(index + 1), time: "10:14", text: strings.Repeat("x", 40)}
 	}
 	width, height := 70, 12
-	model.configuration.ShowTimestamps = true
+	model.options.ShowTimestamps = true
 	shownStart, shownEnd := visibleMessageRange(&model, width, height)
-	model.configuration.ShowTimestamps = false
+	model.options.ShowTimestamps = false
 	hiddenStart, hiddenEnd := visibleMessageRange(&model, width, height)
 	if shownEnd != chat.messageCount || hiddenEnd != chat.messageCount || hiddenStart >= shownStart {
 		t.Fatalf("shown=%d:%d hidden=%d:%d", shownStart, shownEnd, hiddenStart, hiddenEnd)

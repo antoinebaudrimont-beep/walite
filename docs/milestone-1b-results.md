@@ -170,3 +170,16 @@ unchanged.
 Reproduce measurements on another target machine with the benchmark command
 above. Results from any machine other than the environment recorded here must
 be labeled separately rather than substituted for these measurements.
+
+## Milestone 2.1 follow-up
+
+Milestone 2.1 resolves the two blocking application-integration deviations
+identified above: `internal/tui` no longer imports `internal/config`, and
+production startup now constructs, starts, cancels, and joins the existing
+offline `service.Core` around the TUI lifecycle. Configuration loading and the
+`config.UI` to `tui.Options` mapping now belong to `cmd/walite`.
+
+This follow-up does not alter the historical Milestone 1B measurements or claim
+that TUI chat data is service-driven. Prototype JSON chat persistence, emoji
+preference I/O, synthetic TUI data, and full-screen event redraw remain as
+documented temporary deviations.

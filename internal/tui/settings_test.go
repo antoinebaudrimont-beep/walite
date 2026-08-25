@@ -2,12 +2,9 @@ package tui
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/antoinebaudrimont-beep/walite/internal/config"
 	"github.com/gdamore/tcell/v2"
 )
 
@@ -43,8 +40,8 @@ func TestSettingsFromComposePreservesDraftAndMode(t *testing.T) {
 func TestSettingsPopupDisplaysConfiguration(t *testing.T) {
 	screen := initializedSimulationScreen(t, 100, 30)
 	model := defaultDemoView()
-	model.configuration = config.UI{
-		Theme:          config.ThemeDefault,
+	model.options = Options{
+		Theme:          ThemeDefault,
 		ShowTimestamps: false,
 		ConfirmQuit:    true,
 	}
@@ -117,17 +114,15 @@ func TestPolishedFooterModesAndNarrowFallbacks(t *testing.T) {
 	}
 }
 
-func TestRunLoadsConfigurationBeforeStartingTUI(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "walite", "config.json")
-	configurationStore := config.NewUIFileStore(path)
-	settings := config.UI{Theme: config.ThemeDefault, ShowTimestamps: false, ConfirmQuit: true}
-	if err := configurationStore.Save(settings); err != nil {
-		t.Fatal(err)
-	}
+func TestRunUsesSuppliedOptions(t *testing.T) {
 	screen := newObservedScreen(100, 30)
 	result := make(chan error, 1)
 	go func() {
-		result <- runWithDependencies(context.Background(), screen, configurationStore, "", nil)
+		result <- runWithDependencies(context.Background(), screen, Options{
+			Theme:          ThemeDefault,
+			ShowTimestamps: false,
+			ConfirmQuit:    true,
+		}, "", nil)
 	}()
 
 	<-screen.shown
@@ -135,7 +130,7 @@ func TestRunLoadsConfigurationBeforeStartingTUI(t *testing.T) {
 	<-screen.shown
 	text := screenText(screen)
 	if !strings.Contains(text, "Time: disabled") || !strings.Contains(text, "Confirm quit: yes") {
-		t.Fatalf("loaded configuration missing from popup:\n%s", text)
+		t.Fatalf("supplied options missing from popup:\n%s", text)
 	}
 	screen.InjectKey(tcell.KeyEscape, 0, tcell.ModNone)
 	<-screen.shown
@@ -145,52 +140,23 @@ func TestRunLoadsConfigurationBeforeStartingTUI(t *testing.T) {
 	}
 }
 
-func TestRunAppliesHiddenTimestampConfigurationToMessages(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "walite", "config.json")
-	configurationStore := config.NewUIFileStore(path)
-	settings := config.UI{Theme: config.ThemeDefault, ShowTimestamps: false}
-	if err := configurationStore.Save(settings); err != nil {
-		t.Fatal(err)
-	}
+func TestRunAppliesHiddenTimestampOptionToMessages(t *testing.T) {
 	screen := newObservedScreen(100, 30)
 	result := make(chan error, 1)
 	go func() {
-		result <- runWithDependencies(context.Background(), screen, configurationStore, "", nil)
+		result <- runWithDependencies(context.Background(), screen, Options{
+			Theme:          ThemeDefault,
+			ShowTimestamps: false,
+		}, "", nil)
 	}()
 
 	<-screen.shown
 	text := screenText(screen)
 	if strings.Contains(text, "09:42") || !strings.Contains(text, "Synthetic message one") {
-		t.Fatalf("timestamp configuration not applied to first frame:\n%s", text)
+		t.Fatalf("timestamp option not applied to first frame:\n%s", text)
 	}
 	screen.InjectKey(tcell.KeyEscape, 0, tcell.ModNone)
 	if err := <-result; err != nil {
 		t.Fatalf("runWithDependencies=%v", err)
-	}
-}
-
-func TestFirstStartupCreatesDefaultConfiguration(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "walite", "config.json")
-	configurationStore := config.NewUIFileStore(path)
-	screen := newObservedScreen(100, 30)
-	result := make(chan error, 1)
-	go func() {
-		result <- runWithDependencies(context.Background(), screen, configurationStore, "", nil)
-	}()
-
-	<-screen.shown
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("config was not created before first frame: %v", err)
-	}
-	screen.InjectKey(tcell.KeyEscape, 0, tcell.ModNone)
-	if err := <-result; err != nil {
-		t.Fatalf("runWithDependencies=%v", err)
-	}
-	loaded, err := configurationStore.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if loaded != config.DefaultUI() {
-		t.Fatalf("created configuration=%+v want=%+v", loaded, config.DefaultUI())
 	}
 }

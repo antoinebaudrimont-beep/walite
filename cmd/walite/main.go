@@ -8,7 +8,6 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/antoinebaudrimont-beep/walite/internal/tui"
 	"github.com/gdamore/tcell/v2"
 )
 
@@ -19,7 +18,7 @@ func runMain() int {
 	defer stop()
 	screen, err := tcell.NewScreen()
 	if err == nil {
-		err = tui.Run(ctx, screen)
+		err = run(ctx, screen)
 	}
 	if err == nil || errors.Is(err, context.Canceled) {
 		return 0
