@@ -150,7 +150,7 @@ func TestSavedChatStateOmitsTransientUIState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, forbidden := range []string{"terminalWidth", "terminalHeight", "scrollOffset", "composer", "emojiPicker", "mode"} {
+	for _, forbidden := range []string{"terminalWidth", "terminalHeight", "scrollOffset", "unreadBoundary", "composer", "emojiPicker", "mode"} {
 		if strings.Contains(string(data), forbidden) {
 			t.Fatalf("saved state contains transient field %q:\n%s", forbidden, data)
 		}

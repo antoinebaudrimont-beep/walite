@@ -313,7 +313,11 @@ func drawEmojiPicker(screen tcell.Screen, model *viewModel, width, height int) {
 	drawEmojiCategoryGrid(screen, category.values, model.emojiPicker.categoryCursor,
 		model.emojiPicker.focus == emojiFocusCategory, contentLeft, layout.top+3,
 		contentRight, layout.gridRows, layout.columns)
-	putText(screen, contentLeft, layout.bottom-1, contentRight, "arrows choose Enter insert Esc close", tcell.StyleDefault.Dim(true))
+	footer := "arrows  Tab category  Enter  Esc close"
+	if contentRight-contentLeft < uniseg.StringWidth(footer) {
+		footer = "arrows  Tab category  Enter  Esc"
+	}
+	putText(screen, contentLeft, layout.bottom-1, contentRight, footer, tcell.StyleDefault.Dim(true))
 }
 
 func drawEmojiRowWindow(screen tcell.Screen, values []string, selected int, active bool, x, y, limit int) {
@@ -372,7 +376,7 @@ func drawEmojiCell(screen tcell.Screen, value string, selected bool, x, y, limit
 	if selected {
 		style = style.Bold(true).Reverse(true)
 	}
-	for offset := 0; offset < emojiCellWidth-1 && x+offset < limit; offset++ {
+	for offset := 0; offset < emojiCellWidth && x+offset < limit; offset++ {
 		screen.SetContent(x+offset, y, ' ', nil, style)
 	}
 	rendered := value
@@ -381,15 +385,17 @@ func drawEmojiCell(screen tcell.Screen, value string, selected bool, x, y, limit
 		rendered = emojiFallback
 		displayWidth = 1
 	}
+	// Keep the grapheme within the first three columns. Some terminals expose a
+	// continuation marker when a wide grapheme starts after a styled blank.
 	contentX := x + (emojiCellWidth-1-displayWidth)/2
 	rest, width := screen.Put(contentX, y, rendered, style)
 	if rest == "" && width == displayWidth {
 		return
 	}
-	for offset := 0; offset < emojiCellWidth-1 && x+offset < limit; offset++ {
+	for offset := 0; offset < emojiCellWidth && x+offset < limit; offset++ {
 		screen.SetContent(x+offset, y, ' ', nil, style)
 	}
-	screen.SetContent(x+1, y, '□', nil, style)
+	screen.SetContent(x+(emojiCellWidth-1)/2, y, '□', nil, style)
 }
 
 func drawCompactEmojiPicker(screen tcell.Screen, width, height int) {

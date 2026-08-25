@@ -83,16 +83,37 @@ func TestComposeFooterIncludesSettingsShortcut(t *testing.T) {
 	model.mode = modeCompose
 	draw(screen, &model)
 	screen.Show()
-	if text := screenText(screen); !strings.Contains(text, "Ctrl-P settings") || !strings.Contains(text, "Esc cancel") {
+	if text := screenText(screen); !strings.Contains(text, "↑/↓ scroll") || !strings.Contains(text, "Ctrl-P settings") || !strings.Contains(text, "Esc cancel") {
 		t.Fatalf("compose footer missing settings shortcut:\n%s", text)
 	}
 }
 
 func TestNavigationFooterIncludesSettingsShortcut(t *testing.T) {
 	model := defaultDemoView()
-	want := "↑/↓ scroll  PgUp/PgDn  j/k chats  Ctrl-R reply  Enter compose  Ctrl-P settings  Esc quit"
+	want := "↑/↓ scroll  j/k chats  Enter compose  Ctrl-P settings  Esc quit"
 	if got := navigationFooter(&model, false); got != want {
 		t.Fatalf("navigation footer=%q want=%q", got, want)
+	}
+}
+
+func TestPolishedFooterModesAndNarrowFallbacks(t *testing.T) {
+	model := defaultDemoView()
+	if got := navigationFooter(&model, false); got != "↑/↓ scroll  j/k chats  Enter compose  Ctrl-P settings  Esc quit" {
+		t.Fatalf("navigation footer=%q", got)
+	}
+	model.mode = modeCompose
+	if got := narrowComposeFooter(70); got != "↑/↓ scroll  Enter send  Ctrl-R  Ctrl-E  Ctrl-P  Esc cancel" {
+		t.Fatalf("narrow compose footer=%q", got)
+	}
+	if got := narrowComposeFooter(40); got != "↑/↓  Enter send  Ctrl-R  Ctrl-E  Esc" {
+		t.Fatalf("compact compose footer=%q", got)
+	}
+	model.replySelect = replySelectionState{valid: true}
+	if got := navigationFooter(&model, false); got != "↑/↓ message  Enter reply  Esc cancel" {
+		t.Fatalf("reply footer=%q", got)
+	}
+	if got := narrowNavigationFooter(&model, 24); got != "↑/↓  Enter  Esc cancel" {
+		t.Fatalf("compact reply footer=%q", got)
 	}
 }
 
@@ -118,6 +139,30 @@ func TestRunLoadsConfigurationBeforeStartingTUI(t *testing.T) {
 	}
 	screen.InjectKey(tcell.KeyEscape, 0, tcell.ModNone)
 	<-screen.shown
+	screen.InjectKey(tcell.KeyEscape, 0, tcell.ModNone)
+	if err := <-result; err != nil {
+		t.Fatalf("runWithDependencies=%v", err)
+	}
+}
+
+func TestRunAppliesHiddenTimestampConfigurationToMessages(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "walite", "config.json")
+	configurationStore := config.NewUIFileStore(path)
+	settings := config.UI{Theme: config.ThemeDefault, ShowTimestamps: false}
+	if err := configurationStore.Save(settings); err != nil {
+		t.Fatal(err)
+	}
+	screen := newObservedScreen(100, 30)
+	result := make(chan error, 1)
+	go func() {
+		result <- runWithDependencies(context.Background(), screen, configurationStore, "", nil)
+	}()
+
+	<-screen.shown
+	text := screenText(screen)
+	if strings.Contains(text, "09:42") || !strings.Contains(text, "Synthetic message one") {
+		t.Fatalf("timestamp configuration not applied to first frame:\n%s", text)
+	}
 	screen.InjectKey(tcell.KeyEscape, 0, tcell.ModNone)
 	if err := <-result; err != nil {
 		t.Fatalf("runWithDependencies=%v", err)

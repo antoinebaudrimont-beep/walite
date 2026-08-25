@@ -72,6 +72,10 @@ func runWithDependencies(
 		return fmt.Errorf("load chat state: %w", err)
 	}
 	model := viewModel{chats: state, configuration: configuration}
+	if selectedChat, ok := model.chats.selectedChat(); ok {
+		model.chatView.unreadBoundary = unreadBoundaryForChat(selectedChat)
+		selectedChat.unreadCount = 0
+	}
 	if preferencesPath != "" {
 		model.preferencesPath = preferencesPath
 		_ = loadEmojiPreferences(preferencesPath, &model.emojiPicker)

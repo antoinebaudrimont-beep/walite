@@ -16,7 +16,7 @@ func TestDrawEmojiPickerOverlayAndSelectedStyle(t *testing.T) {
 	draw(screen, &model)
 	screen.Show()
 	text := screenText(screen)
-	for _, want := range []string{"Emoji", "Recent", "arrows choose", "Enter insert", "Esc close", "Demo Chat"} {
+	for _, want := range []string{"Emoji", "Recent", "arrows", "Tab category", "Enter", "Esc close", "Demo Chat"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("picker missing %q:\n%s", want, text)
 		}
@@ -59,7 +59,7 @@ func TestEmojiPopupLayoutAdaptsAndStaysInsideRequestedScreens(t *testing.T) {
 		model.emojiPicker.open = true
 		draw(screen, &model)
 		screen.Show()
-		if text := screenText(screen); !strings.Contains(text, "Smileys") || !strings.Contains(text, "Enter insert") || !strings.Contains(text, "Esc close") {
+		if text := screenText(screen); !strings.Contains(text, "Smileys") || !strings.Contains(text, "Tab category") || !strings.Contains(text, "Esc") {
 			t.Fatalf("%dx%d picker incomplete:\n%s", size[0], size[1], text)
 		}
 		if _, _, visible := screen.GetCursor(); visible {
@@ -121,6 +121,9 @@ func TestEmojiPickerRepeatedOpenCloseFullyRedraws(t *testing.T) {
 	screen := initializedSimulationScreen(t, 80, 24)
 	model := defaultDemoView()
 	model.mode = modeCompose
+	draw(screen, &model)
+	screen.Show()
+	baseFrame := screenText(screen)
 	for cycle := 0; cycle < 4; cycle++ {
 		model.emojiPicker.prepareOpen()
 		draw(screen, &model)
@@ -131,8 +134,85 @@ func TestEmojiPickerRepeatedOpenCloseFullyRedraws(t *testing.T) {
 		model.emojiPicker.close()
 		draw(screen, &model)
 		screen.Show()
-		if text := screenText(screen); strings.Contains(text, " Emoji ") || screenContainsRuneSequence(screen, "😀") {
+		if text := screenText(screen); text != baseFrame || strings.Contains(text, " Emoji ") || screenContainsRuneSequence(screen, "😀") {
 			t.Fatalf("cycle %d close left picker cells:\n%s", cycle, text)
+		}
+	}
+}
+
+func TestEmojiCategorySizeChangesClearOnlyTheGrid(t *testing.T) {
+	originalPeople := emojiCategories[1].values
+	emojiCategories[1].values = originalPeople[:5]
+	defer func() { emojiCategories[1].values = originalPeople }()
+
+	screen := initializedSimulationScreen(t, 80, 24)
+	model := defaultDemoView()
+	model.mode = modeCompose
+	model.emojiPicker.remember("🙂")
+	model.emojiPicker.prepareOpen()
+	model.emojiPicker.focus = emojiFocusCategory
+	draw(screen, &model)
+	screen.Show()
+	layout := emojiLayout(80, 24)
+	left, top, right, bottom := emojiGridRegion(layout)
+	if !screenRegionContainsRuneSequence(screen, "😡", left, top, right, bottom) {
+		t.Fatal("large Smileys grid missing its final emoji")
+	}
+
+	for _, step := range []struct {
+		category int
+		delta    int
+		present  string
+		absent   string
+	}{{1, 1, "👍", "😡"}, {2, 1, "🐶", "👍"}, {0, -2, "😀", "🐶"}} {
+		if !model.emojiPicker.moveCategory(step.delta) {
+			t.Fatal("category switch failed")
+		}
+		if model.emojiPicker.category != step.category || model.emojiPicker.categoryCursor != 0 || model.emojiPicker.focus != emojiFocusCategory {
+			t.Fatalf("picker state=%+v", model.emojiPicker)
+		}
+		draw(screen, &model)
+		screen.Show()
+		if !screenRegionContainsRuneSequence(screen, step.present, left, top, right, bottom) ||
+			screenRegionContainsRuneSequence(screen, step.absent, left, top, right, bottom) {
+			t.Fatalf("category %d grid contains stale or missing emoji:\n%s", step.category, screenText(screen))
+		}
+		if step.category == 1 && (!screenContainsRuneSequence(screen, "🙂") ||
+			screenRegionContainsRuneSequence(screen, "🙂", left, top, right, bottom)) {
+			t.Fatal("Recent duplicate was confused with stale Smileys grid content")
+		}
+	}
+	if !screenContainsRuneSequence(screen, "🙂") {
+		t.Fatal("Recent duplicate disappeared while checking category grid")
+	}
+}
+
+func TestEmojiPickerLargeSmallLargeRebuildsCurrentGeometry(t *testing.T) {
+	screen := initializedSimulationScreen(t, 120, 40)
+	model := defaultDemoView()
+	model.mode = modeCompose
+	model.emojiPicker.prepareOpen()
+	model.emojiPicker.category = 8
+	model.emojiPicker.categoryCursor = 15
+	want := model.emojiPicker.selectedEmoji()
+
+	for _, size := range [][2]int{{120, 40}, {80, 24}, {60, 20}, {40, 8}, {120, 40}} {
+		screen.SetSize(size[0], size[1])
+		clampView(&model, size[0], size[1])
+		draw(screen, &model)
+		screen.Show()
+		layout := emojiLayout(size[0], size[1])
+		if model.emojiPicker.selectedEmoji() != want || model.emojiPicker.categoryCursor >= len(emojiCategories[model.emojiPicker.category].values) {
+			t.Fatalf("%dx%d invalid picker=%+v selected=%q", size[0], size[1], model.emojiPicker, model.emojiPicker.selectedEmoji())
+		}
+		for _, corner := range []struct {
+			x, y int
+			want rune
+		}{{layout.left, layout.top, '┌'}, {layout.right, layout.top, '┐'}, {layout.left, layout.bottom, '└'}, {layout.right, layout.bottom, '┘'}} {
+			main, _, _, _ := screen.GetContent(corner.x, corner.y)
+			if main != corner.want {
+				t.Fatalf("%dx%d corner %d,%d=%q want=%q", size[0], size[1], corner.x, corner.y, main, corner.want)
+			}
 		}
 	}
 }
@@ -197,10 +277,20 @@ func TestEmojiGridClearsEmptyAndSmallCategories(t *testing.T) {
 
 func TestEmojiCellUsesVisibleFallbackInsteadOfDroppingUnsupportedValue(t *testing.T) {
 	screen := initializedSimulationScreen(t, 20, 4)
+	drawEmojiCell(screen, "👨‍👩‍👧‍👦", false, 2, 1, 18)
 	drawEmojiCell(screen, "🙂🙂", true, 2, 1, 18)
 	screen.Show()
 	if !screenContainsRuneSequence(screen, emojiFallback) {
 		t.Fatal("unsupported sequence disappeared instead of using fallback")
+	}
+	if screenContainsRuneSequence(screen, "👨‍👩‍👧‍👦") {
+		t.Fatal("replacement left the previous grapheme in the logical cell")
+	}
+	for x := 2; x < 2+emojiCellWidth; x++ {
+		attributes := attributesAt(screen, x, 1)
+		if attributes&tcell.AttrBold == 0 || attributes&tcell.AttrReverse == 0 {
+			t.Fatalf("logical cell column %d attributes=%v", x, attributes)
+		}
 	}
 }
 
@@ -238,7 +328,7 @@ func TestRunPreservesOpenEmojiPickerAcrossResize(t *testing.T) {
 		t.Fatalf("short resize lost picker:\n%s", text)
 	}
 	resizeObservedScreen(t, screen, 100, 30)
-	if text := screenText(screen); !strings.Contains(text, "arrows choose") {
+	if text := screenText(screen); !strings.Contains(text, "Tab category") {
 		t.Fatalf("wide resize lost picker:\n%s", text)
 	}
 	injectKeyAndWait(screen, tcell.KeyEscape, 0)
@@ -264,6 +354,23 @@ func screenContainsRuneSequence(screen tcell.SimulationScreen, want string) bool
 	for _, cell := range cells {
 		if string(cell.Runes) == want {
 			return true
+		}
+	}
+	return false
+}
+
+func emojiGridRegion(layout emojiPickerLayout) (left, top, right, bottom int) {
+	return layout.left + 2, layout.top + 3, layout.right - 1, layout.top + 3 + layout.gridRows
+}
+
+func screenRegionContainsRuneSequence(screen tcell.SimulationScreen, want string, left, top, right, bottom int) bool {
+	for y := top; y < bottom; y++ {
+		for x := left; x < right; x++ {
+			main, combining, _, _ := screen.GetContent(x, y)
+			runes := append([]rune{main}, combining...)
+			if string(runes) == want {
+				return true
+			}
 		}
 	}
 	return false

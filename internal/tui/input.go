@@ -62,10 +62,16 @@ func handleKey(model *viewModel, event *tcell.EventKey, width, height int) (chan
 }
 
 func moveChatSelection(model *viewModel, delta int) bool {
+	nextChat, ok := model.chats.chatAt(model.chats.selectedIndex() + delta)
+	if !ok {
+		return false
+	}
+	boundary := unreadBoundaryForChat(nextChat)
 	if !model.chats.moveSelection(delta) {
 		return false
 	}
 	model.chatView.reset()
+	model.chatView.unreadBoundary = boundary
 	model.replySelect = replySelectionState{}
 	model.replyTarget = replyTarget{}
 	return true
@@ -201,7 +207,7 @@ func submitLocalMessage(model *viewModel) bool {
 	model.composer.clear()
 	model.replyTarget = replyTarget{}
 	model.replySelect = replySelectionState{}
-	model.chatView.reset()
+	model.chatView.resetScroll()
 	model.chats.promoteChatActivity(selectedIndex)
 	return true
 }

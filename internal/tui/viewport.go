@@ -9,11 +9,41 @@ import (
 // chatViewState contains transient reading position for the selected chat.
 // It is deliberately outside chatState and is never persisted.
 type chatViewState struct {
-	scrollOffset int
+	scrollOffset   int
+	unreadBoundary unreadBoundaryState
+}
+
+type unreadBoundaryState struct {
+	valid          bool
+	firstMessageID messageID
+	count          uint16
 }
 
 func (state *chatViewState) reset() {
+	*state = chatViewState{}
+}
+
+func (state *chatViewState) resetScroll() {
 	state.scrollOffset = 0
+}
+
+func unreadBoundaryForChat(chat *chatView) unreadBoundaryState {
+	if chat == nil || chat.unreadCount == 0 || chat.messageCount == 0 {
+		return unreadBoundaryState{}
+	}
+	firstUnread := chat.messageCount - int(chat.unreadCount)
+	if firstUnread < 0 {
+		firstUnread = 0
+	}
+	id := chat.messages[firstUnread].id
+	if id == 0 {
+		return unreadBoundaryState{}
+	}
+	return unreadBoundaryState{valid: true, firstMessageID: id, count: chat.unreadCount}
+}
+
+func (state *chatViewState) hasUnreadBoundary(message messageView) bool {
+	return state.unreadBoundary.valid && state.unreadBoundary.firstMessageID == message.id
 }
 
 func scrollMessages(model *viewModel, width, height int, older bool) bool {
@@ -32,7 +62,7 @@ func jumpMessageViewport(model *viewModel, width, height int, oldest bool) bool 
 	if oldest {
 		model.chatView.scrollOffset = maximumScrollOffset(model, width, height)
 	} else {
-		model.chatView.reset()
+		model.chatView.resetScroll()
 	}
 	return model.chatView.scrollOffset != previous
 }
