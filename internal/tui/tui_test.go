@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/gdamore/tcell/v2"
@@ -12,12 +13,18 @@ import (
 
 type observedScreen struct {
 	tcell.SimulationScreen
-	shown     chan struct{}
-	finalized chan struct{}
-	finiOnce  sync.Once
-	initErr   error
-	width     int
-	height    int
+	shown           chan struct{}
+	finalized       chan struct{}
+	eventsStarted   chan struct{}
+	eventsStopped   chan struct{}
+	finiOnce        sync.Once
+	eventsStartOnce sync.Once
+	eventsStopOnce  sync.Once
+	showCount       atomic.Int64
+	finiCount       atomic.Int64
+	initErr         error
+	width           int
+	height          int
 }
 
 func newObservedScreen(size ...int) *observedScreen {
@@ -29,6 +36,8 @@ func newObservedScreen(size ...int) *observedScreen {
 		SimulationScreen: tcell.NewSimulationScreen("UTF-8"),
 		shown:            make(chan struct{}, 4),
 		finalized:        make(chan struct{}),
+		eventsStarted:    make(chan struct{}),
+		eventsStopped:    make(chan struct{}),
 		width:            width,
 		height:           height,
 	}
@@ -46,13 +55,21 @@ func (screen *observedScreen) Init() error {
 }
 
 func (screen *observedScreen) Show() {
+	screen.showCount.Add(1)
 	screen.SimulationScreen.Show()
 	screen.shown <- struct{}{}
 }
 
 func (screen *observedScreen) Fini() {
+	screen.finiCount.Add(1)
 	screen.SimulationScreen.Fini()
 	screen.finiOnce.Do(func() { close(screen.finalized) })
+}
+
+func (screen *observedScreen) ChannelEvents(events chan<- tcell.Event, quit <-chan struct{}) {
+	screen.eventsStartOnce.Do(func() { close(screen.eventsStarted) })
+	screen.SimulationScreen.ChannelEvents(events, quit)
+	screen.eventsStopOnce.Do(func() { close(screen.eventsStopped) })
 }
 
 func TestRunShowsFirstFrameAndFinalizesOnCancellation(t *testing.T) {
@@ -78,11 +95,7 @@ func TestRunShowsFirstFrameAndFinalizesOnCancellation(t *testing.T) {
 	if err := <-result; !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run=%v", err)
 	}
-	select {
-	case <-screen.finalized:
-	default:
-		t.Fatal("screen was not finalized")
-	}
+	assertRunRestoredTerminal(t, screen)
 }
 
 func TestDrawNarrowFallback(t *testing.T) {
@@ -230,11 +243,7 @@ func TestRunFinalizesOnEscape(t *testing.T) {
 	if err := <-result; err != nil {
 		t.Fatalf("Run=%v", err)
 	}
-	select {
-	case <-screen.finalized:
-	default:
-		t.Fatal("screen was not finalized")
-	}
+	assertRunRestoredTerminal(t, screen)
 }
 
 func TestRunFinalizesOnControlC(t *testing.T) {
@@ -247,10 +256,53 @@ func TestRunFinalizesOnControlC(t *testing.T) {
 	if err := <-result; err != nil {
 		t.Fatalf("Run=%v", err)
 	}
+	assertRunRestoredTerminal(t, screen)
+}
+
+func TestRunIdleDoesNotRedrawAndShutdownJoinsEventOwner(t *testing.T) {
+	screen := newObservedScreen(100, 30)
+	result := make(chan error, 1)
+	go func() { result <- runWithPreferences(context.Background(), screen, "") }()
+
+	<-screen.shown
+	<-screen.eventsStarted
+	if got := screen.showCount.Load(); got != 1 {
+		t.Fatalf("idle Show calls=%d want=1", got)
+	}
+	select {
+	case <-screen.shown:
+		t.Fatal("idle TUI produced an additional frame")
+	default:
+	}
+
+	screen.InjectKey(tcell.KeyCtrlC, 0, tcell.ModNone)
+	if err := <-result; err != nil {
+		t.Fatalf("Run=%v", err)
+	}
+	if got := screen.finiCount.Load(); got != 1 {
+		t.Fatalf("Fini calls=%d want=1", got)
+	}
+	select {
+	case <-screen.eventsStopped:
+	default:
+		t.Fatal("event goroutine was not joined before Run returned")
+	}
+}
+
+func assertRunRestoredTerminal(t *testing.T, screen *observedScreen) {
+	t.Helper()
+	if got := screen.finiCount.Load(); got != 1 {
+		t.Fatalf("Fini calls=%d want=1", got)
+	}
 	select {
 	case <-screen.finalized:
 	default:
 		t.Fatal("screen was not finalized")
+	}
+	select {
+	case <-screen.eventsStopped:
+	default:
+		t.Fatal("event goroutine was not joined before Run returned")
 	}
 }
 
