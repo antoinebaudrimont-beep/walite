@@ -18,11 +18,13 @@ type pendingWriteKind uint8
 
 const (
 	pendingMessageWrite pendingWriteKind = iota + 1
+	pendingContactWrite
 	pendingChatWrite
 )
 
 type pendingWrite struct {
 	kind     pendingWriteKind
+	contact  model.Contact
 	chat     model.Chat
 	messages model.WriteBatch
 	ack      chan error
@@ -33,12 +35,16 @@ func newPendingMessages(batch model.WriteBatch) pendingWrite {
 	return pendingWrite{kind: pendingMessageWrite, messages: batch}
 }
 
+func newPendingContact(contact model.Contact) pendingWrite {
+	return pendingWrite{kind: pendingContactWrite, contact: contact}
+}
+
 func newPendingChat(chat model.Chat) pendingWrite {
 	return pendingWrite{kind: pendingChatWrite, chat: chat}
 }
 
 func (pending pendingWrite) logicalWrites() int {
-	if pending.kind == pendingChatWrite {
+	if pending.kind == pendingContactWrite || pending.kind == pendingChatWrite {
 		return 1
 	}
 	return pending.messages.Len()

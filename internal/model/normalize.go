@@ -62,6 +62,15 @@ func NewChatID(value string) (ChatID, error) {
 	return ChatID{value: strings.Clone(value)}, nil
 }
 
+// NewContactID validates and takes bounded ownership of an opaque contact
+// identifier. It makes no phone-number or transport-specific assumptions.
+func NewContactID(value string) (ContactID, error) {
+	if err := validateIdentifier(value, "contact_id"); err != nil {
+		return ContactID{}, err
+	}
+	return ContactID{value: strings.Clone(value)}, nil
+}
+
 // NewMessageID validates and takes bounded ownership of a message identifier.
 func NewMessageID(value string) (MessageID, error) {
 	if err := validateIdentifier(value, "message_id"); err != nil {

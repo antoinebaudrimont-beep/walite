@@ -15,22 +15,25 @@ WhatsApp transport or authentication work.
 3. **2.2B1 — bounded SQLite batch writer (complete):** add one
    serialized writer, bounded request admission, 50-write/25-ms transactions,
    commit acknowledgements, controlled busy errors, and draining shutdown.
-4. **2.2B2 — keyset pagination (current, ready for review):** add bounded,
+4. **2.2B2 — keyset pagination (complete):** add bounded,
    indexed message-page reads and deterministic composite cursors without
    OFFSET queries.
-5. **2.2C — pruning and cache budget (pending):** add retention snapshots,
+5. **2.2B3 — contact and chat ingestion (current, ready for review):** make
+   contacts and full chat metadata first-class cache entities, upgrade
+   placeholders, and maintain idempotent activity/unread state.
+6. **2.2C — pruning and cache budget (pending):** add retention snapshots,
    bounded pruning, usage accounting, and the remaining failure tests behind
    the existing service-owned contract.
-6. **2.3 — replace prototype JSON chat persistence:** make an explicit
+7. **2.3 — replace prototype JSON chat persistence:** make an explicit
    migration or retirement decision for `~/.local/share/walite/state.json`;
    do not silently merge its schema into SQLite.
-7. **2.4 — service-to-TUI data adapter:** replace synthetic TUI-owned chat data
+8. **2.4 — service-to-TUI data adapter:** replace synthetic TUI-owned chat data
    with bounded snapshots and immutable service updates without moving storage
    ownership into the TUI.
-8. **2.5 — offline integration validation:** verify startup ordering,
+9. **2.5 — offline integration validation:** verify startup ordering,
    cancellation, store failures, retention, pagination, race safety, and target
    performance with only offline fakes.
-9. **2.6 — transport readiness boundary:** only after the offline cache and UI
+10. **2.6 — transport readiness boundary:** only after the offline cache and UI
    adapter pass may WhatsApp transport and authentication work begin.
 
 ## Remaining temporary deviations after 2.1
@@ -136,5 +139,44 @@ WhatsApp transport or authentication work.
   1,641 allocs/op). Setup was excluded. The observed cost increase for older
   cursors is recorded evidence, not a CI timing threshold.
 - Still deferred: retention/pruning, cache accounting, disk-full behavior, JSON
+  migration, production wiring, TUI adaptation, WhatsApp/session storage,
+  media, networking, and WAL checkpoint tuning.
+
+## Increment 2.2B3 contact and chat ingestion
+
+- Domain values: bounded immutable contacts use opaque `model.ContactID`
+  values with no phone-number assumptions. Chat values now carry optional
+  contact linkage, group status, activity, unread count, muted/archived flags,
+  metadata time, ingest sequence, and placeholder status.
+- Writer ownership: `UpsertContact` and the existing `EnsureChat` each submit
+  one logical operation to the existing single writer. Queue capacity 64,
+  50-operation transactions, the 25-ms batch age, commit acknowledgements, and
+  draining shutdown are unchanged; no second writer or read pool was added.
+- Ordering: contact and chat metadata use `(ingest_seq, updated_at)` to prevent
+  deterministically older metadata from replacing newer known values. Empty
+  names and absent optional contact links do not erase known values. A real
+  chat event always upgrades an existing placeholder while preserving its
+  message activity and unread count.
+- New-chat lifecycle: both metadata-first (`contact -> chat -> message`) and
+  message-first (`message -> placeholder -> contact -> chat`) ordering converge
+  on one contact, one non-placeholder chat, and the original message. Groups
+  store a NULL contact link and require no contact or membership records.
+- Message bookkeeping: message identity remains `(chat_id, message_id)`.
+  `last_message_at` advances with `MAX(existing, incoming)` so delayed messages
+  cannot move activity backwards. A newly inserted, non-`from_me` real-time
+  message increments unread once; duplicates, local messages, and history
+  writes do not. The counter saturates at the model's `uint32` bound. Message,
+  placeholder/activity, and unread changes share one transaction and roll back
+  together.
+- Reads: small `Contact` and `Chat` lookups support deterministic cache tests
+  and a future adapter without adding chat-list pagination. Existing message
+  keyset pagination and its cursor/order semantics are unchanged.
+- Core 2 Duo end-to-end benchmark: a new contact, new chat, and first message
+  took 83.385 ms/op (8,952 B/op, 132 allocs/op); an incoming message for an
+  existing chat took 26.725 ms/op (3,438 B/op, 58 allocs/op). These include the
+  intentional 25-ms writer batch window per sequential public call and are not
+  CI thresholds.
+- Still deferred: contact/chat list pagination, group membership, read receipt
+  semantics, retention/pruning, cache accounting, disk-full behavior, JSON
   migration, production wiring, TUI adaptation, WhatsApp/session storage,
   media, networking, and WAL checkpoint tuning.

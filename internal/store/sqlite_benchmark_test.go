@@ -138,6 +138,73 @@ func BenchmarkSQLitePagination(b *testing.B) {
 	}
 }
 
+func BenchmarkSQLiteIngestion(b *testing.B) {
+	b.Run("NewContactNewChatFirstMessage", func(b *testing.B) {
+		store, _ := openBenchmarkSQLite(b)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for index := range b.N {
+			sequence := index + 1
+			contactID := fmt.Sprintf("benchmark-contact-%06d", sequence)
+			chatID := fmt.Sprintf("benchmark-chat-%06d", sequence)
+			updatedAt := time.UnixMilli(int64(sequence)).UTC()
+			contact, err := model.NewContact(model.ContactInput{
+				ID: contactID, DisplayName: "Synthetic Contact", UpdatedAt: updatedAt, IngestSeq: uint64(sequence),
+			})
+			if err != nil {
+				b.Fatal(err)
+			}
+			chat, err := model.NewChat(model.ChatInput{
+				ID: chatID, ContactID: contactID, DisplayName: "Synthetic Contact",
+				UpdatedAt: updatedAt, IngestSeq: uint64(sequence),
+			})
+			if err != nil {
+				b.Fatal(err)
+			}
+			message, err := model.NewMessage(model.MessageInput{
+				ChatID: chatID, MessageID: "first-message", SentAt: updatedAt, Text: "synthetic first message",
+			})
+			if err != nil {
+				b.Fatal(err)
+			}
+			if err := store.UpsertContact(context.Background(), contact); err != nil {
+				b.Fatal(err)
+			}
+			if err := store.EnsureChat(context.Background(), chat); err != nil {
+				b.Fatal(err)
+			}
+			if err := store.PutMessage(context.Background(), message); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("ExistingChatIncomingMessage", func(b *testing.B) {
+		store, _ := openBenchmarkSQLite(b)
+		chat, err := model.NewChat(model.ChatInput{ID: "benchmark-existing-chat", DisplayName: "Existing Chat"})
+		if err != nil {
+			b.Fatal(err)
+		}
+		if err := store.EnsureChat(context.Background(), chat); err != nil {
+			b.Fatal(err)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for index := range b.N {
+			message, err := model.NewMessage(model.MessageInput{
+				ChatID: chat.ID().String(), MessageID: fmt.Sprintf("incoming-%06d", index+1),
+				SentAt: time.UnixMilli(int64(index + 1)).UTC(), Text: "synthetic incoming message",
+			})
+			if err != nil {
+				b.Fatal(err)
+			}
+			if err := store.PutMessage(context.Background(), message); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+}
+
 func sqliteBenchmarkCursor(b *testing.B, sequence int) model.Cursor {
 	b.Helper()
 	messageID, err := model.NewMessageID(fmt.Sprintf("message-%06d", sequence))

@@ -67,7 +67,23 @@ func checkContext(ctx context.Context) error {
 }
 
 func normalizeChat(chat model.Chat) (model.Chat, error) {
-	return model.NewChat(model.ChatInput{ID: chat.ID().String(), DisplayName: chat.DisplayName(), Placeholder: chat.Placeholder()})
+	contactID := ""
+	if chat.HasContact() {
+		contactID = chat.ContactID().String()
+	}
+	return model.NewChat(model.ChatInput{
+		ID:            chat.ID().String(),
+		ContactID:     contactID,
+		DisplayName:   chat.DisplayName(),
+		IsGroup:       chat.IsGroup(),
+		LastMessageAt: chat.LastMessageAt(),
+		UnreadCount:   chat.UnreadCount(),
+		Muted:         chat.Muted(),
+		Archived:      chat.Archived(),
+		Placeholder:   chat.Placeholder(),
+		UpdatedAt:     chat.UpdatedAt(),
+		IngestSeq:     chat.IngestSeq(),
+	})
 }
 
 func (memory *Memory) EnsureChat(ctx context.Context, chat model.Chat) error {

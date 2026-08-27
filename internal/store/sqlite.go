@@ -31,10 +31,14 @@ var (
 	ErrUnsupportedSchema = errors.New("unsupported cache schema")
 	ErrCacheIO           = errors.New("cache I/O failed")
 	ErrStoreClosed       = errors.New("store closed")
+	ErrContactNotFound   = errors.New("contact not found")
+	ErrChatNotFound      = errors.New("chat not found")
 	ErrMessageNotFound   = errors.New("message not found")
 	ErrStoreRejected     = errors.New("store operation rejected")
 	ErrBusy              = errors.New("cache busy")
 )
+
+const maxSQLiteUnreadCount = uint32(^uint32(0))
 
 // SQLiteOptions controls the application-cache database connection.
 type SQLiteOptions struct {
@@ -433,16 +437,26 @@ func (store *SQLiteStore) Close() error {
 	return nil
 }
 
-// EnsureChat inserts or improves bounded chat metadata.
+// UpsertContact inserts or updates bounded contact metadata through the single
+// SQLite writer.
+func (store *SQLiteStore) UpsertContact(ctx context.Context, contact model.Contact) error {
+	if err := store.checkOpen(ctx); err != nil {
+		return err
+	}
+	validated, err := normalizeContact(contact)
+	if err != nil {
+		return newSQLiteError(ErrStoreRejected, err)
+	}
+	return store.writer.submit(ctx, newPendingContact(validated))
+}
+
+// EnsureChat inserts or improves bounded chat metadata through the single
+// SQLite writer.
 func (store *SQLiteStore) EnsureChat(ctx context.Context, chat model.Chat) error {
 	if err := store.checkOpen(ctx); err != nil {
 		return err
 	}
-	validated, err := model.NewChat(model.ChatInput{
-		ID:          chat.ID().String(),
-		DisplayName: chat.DisplayName(),
-		Placeholder: chat.Placeholder(),
-	})
+	validated, err := normalizeChat(chat)
 	if err != nil {
 		return newSQLiteError(ErrStoreRejected, err)
 	}
@@ -507,15 +521,25 @@ func (store *SQLiteStore) commitPendingWrites(requests *[sqliteMaxBatchWrites]pe
 	now := time.Now().UnixMilli()
 	for index := 0; index < count; index++ {
 		request := &requests[index]
-		if request.kind == pendingChatWrite {
-			if err := writeSQLiteChat(ctx, transaction, request.chat, now); err != nil {
+		switch request.kind {
+		case pendingContactWrite:
+			if err := writeSQLiteContact(ctx, transaction, request.contact); err != nil {
 				return time.Since(started), err
 			}
 			continue
+		case pendingChatWrite:
+			if err := writeSQLiteChat(ctx, transaction, request.chat); err != nil {
+				return time.Since(started), err
+			}
+			continue
+		case pendingMessageWrite:
+		default:
+			return time.Since(started), newSQLiteError(ErrStoreRejected, nil)
 		}
 		for messageIndex := 0; messageIndex < request.messages.Len(); messageIndex++ {
 			message, _ := request.messages.At(messageIndex)
-			if err := writeSQLiteMessage(ctx, transaction, message, now); err != nil {
+			countUnread := request.messages.Origin() == model.WriteRealtime
+			if err := writeSQLiteMessage(ctx, transaction, message, now, countUnread); err != nil {
 				return time.Since(started), err
 			}
 		}
@@ -531,24 +555,63 @@ func (store *SQLiteStore) commitPendingWrites(requests *[sqliteMaxBatchWrites]pe
 	return duration, nil
 }
 
-func writeSQLiteChat(ctx context.Context, transaction *sql.Tx, chat model.Chat, now int64) error {
-	placeholder := 0
-	if chat.Placeholder() {
-		placeholder = 1
+func normalizeContact(contact model.Contact) (model.Contact, error) {
+	return model.NewContact(model.ContactInput{
+		ID:          contact.ID().String(),
+		DisplayName: contact.DisplayName(),
+		UpdatedAt:   contact.UpdatedAt(),
+		IngestSeq:   contact.IngestSeq(),
+	})
+}
+
+func writeSQLiteContact(ctx context.Context, transaction *sql.Tx, contact model.Contact) error {
+	updatedAt := int64(0)
+	if !contact.UpdatedAt().IsZero() {
+		updatedAt = contact.UpdatedAt().UnixMilli()
 	}
-	if _, err := transaction.ExecContext(ctx, ensureChatSQL,
-		chat.ID().String(), chat.DisplayName(), placeholder, now,
+	if _, err := transaction.ExecContext(ctx, upsertContactSQL,
+		contact.ID().String(), contact.DisplayName(), updatedAt, int64(contact.IngestSeq()),
 	); err != nil {
-		return sqliteOperationError(err)
+		return fmt.Errorf("upsert contact: %w", sqliteOperationError(err))
 	}
 	return nil
 }
 
-func writeSQLiteMessage(ctx context.Context, transaction *sql.Tx, message model.Message, now int64) error {
+func writeSQLiteChat(ctx context.Context, transaction *sql.Tx, chat model.Chat) error {
+	contactID := any(nil)
+	if chat.HasContact() {
+		contactID = chat.ContactID().String()
+	}
+	isGroup := sqliteBool(chat.IsGroup())
+	lastMessageAt := int64(0)
+	if !chat.LastMessageAt().IsZero() {
+		lastMessageAt = chat.LastMessageAt().UnixMilli()
+	}
+	muted := sqliteBool(chat.Muted())
+	archived := sqliteBool(chat.Archived())
+	placeholder := 0
+	if chat.Placeholder() {
+		placeholder = 1
+	}
+	updatedAt := int64(0)
+	if !chat.UpdatedAt().IsZero() {
+		updatedAt = chat.UpdatedAt().UnixMilli()
+	}
+	if _, err := transaction.ExecContext(ctx, ensureChatSQL,
+		chat.ID().String(), contactID, chat.DisplayName(), isGroup,
+		lastMessageAt, int64(chat.UnreadCount()), muted, archived,
+		placeholder, updatedAt, int64(chat.IngestSeq()),
+	); err != nil {
+		return fmt.Errorf("upsert chat: %w", sqliteOperationError(err))
+	}
+	return nil
+}
+
+func writeSQLiteMessage(ctx context.Context, transaction *sql.Tx, message model.Message, now int64, countUnread bool) error {
 	if _, err := transaction.ExecContext(ctx, ensurePlaceholderChatSQL,
 		message.ChatID().String(), message.SentAt().UnixMilli(), now,
 	); err != nil {
-		return sqliteOperationError(err)
+		return fmt.Errorf("ingest message: %w", sqliteOperationError(err))
 	}
 	body := any(nil)
 	bodyBytes := 0
@@ -566,22 +629,58 @@ func writeSQLiteMessage(ctx context.Context, transaction *sql.Tx, message model.
 	if message.BodyTruncated() {
 		bodyTruncated = 1
 	}
-	result, err := transaction.ExecContext(ctx, upsertMessageSQL,
+	result, err := transaction.ExecContext(ctx, insertMessageSQL,
 		message.ChatID().String(), message.MessageID().String(),
 		message.SentAt().UnixMilli(), fromMe, messageKindUnknown, body,
 		bodyBytes, bodyTruncated, retainedBody,
 	)
 	if err != nil {
-		return sqliteOperationError(err)
+		return fmt.Errorf("ingest message: %w", sqliteOperationError(err))
 	}
-	changed, err := result.RowsAffected()
+	inserted, err := result.RowsAffected()
 	if err != nil {
-		return sqliteOperationError(err)
+		return fmt.Errorf("ingest message: %w", sqliteOperationError(err))
 	}
-	if changed != 1 {
-		return newSQLiteError(ErrStoreRejected, nil)
+	if inserted == 0 {
+		result, err = transaction.ExecContext(ctx, updateMessageSQL,
+			retainedBody, body,
+			retainedBody, bodyBytes,
+			retainedBody, bodyTruncated,
+			retainedBody,
+			message.ChatID().String(), message.MessageID().String(),
+			message.SentAt().UnixMilli(), fromMe,
+		)
+		if err != nil {
+			return fmt.Errorf("ingest message: %w", sqliteOperationError(err))
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("ingest message: %w", sqliteOperationError(err))
+		}
+		if changed != 1 {
+			return fmt.Errorf("ingest message: %w", newSQLiteError(ErrStoreRejected, nil))
+		}
+	} else if inserted != 1 {
+		return fmt.Errorf("ingest message: %w", newSQLiteError(ErrStoreRejected, nil))
+	}
+	unreadIncrement := 0
+	if inserted == 1 && countUnread && !message.FromMe() {
+		unreadIncrement = 1
+	}
+	if _, err := transaction.ExecContext(ctx, updateChatActivitySQL,
+		message.SentAt().UnixMilli(), unreadIncrement, int64(maxSQLiteUnreadCount),
+		now, message.ChatID().String(),
+	); err != nil {
+		return fmt.Errorf("ingest message: %w", sqliteOperationError(err))
 	}
 	return nil
+}
+
+func sqliteBool(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 // Message loads one message by its composite application identity.
@@ -665,16 +764,54 @@ func sqliteOperationError(err error) error {
 	return newSQLiteError(ErrCacheIO, err)
 }
 
-const ensureChatSQL = `
-INSERT INTO chats(chat_id, display_name, placeholder, updated_at, ingest_seq)
-VALUES (?, ?, ?, ?, 0)
-ON CONFLICT(chat_id) DO UPDATE SET
+const upsertContactSQL = `
+INSERT INTO contacts(contact_id, display_name, updated_at, ingest_seq)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(contact_id) DO UPDATE SET
     display_name = CASE
-        WHEN excluded.placeholder = 0 OR chats.placeholder = 1 THEN excluded.display_name
-        ELSE chats.display_name
+        WHEN excluded.display_name = '' THEN contacts.display_name
+        ELSE excluded.display_name
     END,
-    placeholder = CASE WHEN excluded.placeholder = 0 THEN 0 ELSE chats.placeholder END,
-    updated_at = excluded.updated_at`
+    updated_at = excluded.updated_at,
+    ingest_seq = excluded.ingest_seq
+WHERE excluded.ingest_seq > contacts.ingest_seq
+   OR (
+       excluded.ingest_seq = contacts.ingest_seq
+       AND excluded.updated_at >= contacts.updated_at
+   )`
+
+const ensureChatSQL = `
+INSERT INTO chats(
+    chat_id, contact_id, display_name, is_group, last_message_at,
+    unread_count, muted, archived, placeholder, updated_at, ingest_seq
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(chat_id) DO UPDATE SET
+	contact_id = CASE
+		WHEN excluded.contact_id IS NULL THEN chats.contact_id
+		ELSE excluded.contact_id
+	END,
+    display_name = CASE
+		WHEN excluded.display_name = '' THEN chats.display_name
+		ELSE excluded.display_name
+    END,
+	is_group = excluded.is_group,
+	last_message_at = MAX(chats.last_message_at, excluded.last_message_at),
+	unread_count = MAX(chats.unread_count, excluded.unread_count),
+	muted = excluded.muted,
+	archived = excluded.archived,
+	placeholder = 0,
+	updated_at = excluded.updated_at,
+	ingest_seq = excluded.ingest_seq
+WHERE excluded.placeholder = 0
+  AND (
+	  chats.placeholder = 1
+	  OR excluded.ingest_seq > chats.ingest_seq
+	  OR (
+	      excluded.ingest_seq = chats.ingest_seq
+	      AND excluded.updated_at >= chats.updated_at
+	  )
+  )`
 
 const ensurePlaceholderChatSQL = `
 INSERT INTO chats(chat_id, placeholder, last_message_at, updated_at, ingest_seq)
@@ -683,27 +820,40 @@ ON CONFLICT(chat_id) DO UPDATE SET
     last_message_at = MAX(chats.last_message_at, excluded.last_message_at),
     updated_at = excluded.updated_at`
 
-const upsertMessageSQL = `
+const insertMessageSQL = `
 INSERT INTO messages(
     chat_id, message_id, sent_at, from_me, kind, body, body_bytes,
     body_truncated, local_revision, ingest_seq, retained_body
 )
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)
-ON CONFLICT(chat_id, message_id) DO UPDATE SET
+ON CONFLICT(chat_id, message_id) DO NOTHING`
+
+const updateMessageSQL = `
+UPDATE messages SET
     body = CASE
-        WHEN messages.retained_body = 1 AND excluded.retained_body = 0 THEN messages.body
-        ELSE excluded.body
+		WHEN retained_body = 1 AND ? = 0 THEN body
+		ELSE ?
     END,
     body_bytes = CASE
-        WHEN messages.retained_body = 1 AND excluded.retained_body = 0 THEN messages.body_bytes
-        ELSE excluded.body_bytes
+		WHEN retained_body = 1 AND ? = 0 THEN body_bytes
+		ELSE ?
     END,
     body_truncated = CASE
-        WHEN messages.retained_body = 1 AND excluded.retained_body = 0 THEN messages.body_truncated
-        ELSE excluded.body_truncated
+		WHEN retained_body = 1 AND ? = 0 THEN body_truncated
+		ELSE ?
     END,
-    retained_body = MAX(messages.retained_body, excluded.retained_body)
-WHERE messages.sent_at = excluded.sent_at AND messages.from_me = excluded.from_me`
+	retained_body = MAX(retained_body, ?)
+WHERE chat_id = ? AND message_id = ? AND sent_at = ? AND from_me = ?`
+
+const updateChatActivitySQL = `
+UPDATE chats SET
+    last_message_at = MAX(last_message_at, ?),
+    unread_count = CASE
+        WHEN ? = 1 AND unread_count < ? THEN unread_count + 1
+        ELSE unread_count
+    END,
+    updated_at = ?
+WHERE chat_id = ?`
 
 const selectMessageSQL = `
 SELECT sent_at, from_me, body, body_truncated, retained_body

@@ -12,6 +12,16 @@ func (id ChatID) String() string {
 	return id.value
 }
 
+// ContactID is a validated, immutable opaque contact identifier.
+type ContactID struct {
+	value string
+}
+
+// String returns the identifier exactly as supplied to NewContactID.
+func (id ContactID) String() string {
+	return id.value
+}
+
 // MessageID is a validated, immutable message identifier.
 type MessageID struct {
 	value string
