@@ -12,14 +12,15 @@ WhatsApp transport or authentication work.
    concrete driver, secure cache path, connection lifecycle, schema-v1
    migration, corruption/version gates, bounded message round trips, and
    foundation benchmarks without switching the production store.
-3. **2.2B1 — bounded SQLite batch writer (current, ready for review):** add one
+3. **2.2B1 — bounded SQLite batch writer (complete):** add one
    serialized writer, bounded request admission, 50-write/25-ms transactions,
    commit acknowledgements, controlled busy errors, and draining shutdown.
-4. **2.2B2 — keyset pagination (pending):** add bounded message-page reads and
-   deterministic composite cursors without OFFSET queries.
-5. **Later 2.2 work — complete SQLite store contracts:** add retention
-   snapshots, bounded pruning, usage accounting, and the remaining failure
-   tests behind the existing service-owned contract.
+4. **2.2B2 — keyset pagination (current, ready for review):** add bounded,
+   indexed message-page reads and deterministic composite cursors without
+   OFFSET queries.
+5. **2.2C — pruning and cache budget (pending):** add retention snapshots,
+   bounded pruning, usage accounting, and the remaining failure tests behind
+   the existing service-owned contract.
 6. **2.3 — replace prototype JSON chat persistence:** make an explicit
    migration or retirement decision for `~/.local/share/walite/state.json`;
    do not silently merge its schema into SQLite.
@@ -62,9 +63,9 @@ WhatsApp transport or authentication work.
   placeholder-chat creation, and composite-ID message lookup are available for
   tests and later composition. SQLite is not yet wired into `cmd/walite` and
   does not yet claim the complete `service.MessageStore` interface.
-- Deferred to 2.2B or later: pagination, pruning, cache-size accounting,
-  batching policy, JSON migration, TUI adaptation, WhatsApp/session storage,
-  networking, and WAL checkpoint tuning.
+- Deferred from this foundation to later increments: pagination, pruning,
+  cache-size accounting, batching policy, JSON migration, TUI adaptation,
+  WhatsApp/session storage, networking, and WAL checkpoint tuning.
 
 ## Increment 2.2B1 bounded batch writer
 
@@ -96,6 +97,44 @@ WhatsApp transport or authentication work.
 - Transaction-only latency harness, 20 samples per size: observed p95 was
   0.595 ms for one write, 6.765 ms for ten, and 17.195 ms for 50. These are
   development measurements, not CI thresholds.
-- Still deferred: keyset pagination, retention/pruning, cache accounting, JSON
-  migration, production wiring, TUI adaptation, WhatsApp/session storage, and
-  networking.
+- Still deferred from this writer increment: keyset pagination,
+  retention/pruning, cache accounting, JSON migration, production wiring, TUI
+  adaptation, WhatsApp/session storage, and networking.
+
+## Increment 2.2B2 keyset pagination
+
+- Contract: `SQLiteStore.Page` implements the existing service-owned message
+  page shape. The zero `model.Cursor` means both “start from newest” on input
+  and “no continuation” on output; no second cursor or page abstraction was
+  added.
+- Bounds: non-positive limits default to 50 and values above 100 clamp to 100.
+  Each query requests only one lookahead row, so the application decodes at
+  most 101 rows and returns at most 100. Empty and unknown chats return a
+  non-nil empty page without creating placeholder metadata.
+- Order: pages use `sent_at DESC, message_id DESC`, with an exclusive
+  `(sent_at, message_id)` continuation boundary. Message ID is only the
+  deterministic tie-breaker for equal timestamps; it does not imply causal or
+  insertion order.
+- SQL: first and continuation pages are parameterized keyset queries using
+  `messages_page_idx`. There is no OFFSET path. Tests inspect both SQL texts and
+  `EXPLAIN QUERY PLAN` output.
+- Concurrent insertion semantics: a row inserted newer than a returned cursor
+  is not revisited by that cursor's next page. A row inserted older than the
+  cursor can appear on a later page. Pagination does not claim snapshot
+  isolation across calls.
+- Integration: reads retain the existing WAL configuration and one-connection
+  pool and work after multiple bounded writer transactions. No writer,
+  production wiring, JSON persistence, TUI, or pruning behavior changed.
+- Coverage: deterministic tests traverse exactly 257 messages at page sizes 1,
+  10, 32, 50, and 100; exercise 60 equal-timestamp messages inserted out of
+  order; preserve ASCII, accented, CJK, complex emoji, direction, timestamps,
+  and bodyless records; verify cancellation, bounds, index use, mutation
+  behavior, and absence of OFFSET.
+- Core 2 Duo benchmark over one 5,000-message chat, 100 returned messages per
+  operation: first page 1.488 ms (51,696 B/op, 1,739 allocs/op), middle page
+  1.946 ms (51,896 B/op, 1,744 allocs/op), and old page 3.000 ms (50,664 B/op,
+  1,641 allocs/op). Setup was excluded. The observed cost increase for older
+  cursors is recorded evidence, not a CI timing threshold.
+- Still deferred: retention/pruning, cache accounting, disk-full behavior, JSON
+  migration, production wiring, TUI adaptation, WhatsApp/session storage,
+  media, networking, and WAL checkpoint tuning.

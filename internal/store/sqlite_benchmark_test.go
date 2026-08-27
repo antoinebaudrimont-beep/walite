@@ -107,6 +107,50 @@ func BenchmarkSQLiteSingleMessageLookup(b *testing.B) {
 	}
 }
 
+func BenchmarkSQLitePagination(b *testing.B) {
+	const messageCount = 5_000
+	store, _ := openBenchmarkSQLite(b)
+	writeSQLitePageMessages(b, store, sqliteSequentialMessages(b, "benchmark-page-chat", messageCount))
+	chatID := sqlitePageChatID(b, "benchmark-page-chat")
+
+	benchmarks := []struct {
+		name   string
+		cursor model.Cursor
+	}{
+		{name: "First_100", cursor: model.NoCursor()},
+		{name: "Middle_100", cursor: sqliteBenchmarkCursor(b, 2_601)},
+		{name: "Old_100", cursor: sqliteBenchmarkCursor(b, 201)},
+	}
+	for _, benchmark := range benchmarks {
+		b.Run(benchmark.name, func(b *testing.B) {
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				messages, _, err := store.Page(context.Background(), chatID, benchmark.cursor, 100)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if len(messages) != 100 {
+					b.Fatalf("page len=%d want=100", len(messages))
+				}
+			}
+		})
+	}
+}
+
+func sqliteBenchmarkCursor(b *testing.B, sequence int) model.Cursor {
+	b.Helper()
+	messageID, err := model.NewMessageID(fmt.Sprintf("message-%06d", sequence))
+	if err != nil {
+		b.Fatal(err)
+	}
+	cursor, err := model.NewCursor(time.UnixMilli(int64(sequence)).UTC(), messageID)
+	if err != nil {
+		b.Fatal(err)
+	}
+	return cursor
+}
+
 func openBenchmarkSQLite(b *testing.B) (*SQLiteStore, string) {
 	b.Helper()
 	path := filepath.Join(b.TempDir(), "walite", "walite-cache.db")

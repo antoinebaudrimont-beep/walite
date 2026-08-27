@@ -597,36 +597,55 @@ func (store *SQLiteStore) Message(ctx context.Context, chatID model.ChatID, mess
 	if err != nil {
 		return model.Message{}, newSQLiteError(ErrStoreRejected, err)
 	}
-	var (
-		sentAt        int64
-		fromMe        int
-		body          sql.NullString
-		bodyTruncated int
-		retainedBody  int
-	)
+	var values sqliteMessageValues
 	err = store.db.QueryRowContext(ctx, selectMessageSQL,
 		validatedChatID.String(), validatedMessageID.String(),
-	).Scan(&sentAt, &fromMe, &body, &bodyTruncated, &retainedBody)
+	).Scan(
+		&values.sentAt,
+		&values.fromMe,
+		&values.body,
+		&values.bodyTruncated,
+		&values.retainedBody,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.Message{}, newSQLiteError(ErrMessageNotFound, nil)
 	}
 	if err != nil {
 		return model.Message{}, sqliteOperationError(err)
 	}
-	if fromMe < 0 || fromMe > 1 || bodyTruncated < 0 || bodyTruncated > 1 || retainedBody < 0 || retainedBody > 1 || (retainedBody == 1 && !body.Valid) {
+	return sqliteMessageFromValues(validatedChatID.String(), validatedMessageID.String(), values)
+}
+
+type sqliteScanner interface {
+	Scan(...any) error
+}
+
+type sqliteMessageValues struct {
+	sentAt        int64
+	fromMe        int
+	body          sql.NullString
+	bodyTruncated int
+	retainedBody  int
+}
+
+func sqliteMessageFromValues(chatID, messageID string, values sqliteMessageValues) (model.Message, error) {
+	if values.fromMe < 0 || values.fromMe > 1 ||
+		values.bodyTruncated < 0 || values.bodyTruncated > 1 ||
+		values.retainedBody < 0 || values.retainedBody > 1 ||
+		(values.retainedBody == 1 && !values.body.Valid) {
 		return model.Message{}, newSQLiteError(ErrCorruptCache, nil)
 	}
 	message, err := model.NewMessage(model.MessageInput{
-		ChatID:    validatedChatID.String(),
-		MessageID: validatedMessageID.String(),
-		SentAt:    time.UnixMilli(sentAt).UTC(),
-		FromMe:    fromMe == 1,
-		Text:      body.String,
+		ChatID:    chatID,
+		MessageID: messageID,
+		SentAt:    time.UnixMilli(values.sentAt).UTC(),
+		FromMe:    values.fromMe == 1,
+		Text:      values.body.String,
 	})
 	if err != nil {
 		return model.Message{}, newSQLiteError(ErrCorruptCache, err)
 	}
-	if retainedBody == 0 {
+	if values.retainedBody == 0 {
 		message = message.WithoutBody()
 	}
 	return message, nil
