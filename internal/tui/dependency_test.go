@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestPackageDoesNotImportInternalConfig(t *testing.T) {
+func TestPackageDoesNotImportPersistenceImplementations(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
@@ -28,7 +28,8 @@ func TestPackageDoesNotImportInternalConfig(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if path == "github.com/antoinebaudrimont-beep/walite/internal/config" {
+			if path == "github.com/antoinebaudrimont-beep/walite/internal/config" ||
+				path == "github.com/antoinebaudrimont-beep/walite/internal/store" {
 				t.Fatalf("%s imports forbidden package %s", entry.Name(), path)
 			}
 		}

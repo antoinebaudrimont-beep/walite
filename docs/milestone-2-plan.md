@@ -21,13 +21,13 @@ WhatsApp transport or authentication work.
 5. **2.2B3 — contact and chat ingestion (complete):** make
    contacts and full chat metadata first-class cache entities, upgrade
    placeholders, and maintain idempotent activity/unread state.
-6. **2.2C — pruning and cache budget (current, ready for review):** retain the
+6. **2.2C — pruning and cache budget (complete):** retain the
    newest and recent message bodies, account for physical SQLite files, enforce
    one bounded pressure cycle, and expose controlled degradation states without
    switching production storage.
-7. **2.3 — replace prototype JSON chat persistence:** make an explicit
-   migration or retirement decision for `~/.local/share/walite/state.json`;
-   do not silently merge its schema into SQLite.
+7. **2.3 — prototype JSON chat persistence retirement (current, ready for
+   review):** remove TUI chat/message serialization, ignore obsolete prototype
+   files, and rebuild the temporary synthetic state in memory on every start.
 8. **2.4 — service-to-TUI data adapter:** replace synthetic TUI-owned chat data
    with bounded snapshots and immutable service updates without moving storage
    ownership into the TUI.
@@ -39,9 +39,9 @@ WhatsApp transport or authentication work.
 
 ## Remaining temporary deviations after 2.1
 
-- JSON chat/message state and its file backend remain in `internal/tui`.
 - Emoji preference path and file I/O remain in `internal/tui`.
-- TUI chat/message data remains synthetic and is not yet service-driven.
+- TUI chat/message data remains synthetic, in-memory only, and is not yet
+  service-driven.
 - Changed terminal events still trigger a measured full-screen redraw.
 
 ## Increment 2.2A foundation
@@ -245,8 +245,49 @@ WhatsApp transport or authentication work.
   pruning pass (2,764 B/op, 48 allocs/op); five chats totaling 3,000 messages
   took 69.520 ms (2,774 B/op, 48 allocs/op). Each pass dropped the bounded 500
   bodies. Physical DB/WAL/SHM accounting took 12.966 µs (944 B/op, 8 allocs/op).
-  Fixture restoration and ingestion
-  were excluded, and these observations are not CI timing thresholds.
-- Still deferred: production SQLite composition, prototype JSON retirement,
+  Fixture restoration and ingestion were excluded, and these observations are
+  not CI timing thresholds.
+- Still deferred: production SQLite composition,
   contact/chat list pagination, global metadata pruning, TUI adaptation,
   WhatsApp/session storage, media download policy, networking, and sync.
+
+## Increment 2.3 prototype JSON persistence retirement
+
+- Previous file and schema: `~/.local/share/walite/state.json` used version 1
+  with top-level `version`, `selectedChat`, `nextMessageId`, `nextActivity`, and
+  `chats`. Each chat stored `title`, `unreadCount`, `activity`, and `messages`;
+  each message stored `id`, `timestamp`, `text`, and optional `replyToId` plus
+  `hasReply`.
+- Previous field ownership: `selectedChat` was the only UI-only field, but it
+  was an unstable array index. Chat titles, unread counts, activity order,
+  message IDs/text/timestamps/reply relationships, and the next-ID/activity
+  counters were prototype domain data. No composer, cursor, input mode,
+  viewport `scrollOffset`, `unreadBoundary`, `replySelect`, active
+  `replyTarget`, emoji-popup, settings-popup, terminal-size, search/filter, or
+  notification state was serialized. No preference field was present.
+- Decision: retire `state.json` without replacement. Persisting only an
+  unstable synthetic-list index was not useful enough to justify a new
+  `ui-state.json`; selected chat therefore resets to the first current demo
+  chat on restart. The obsolete file is neither opened, parsed, rewritten, nor
+  deleted, so valid, malformed, oversized, and unknown-field variants cannot
+  break startup. The compatibility read is zero bytes and needs no size cap.
+- Runtime behavior: the current four-chat synthetic data remains available for
+  the offline prototype but is freshly constructed in memory on every TUI run.
+  Chat selection, unread mutations, activity ordering, local messages, and
+  reply relationships are never persisted. Old synthetic history is
+  deliberately not imported into SQLite or any other store.
+- Remaining TUI persistence: `~/.config/walite/preferences.json` remains
+  independent and continues to own only the emoji MRU. Configuration remains
+  owned by `internal/config`; neither is merged into SQLite.
+- Boundary proof: `internal/tui` imports neither `internal/store` nor
+  `internal/config`. This increment does not open SQLite, add an importer,
+  alter schema v1, change `cmd/walite`, or introduce the service-to-TUI data
+  adapter. SQLite production composition and real snapshots remain 2.4 work.
+- Coverage: a full version-1 fixture with chats, messages, unread/activity,
+  reply data, selection, and an unknown field is ignored and left byte-for-byte
+  unchanged. Truncated and greater-than-64-KiB obsolete files are also ignored.
+  A restart test mutates selection and messages, verifies no `state.json` or
+  replacement UI-state file is created, and confirms the next run starts with
+  fresh demo state. Existing TUI interaction tests continue to cover compose,
+  reply, scrolling, emoji, unread separator, timestamps, resize, and terminal
+  restoration.

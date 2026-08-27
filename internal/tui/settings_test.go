@@ -122,7 +122,7 @@ func TestRunUsesSuppliedOptions(t *testing.T) {
 			Theme:          ThemeDefault,
 			ShowTimestamps: false,
 			ConfirmQuit:    true,
-		}, "", nil)
+		}, "")
 	}()
 
 	<-screen.shown
@@ -147,7 +147,7 @@ func TestRunAppliesHiddenTimestampOptionToMessages(t *testing.T) {
 		result <- runWithDependencies(context.Background(), screen, Options{
 			Theme:          ThemeDefault,
 			ShowTimestamps: false,
-		}, "", nil)
+		}, "")
 	}()
 
 	<-screen.shown

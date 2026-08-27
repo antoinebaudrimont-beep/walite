@@ -3,45 +3,27 @@ package tui
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"sort"
-	"strconv"
 	"testing"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
 )
 
-func BenchmarkFirstFrameCold(b *testing.B) {
-	root := b.TempDir()
-	benchmarkFirstFrame(b, func(iteration int) ChatStateStore {
-		directory := filepath.Join(root, strconv.Itoa(iteration))
-		return newFileChatStateStore(filepath.Join(directory, "state.json"))
-	})
+func BenchmarkFirstFrame(b *testing.B) {
+	benchmarkFirstFrame(b)
 }
 
-func BenchmarkFirstFrameWarm(b *testing.B) {
-	root := b.TempDir()
-	chatStore := newFileChatStateStore(filepath.Join(root, "state.json"))
-	if err := chatStore.Save(newDemoChatState()); err != nil {
-		b.Fatal(err)
-	}
-	benchmarkFirstFrame(b, func(int) ChatStateStore {
-		return chatStore
-	})
-}
-
-func benchmarkFirstFrame(b *testing.B, stores func(int) ChatStateStore) {
+func benchmarkFirstFrame(b *testing.B) {
 	b.ReportAllocs()
-	for iteration := 0; iteration < b.N; iteration++ {
+	for range b.N {
 		b.StopTimer()
-		chatStore := stores(iteration)
 		screen := newObservedScreen(100, 30)
 		ctx, cancel := context.WithCancel(context.Background())
 		result := make(chan error, 1)
 		b.StartTimer()
 		go func() {
-			result <- runWithDependencies(ctx, screen, DefaultOptions(), "", chatStore)
+			result <- runWithDependencies(ctx, screen, DefaultOptions(), "")
 		}()
 		<-screen.shown
 		b.StopTimer()

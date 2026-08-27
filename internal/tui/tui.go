@@ -4,7 +4,6 @@ package tui
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/gdamore/tcell/v2"
 )
@@ -25,19 +24,11 @@ func Run(ctx context.Context, screen tcell.Screen, options Options) error {
 	if path, err := defaultPreferencesPath(); err == nil {
 		preferencesPath = path
 	}
-	store, err := newDefaultChatStateStore()
-	if err != nil {
-		return fmt.Errorf("chat state store: %w", err)
-	}
-	return runWithDependencies(ctx, screen, options, preferencesPath, store)
+	return runWithDependencies(ctx, screen, options, preferencesPath)
 }
 
 func runWithPreferences(ctx context.Context, screen tcell.Screen, preferencesPath string) error {
-	return runWithDependencies(ctx, screen, DefaultOptions(), preferencesPath, nil)
-}
-
-func runWithStore(ctx context.Context, screen tcell.Screen, preferencesPath string, store ChatStateStore) (runErr error) {
-	return runWithDependencies(ctx, screen, DefaultOptions(), preferencesPath, store)
+	return runWithDependencies(ctx, screen, DefaultOptions(), preferencesPath)
 }
 
 func runWithDependencies(
@@ -45,8 +36,7 @@ func runWithDependencies(
 	screen tcell.Screen,
 	options Options,
 	preferencesPath string,
-	store ChatStateStore,
-) (runErr error) {
+) error {
 	if ctx == nil || screen == nil {
 		return errors.New("tui rejected")
 	}
@@ -58,12 +48,7 @@ func runWithDependencies(
 	}
 
 	screen.HideCursor()
-	state, err := loadChatStateOrDemo(store)
-	if err != nil {
-		screen.Fini()
-		return fmt.Errorf("load chat state: %w", err)
-	}
-	model := viewModel{chats: state, options: options}
+	model := viewModel{chats: newDemoChatState(), options: options}
 	if selectedChat, ok := model.chats.selectedChat(); ok {
 		model.chatView.unreadBoundary = unreadBoundaryForChat(selectedChat)
 		selectedChat.unreadCount = 0
@@ -71,18 +56,6 @@ func runWithDependencies(
 	if preferencesPath != "" {
 		model.preferencesPath = preferencesPath
 		_ = loadEmojiPreferences(preferencesPath, &model.emojiPicker)
-	}
-	if store != nil {
-		defer func() {
-			if err := store.Save(model.chats); err != nil {
-				saveErr := fmt.Errorf("save chat state: %w", err)
-				if runErr == nil {
-					runErr = saveErr
-				} else {
-					runErr = errors.Join(runErr, saveErr)
-				}
-			}
-		}()
 	}
 	defer screen.Fini()
 	draw(screen, &model)
