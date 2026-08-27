@@ -18,12 +18,13 @@ WhatsApp transport or authentication work.
 4. **2.2B2 — keyset pagination (complete):** add bounded,
    indexed message-page reads and deterministic composite cursors without
    OFFSET queries.
-5. **2.2B3 — contact and chat ingestion (current, ready for review):** make
+5. **2.2B3 — contact and chat ingestion (complete):** make
    contacts and full chat metadata first-class cache entities, upgrade
    placeholders, and maintain idempotent activity/unread state.
-6. **2.2C — pruning and cache budget (pending):** add retention snapshots,
-   bounded pruning, usage accounting, and the remaining failure tests behind
-   the existing service-owned contract.
+6. **2.2C — pruning and cache budget (current, ready for review):** retain the
+   newest and recent message bodies, account for physical SQLite files, enforce
+   one bounded pressure cycle, and expose controlled degradation states without
+   switching production storage.
 7. **2.3 — replace prototype JSON chat persistence:** make an explicit
    migration or retirement decision for `~/.local/share/walite/state.json`;
    do not silently merge its schema into SQLite.
@@ -180,3 +181,72 @@ WhatsApp transport or authentication work.
   semantics, retention/pruning, cache accounting, disk-full behavior, JSON
   migration, production wiring, TUI adaptation, WhatsApp/session storage,
   media, networking, and WAL checkpoint tuning.
+
+## Increment 2.2C retention, cache budget, and degradation
+
+- Body-retention rule: a body is protected when it belongs to the newest 100
+  messages in its chat, ordered by `(sent_at DESC, message_id DESC)`, or when
+  its `sent_at` is at or after the injected `now - 90 days` cutoff. The cutoff
+  is inclusive on the retained side. A body is eligible only when it is outside
+  both protections.
+- Prune semantics: `SQLiteStore.Prune` runs one explicit transaction and
+  changes no more than 500 eligible bodies. It sets `body=NULL`,
+  `body_bytes=0`, and `retained_body=0`; it does not delete message rows or
+  change composite identity, timestamps, direction, activity, unread counts,
+  contacts, chats, attachments, or paging order. Its content-free result
+  reports bodies dropped and logical body bytes freed. Repeated calls continue
+  bounded work when more than 500 bodies are eligible.
+- Time and failure behavior: callers inject `now`; there is no wall-clock read
+  in the pruning decision. Cancellation before commit and SQL failures roll
+  back the transaction. SQLite BUSY/LOCKED remains `ErrBusy`; SQLite FULL maps
+  to the content-free `ErrDiskFull`. A narrow internal hook makes these driver
+  outcomes deterministic in tests without changing the public runtime API.
+- Transaction ownership: pruning and checkpoints use a context-cancellable
+  maintenance gate shared with the existing writer. Pruning is not submitted
+  as a 50-operation writer batch. Queue capacity 64, batch limit 50, maximum
+  age 25 ms, commit acknowledgements, and draining close behavior are
+  unchanged; accepted writes wait boundedly while maintenance owns SQLite and
+  resume afterward.
+- Budget: the production physical cache budget is the named 250 MiB
+  `DefaultSQLiteCacheBudgetBytes` constant. Tests can override it only through
+  package-private options. `CacheSizeBytes` sums the main database, `-wal`, and
+  `-shm` using filesystem metadata; missing WAL/SHM files count as zero and an
+  absent or unsafe main file is a controlled error. External attachment files
+  are not added because the requested budget is explicitly the three SQLite
+  files.
+- Pressure cycle: `EnforceCacheBudget` first measures physical size. When over
+  budget, it performs one bounded prune transaction, then one serialized
+  `PRAGMA wal_checkpoint(TRUNCATE)`, and remeasures. TRUNCATE was selected
+  because the maintenance gate and one-connection pool prevent a concurrent
+  walite transaction; it is invoked only during explicit pressure maintenance,
+  not on every write. Logical pruning commits before checkpointing, so a BUSY
+  or failed checkpoint is reported without undoing the valid body-retention
+  result.
+- Degradation: normal operation reports `CacheNormal`; a cache still above
+  budget after a valid cycle reports `CachePressure` and `ErrCachePressure`;
+  SQLite FULL reports `CacheWriteUnavailable`. Pressure never clears a body
+  protected by the 100-message/90-day union, even when the physical file cannot
+  reach the budget. Previously committed data remains readable after a failed
+  write, and a later healthy writer transaction remains possible and clears
+  the write-unavailable state without clearing an unrelated pressure state.
+- Metadata scope: schema-v1's unique checkpoint keys continue to prevent
+  duplicate per-scope/per-chat checkpoint rows, and this increment introduces
+  no new auxiliary table or unbounded queue. Global chat/contact deletion and
+  bodyless-message metadata caps remain a later policy decision; body expiry
+  alone never deletes identity rows in 2.2C.
+- Coverage: deterministic tests exercise exact 90-day boundaries, more than
+  100 recent messages, mixed chats, ASCII/accented/emoji byte accounting,
+  pagination before and after pruning, metadata preservation, the 500-body
+  limit, idempotence, cancellation, rollback, BUSY, writer serialization,
+  DB/WAL/SHM accounting, missing optional files, tiny-budget pressure,
+  checkpoint failure, disk-full recovery, and a 560-message multi-chat stress
+  case with duplicate ingestion.
+- Core 2 Duo benchmarks: one 1,000-message chat took 40.455 ms per bounded
+  pruning pass (2,764 B/op, 48 allocs/op); five chats totaling 3,000 messages
+  took 69.520 ms (2,774 B/op, 48 allocs/op). Each pass dropped the bounded 500
+  bodies. Physical DB/WAL/SHM accounting took 12.966 µs (944 B/op, 8 allocs/op).
+  Fixture restoration and ingestion
+  were excluded, and these observations are not CI timing thresholds.
+- Still deferred: production SQLite composition, prototype JSON retirement,
+  contact/chat list pagination, global metadata pruning, TUI adaptation,
+  WhatsApp/session storage, media download policy, networking, and sync.

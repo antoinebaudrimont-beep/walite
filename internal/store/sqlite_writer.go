@@ -81,11 +81,12 @@ func (timer *realSQLiteBatchTimer) Stop() bool {
 }
 
 type sqliteWriterHooks struct {
-	beforeRun        func()
-	afterEnqueue     func()
-	beforeQueueWait  func()
-	afterBatchAdd    func(logicalWrites int)
-	afterTransaction func(
+	beforeRun          func()
+	beforePendingWrite func(pendingWriteKind) error
+	afterEnqueue       func()
+	beforeQueueWait    func()
+	afterBatchAdd      func(logicalWrites int)
+	afterTransaction   func(
 		logicalWrites int,
 		duration time.Duration,
 		err error,

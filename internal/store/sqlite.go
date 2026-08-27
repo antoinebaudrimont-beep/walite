@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/antoinebaudrimont-beep/walite/internal/model"
-	modernsqlite "modernc.org/sqlite"
+	_ "modernc.org/sqlite"
 )
 
 // All application-cache timestamp columns use signed Unix milliseconds.
@@ -36,6 +36,8 @@ var (
 	ErrMessageNotFound   = errors.New("message not found")
 	ErrStoreRejected     = errors.New("store operation rejected")
 	ErrBusy              = errors.New("cache busy")
+	ErrDiskFull          = errors.New("cache storage unavailable")
+	ErrCachePressure     = errors.New("cache remains over budget")
 )
 
 const maxSQLiteUnreadCount = uint32(^uint32(0))
@@ -44,6 +46,11 @@ const maxSQLiteUnreadCount = uint32(^uint32(0))
 type SQLiteOptions struct {
 	Path        string
 	BusyTimeout time.Duration
+
+	cacheBudgetBytes int64
+	cacheStat        func(string) (os.FileInfo, error)
+	checkpoint       sqliteCheckpointFunc
+	pruneHooks       sqlitePruneHooks
 }
 
 // SQLiteStore owns walite's application-cache database. It deliberately does
@@ -55,6 +62,13 @@ type SQLiteStore struct {
 	closeOne sync.Once
 	closeErr error
 	writer   *sqliteBatchWriter
+
+	maintenance chan struct{}
+	cacheBudget int64
+	cacheStat   func(string) (os.FileInfo, error)
+	checkpoint  sqliteCheckpointFunc
+	pruneHooks  sqlitePruneHooks
+	degradation atomic.Uint32
 }
 
 type sqliteError struct {
@@ -109,6 +123,13 @@ func openSQLiteWithWriter(ctx context.Context, options SQLiteOptions, filesystem
 	if err := sqliteContextError(ctx); err != nil {
 		return nil, err
 	}
+	cacheBudget := options.cacheBudgetBytes
+	if cacheBudget == 0 {
+		cacheBudget = DefaultSQLiteCacheBudgetBytes
+	}
+	if cacheBudget < 0 {
+		return nil, newSQLiteError(ErrStoreRejected, nil)
+	}
 	busyTimeout, err := normalizeSQLiteBusyTimeout(options.BusyTimeout)
 	if err != nil {
 		return nil, newSQLiteError(ErrStoreRejected, err)
@@ -162,7 +183,25 @@ func openSQLiteWithWriter(ctx context.Context, options SQLiteOptions, filesystem
 	if err := tightenSQLiteFiles(path, filesystem); err != nil {
 		return fail(ErrUnsafeCachePath, err)
 	}
-	store := &SQLiteStore{db: database, path: path}
+	cacheStat := options.cacheStat
+	if cacheStat == nil {
+		cacheStat = os.Lstat
+	}
+	checkpoint := options.checkpoint
+	if checkpoint == nil {
+		checkpoint = sqliteTruncateCheckpoint
+	}
+	store := &SQLiteStore{
+		db:          database,
+		path:        path,
+		maintenance: make(chan struct{}, 1),
+		cacheBudget: cacheBudget,
+		cacheStat:   cacheStat,
+		checkpoint:  checkpoint,
+		pruneHooks:  options.pruneHooks,
+	}
+	store.maintenance <- struct{}{}
+	store.degradation.Store(uint32(CacheNormal))
 	store.writer = newSQLiteBatchWriter(store, writerOptions)
 	go store.writer.run()
 	return store, nil
@@ -427,6 +466,8 @@ func (store *SQLiteStore) Close() error {
 			store.writer.shutdown()
 		}
 		if store.db != nil {
+			_ = store.acquireMaintenance(context.Background())
+			defer store.releaseMaintenance()
 			_ = tightenSQLiteFiles(store.path, operatingSystemFS)
 			store.closeErr = store.db.Close()
 		}
@@ -505,9 +546,20 @@ func (store *SQLiteStore) Write(ctx context.Context, batch model.WriteBatch) err
 	return store.writer.submit(ctx, newPendingMessages(validated))
 }
 
-func (store *SQLiteStore) commitPendingWrites(requests *[sqliteMaxBatchWrites]pendingWrite, count int) (time.Duration, error) {
+func (store *SQLiteStore) commitPendingWrites(requests *[sqliteMaxBatchWrites]pendingWrite, count int) (duration time.Duration, resultErr error) {
 	started := time.Now()
 	ctx := context.Background()
+	defer func() {
+		if resultErr != nil {
+			store.observeSQLiteFailure(resultErr)
+		} else {
+			store.observeSQLiteWriteSuccess()
+		}
+	}()
+	if err := store.acquireMaintenance(ctx); err != nil {
+		return time.Since(started), err
+	}
+	defer store.releaseMaintenance()
 	transaction, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return time.Since(started), sqliteOperationError(err)
@@ -521,6 +573,11 @@ func (store *SQLiteStore) commitPendingWrites(requests *[sqliteMaxBatchWrites]pe
 	now := time.Now().UnixMilli()
 	for index := 0; index < count; index++ {
 		request := &requests[index]
+		if hook := store.writer.hooks.beforePendingWrite; hook != nil {
+			if err := hook(request.kind); err != nil {
+				return time.Since(started), sqliteOperationError(err)
+			}
+		}
 		switch request.kind {
 		case pendingContactWrite:
 			if err := writeSQLiteContact(ctx, transaction, request.contact); err != nil {
@@ -548,7 +605,7 @@ func (store *SQLiteStore) commitPendingWrites(requests *[sqliteMaxBatchWrites]pe
 		return time.Since(started), sqliteOperationError(err)
 	}
 	committed = true
-	duration := time.Since(started)
+	duration = time.Since(started)
 	if err := tightenSQLiteFiles(store.path, operatingSystemFS); err != nil {
 		return duration, newSQLiteError(ErrUnsafeCachePath, err)
 	}
@@ -754,11 +811,15 @@ func sqliteOperationError(err error) error {
 	if isContextError(err) {
 		return err
 	}
-	var driverError *modernsqlite.Error
-	if errors.As(err, &driverError) {
-		switch driverError.Code() & 0xff {
+	var codedError interface{ Code() int }
+	if errors.As(err, &codedError) {
+		switch codedError.Code() & 0xff {
 		case 5, 6: // SQLITE_BUSY and SQLITE_LOCKED, including extended codes.
 			return newSQLiteError(ErrBusy, err)
+		case 11, 26: // SQLITE_CORRUPT and SQLITE_NOTADB.
+			return newSQLiteError(ErrCorruptCache, err)
+		case 13: // SQLITE_FULL, including extended codes.
+			return newSQLiteError(ErrDiskFull, err)
 		}
 	}
 	return newSQLiteError(ErrCacheIO, err)
