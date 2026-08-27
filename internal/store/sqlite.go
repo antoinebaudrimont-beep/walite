@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/antoinebaudrimont-beep/walite/internal/model"
-	_ "modernc.org/sqlite"
+	modernsqlite "modernc.org/sqlite"
 )
 
 // All application-cache timestamp columns use signed Unix milliseconds.
@@ -33,6 +33,7 @@ var (
 	ErrStoreClosed       = errors.New("store closed")
 	ErrMessageNotFound   = errors.New("message not found")
 	ErrStoreRejected     = errors.New("store operation rejected")
+	ErrBusy              = errors.New("cache busy")
 )
 
 // SQLiteOptions controls the application-cache database connection.
@@ -49,6 +50,7 @@ type SQLiteStore struct {
 	closed   atomic.Bool
 	closeOne sync.Once
 	closeErr error
+	writer   *sqliteBatchWriter
 }
 
 type sqliteError struct {
@@ -96,6 +98,10 @@ func OpenSQLite(ctx context.Context, options SQLiteOptions) (*SQLiteStore, error
 }
 
 func openSQLite(ctx context.Context, options SQLiteOptions, filesystem sqliteFilesystem, hook migrationHook) (*SQLiteStore, error) {
+	return openSQLiteWithWriter(ctx, options, filesystem, hook, sqliteWriterOptions{})
+}
+
+func openSQLiteWithWriter(ctx context.Context, options SQLiteOptions, filesystem sqliteFilesystem, hook migrationHook, writerOptions sqliteWriterOptions) (*SQLiteStore, error) {
 	if err := sqliteContextError(ctx); err != nil {
 		return nil, err
 	}
@@ -152,7 +158,10 @@ func openSQLite(ctx context.Context, options SQLiteOptions, filesystem sqliteFil
 	if err := tightenSQLiteFiles(path, filesystem); err != nil {
 		return fail(ErrUnsafeCachePath, err)
 	}
-	return &SQLiteStore{db: database, path: path}, nil
+	store := &SQLiteStore{db: database, path: path}
+	store.writer = newSQLiteBatchWriter(store, writerOptions)
+	go store.writer.run()
+	return store, nil
 }
 
 func wrapSQLiteOpenError(corruptCandidate bool, err error) error {
@@ -410,6 +419,9 @@ func (store *SQLiteStore) Close() error {
 	}
 	store.closeOne.Do(func() {
 		store.closed.Store(true)
+		if store.writer != nil {
+			store.writer.shutdown()
+		}
 		if store.db != nil {
 			_ = tightenSQLiteFiles(store.path, operatingSystemFS)
 			store.closeErr = store.db.Close()
@@ -434,34 +446,29 @@ func (store *SQLiteStore) EnsureChat(ctx context.Context, chat model.Chat) error
 	if err != nil {
 		return newSQLiteError(ErrStoreRejected, err)
 	}
-	placeholder := 0
-	if validated.Placeholder() {
-		placeholder = 1
-	}
-	now := time.Now().UnixMilli()
-	_, err = store.db.ExecContext(ctx, ensureChatSQL,
-		validated.ID().String(), validated.DisplayName(), placeholder, now,
-	)
-	if err != nil {
-		return sqliteOperationError(err)
-	}
-	if err := tightenSQLiteFiles(store.path, operatingSystemFS); err != nil {
-		return newSQLiteError(ErrUnsafeCachePath, err)
-	}
-	return nil
+	return store.writer.submit(ctx, newPendingChat(validated))
 }
 
-// PutMessage writes one message through the bounded service write shape.
+// PutMessage submits one message to the bounded writer and waits for commit.
 func (store *SQLiteStore) PutMessage(ctx context.Context, message model.Message) error {
+	return store.SubmitMessage(ctx, message)
+}
+
+// SubmitMessage submits one message to the bounded writer and waits for its
+// transaction to commit. Once enqueued, caller cancellation stops only the
+// acknowledgement wait; the accepted write remains owned by the writer.
+func (store *SQLiteStore) SubmitMessage(ctx context.Context, message model.Message) error {
+	if err := store.checkOpen(ctx); err != nil {
+		return err
+	}
 	batch, err := model.NewWriteBatch(model.WriteRealtime, []model.Message{message})
 	if err != nil {
 		return newSQLiteError(ErrStoreRejected, err)
 	}
-	return store.Write(ctx, batch)
+	return store.writer.submit(ctx, newPendingMessages(batch))
 }
 
-// Write atomically upserts one bounded model batch and creates placeholder
-// chats before inserting messages that reference unknown chats.
+// Write submits one already-bounded service batch and waits for commit.
 func (store *SQLiteStore) Write(ctx context.Context, batch model.WriteBatch) error {
 	if err := store.checkOpen(ctx); err != nil {
 		return err
@@ -481,10 +488,15 @@ func (store *SQLiteStore) Write(ctx context.Context, batch model.WriteBatch) err
 	if validated.Len() == 0 {
 		return nil
 	}
+	return store.writer.submit(ctx, newPendingMessages(validated))
+}
 
+func (store *SQLiteStore) commitPendingWrites(requests *[sqliteMaxBatchWrites]pendingWrite, count int) (time.Duration, error) {
+	started := time.Now()
+	ctx := context.Background()
 	transaction, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
-		return sqliteOperationError(err)
+		return time.Since(started), sqliteOperationError(err)
 	}
 	committed := false
 	defer func() {
@@ -493,51 +505,81 @@ func (store *SQLiteStore) Write(ctx context.Context, batch model.WriteBatch) err
 		}
 	}()
 	now := time.Now().UnixMilli()
-	for index := 0; index < validated.Len(); index++ {
-		message, _ := validated.At(index)
-		if _, err := transaction.ExecContext(ctx, ensurePlaceholderChatSQL,
-			message.ChatID().String(), message.SentAt().UnixMilli(), now,
-		); err != nil {
-			return sqliteOperationError(err)
+	for index := 0; index < count; index++ {
+		request := &requests[index]
+		if request.kind == pendingChatWrite {
+			if err := writeSQLiteChat(ctx, transaction, request.chat, now); err != nil {
+				return time.Since(started), err
+			}
+			continue
 		}
-		body := any(nil)
-		bodyBytes := 0
-		retainedBody := 0
-		if message.BodyRetained() {
-			body = message.Text()
-			bodyBytes = len(message.Text())
-			retainedBody = 1
-		}
-		fromMe := 0
-		if message.FromMe() {
-			fromMe = 1
-		}
-		bodyTruncated := 0
-		if message.BodyTruncated() {
-			bodyTruncated = 1
-		}
-		result, err := transaction.ExecContext(ctx, upsertMessageSQL,
-			message.ChatID().String(), message.MessageID().String(),
-			message.SentAt().UnixMilli(), fromMe, messageKindUnknown, body,
-			bodyBytes, bodyTruncated, retainedBody,
-		)
-		if err != nil {
-			return sqliteOperationError(err)
-		}
-		changed, err := result.RowsAffected()
-		if err != nil {
-			return sqliteOperationError(err)
-		}
-		if changed != 1 {
-			return newSQLiteError(ErrStoreRejected, nil)
+		for messageIndex := 0; messageIndex < request.messages.Len(); messageIndex++ {
+			message, _ := request.messages.At(messageIndex)
+			if err := writeSQLiteMessage(ctx, transaction, message, now); err != nil {
+				return time.Since(started), err
+			}
 		}
 	}
 	if err := transaction.Commit(); err != nil {
-		return sqliteOperationError(err)
+		return time.Since(started), sqliteOperationError(err)
 	}
 	committed = true
+	duration := time.Since(started)
 	if err := tightenSQLiteFiles(store.path, operatingSystemFS); err != nil {
-		return newSQLiteError(ErrUnsafeCachePath, err)
+		return duration, newSQLiteError(ErrUnsafeCachePath, err)
+	}
+	return duration, nil
+}
+
+func writeSQLiteChat(ctx context.Context, transaction *sql.Tx, chat model.Chat, now int64) error {
+	placeholder := 0
+	if chat.Placeholder() {
+		placeholder = 1
+	}
+	if _, err := transaction.ExecContext(ctx, ensureChatSQL,
+		chat.ID().String(), chat.DisplayName(), placeholder, now,
+	); err != nil {
+		return sqliteOperationError(err)
+	}
+	return nil
+}
+
+func writeSQLiteMessage(ctx context.Context, transaction *sql.Tx, message model.Message, now int64) error {
+	if _, err := transaction.ExecContext(ctx, ensurePlaceholderChatSQL,
+		message.ChatID().String(), message.SentAt().UnixMilli(), now,
+	); err != nil {
+		return sqliteOperationError(err)
+	}
+	body := any(nil)
+	bodyBytes := 0
+	retainedBody := 0
+	if message.BodyRetained() {
+		body = message.Text()
+		bodyBytes = len(message.Text())
+		retainedBody = 1
+	}
+	fromMe := 0
+	if message.FromMe() {
+		fromMe = 1
+	}
+	bodyTruncated := 0
+	if message.BodyTruncated() {
+		bodyTruncated = 1
+	}
+	result, err := transaction.ExecContext(ctx, upsertMessageSQL,
+		message.ChatID().String(), message.MessageID().String(),
+		message.SentAt().UnixMilli(), fromMe, messageKindUnknown, body,
+		bodyBytes, bodyTruncated, retainedBody,
+	)
+	if err != nil {
+		return sqliteOperationError(err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return sqliteOperationError(err)
+	}
+	if changed != 1 {
+		return newSQLiteError(ErrStoreRejected, nil)
 	}
 	return nil
 }
@@ -593,6 +635,13 @@ func (store *SQLiteStore) Message(ctx context.Context, chatID model.ChatID, mess
 func sqliteOperationError(err error) error {
 	if isContextError(err) {
 		return err
+	}
+	var driverError *modernsqlite.Error
+	if errors.As(err, &driverError) {
+		switch driverError.Code() & 0xff {
+		case 5, 6: // SQLITE_BUSY and SQLITE_LOCKED, including extended codes.
+			return newSQLiteError(ErrBusy, err)
+		}
 	}
 	return newSQLiteError(ErrCacheIO, err)
 }

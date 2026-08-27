@@ -2,12 +2,49 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/antoinebaudrimont-beep/walite/internal/model"
 )
+
+func BenchmarkSQLiteBatch(b *testing.B) {
+	for _, size := range []int{1, 10, 50} {
+		b.Run(fmt.Sprintf("Writes_%d", size), func(b *testing.B) {
+			store, _ := openBenchmarkSQLite(b)
+			messages := make([]model.Message, size)
+			for index := range messages {
+				message, err := model.NewMessage(model.MessageInput{
+					ChatID:    "benchmark-batch-chat",
+					MessageID: fmt.Sprintf("benchmark-message-%02d", index),
+					SentAt:    time.UnixMilli(int64(index + 1)).UTC(),
+					Text:      "bounded benchmark body",
+				})
+				if err != nil {
+					b.Fatal(err)
+				}
+				messages[index] = message
+			}
+			batch, err := model.NewWriteBatch(model.WriteRealtime, messages)
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				if err := store.Write(context.Background(), batch); err != nil {
+					b.Fatal(err)
+				}
+			}
+			b.StopTimer()
+			if elapsed := b.Elapsed(); elapsed > 0 {
+				b.ReportMetric(float64(size*b.N)/elapsed.Seconds(), "rows/s")
+			}
+		})
+	}
+}
 
 func BenchmarkSQLiteOpenWarm(b *testing.B) {
 	path := filepath.Join(b.TempDir(), "walite", "walite-cache.db")

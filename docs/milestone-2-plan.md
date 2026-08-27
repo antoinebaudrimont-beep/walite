@@ -8,23 +8,28 @@ WhatsApp transport or authentication work.
 1. **2.1 — application wiring and dependency cleanup (complete):** load UI
    configuration in `cmd/walite`, inject plain TUI options, and own the existing
    offline service/TUI lifecycle from the production composition root.
-2. **2.2A — SQLite cache foundation (current, ready for review):** add the
+2. **2.2A — SQLite cache foundation (complete):** add the
    concrete driver, secure cache path, connection lifecycle, schema-v1
    migration, corruption/version gates, bounded message round trips, and
    foundation benchmarks without switching the production store.
-3. **2.2B — complete SQLite store contracts:** add keyset pagination, retention
-   snapshots, bounded pruning, usage accounting, busy handling, and the
-   remaining failure tests behind the existing service-owned contract.
-4. **2.3 — replace prototype JSON chat persistence:** make an explicit
+3. **2.2B1 — bounded SQLite batch writer (current, ready for review):** add one
+   serialized writer, bounded request admission, 50-write/25-ms transactions,
+   commit acknowledgements, controlled busy errors, and draining shutdown.
+4. **2.2B2 — keyset pagination (pending):** add bounded message-page reads and
+   deterministic composite cursors without OFFSET queries.
+5. **Later 2.2 work — complete SQLite store contracts:** add retention
+   snapshots, bounded pruning, usage accounting, and the remaining failure
+   tests behind the existing service-owned contract.
+6. **2.3 — replace prototype JSON chat persistence:** make an explicit
    migration or retirement decision for `~/.local/share/walite/state.json`;
    do not silently merge its schema into SQLite.
-5. **2.4 — service-to-TUI data adapter:** replace synthetic TUI-owned chat data
+7. **2.4 — service-to-TUI data adapter:** replace synthetic TUI-owned chat data
    with bounded snapshots and immutable service updates without moving storage
    ownership into the TUI.
-6. **2.5 — offline integration validation:** verify startup ordering,
+8. **2.5 — offline integration validation:** verify startup ordering,
    cancellation, store failures, retention, pagination, race safety, and target
    performance with only offline fakes.
-7. **2.6 — transport readiness boundary:** only after the offline cache and UI
+9. **2.6 — transport readiness boundary:** only after the offline cache and UI
    adapter pass may WhatsApp transport and authentication work begin.
 
 ## Remaining temporary deviations after 2.1
@@ -60,3 +65,37 @@ WhatsApp transport or authentication work.
 - Deferred to 2.2B or later: pagination, pruning, cache-size accounting,
   batching policy, JSON migration, TUI adaptation, WhatsApp/session storage,
   networking, and WAL checkpoint tuning.
+
+## Increment 2.2B1 bounded batch writer
+
+- Ownership: one SQLite writer goroutine, one reusable timer, the existing
+  single-connection database pool, and at most one active transaction. The
+  idle writer blocks on channels; it has no ticker, polling loop, worker pool,
+  or per-write goroutine.
+- Bounds: a fixed 64-request channel feeds fixed active storage. A transaction
+  contains at most 50 logical chat/message writes and is flushed immediately at
+  50, when its oldest write reaches 25 ms, or during shutdown. Requests remain
+  individually bounded by `model.WriteBatch`; the queue never expands.
+- Admission: a full queue applies cancellable backpressure without allocating
+  overflow storage or dropping a request. Cancellation before enqueue rejects
+  the write. After enqueue, cancellation ends only that caller's wait; the
+  writer still commits or rolls back the accepted request and uses a buffered,
+  one-result acknowledgement so it cannot become blocked on an absent caller.
+- Results: callers receive success only after transaction commit. Any SQL
+  failure rolls back the whole active batch and gives every included request a
+  controlled error. SQLite BUSY/LOCKED codes map to `ErrBusy` without custom
+  retry loops; a later healthy batch can proceed.
+- Shutdown: `Close` first stops new admission, waits for any in-progress queue
+  admissions, drains and flushes every accepted request, publishes their
+  acknowledgements, joins the writer, and finally closes SQLite. Repeated close
+  is safe and post-close writes are rejected.
+- Initial Core 2 Duo benchmark: end-to-end batches measured 27.08 ms for one
+  write (36.93 rows/s), 31.15 ms for ten writes (321.1 rows/s), and 21.86 ms
+  for 50 writes (2,288 rows/s). The first two include the intentional 25-ms
+  batch-age wait; 50 writes flush immediately.
+- Transaction-only latency harness, 20 samples per size: observed p95 was
+  0.595 ms for one write, 6.765 ms for ten, and 17.195 ms for 50. These are
+  development measurements, not CI thresholds.
+- Still deferred: keyset pagination, retention/pruning, cache accounting, JSON
+  migration, production wiring, TUI adaptation, WhatsApp/session storage, and
+  networking.
