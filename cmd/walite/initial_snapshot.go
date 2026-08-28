@@ -25,6 +25,10 @@ func (application *offlineApplicationService) Updates() <-chan model.Update {
 	return application.core.Updates()
 }
 
+func (application *offlineApplicationService) LiveEvents() <-chan model.LiveEvent {
+	return application.core.LiveEvents()
+}
+
 func (application *offlineApplicationService) InitialChats(ctx context.Context, limit int) ([]model.Chat, error) {
 	if ctx == nil || ctx.Err() != nil || limit <= 0 {
 		return nil, errors.New("initial chats rejected")

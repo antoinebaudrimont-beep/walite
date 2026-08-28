@@ -82,6 +82,10 @@ func (observed *observedApplicationService) Updates() <-chan model.Update {
 	return observed.delegate.Updates()
 }
 
+func (observed *observedApplicationService) LiveEvents() <-chan model.LiveEvent {
+	return observed.delegate.LiveEvents()
+}
+
 func (observed *observedApplicationService) InitialChats(ctx context.Context, limit int) ([]model.Chat, error) {
 	return observed.delegate.InitialChats(ctx, limit)
 }
@@ -224,6 +228,7 @@ func (failing *startupFailingService) Run(context.Context) error {
 }
 
 func (failing *startupFailingService) Updates() <-chan model.Update { return failing.updates }
+func (*startupFailingService) LiveEvents() <-chan model.LiveEvent   { return nil }
 
 func (failing *startupFailingService) InitialChats(context.Context, int) ([]model.Chat, error) {
 	return nil, failing.failure

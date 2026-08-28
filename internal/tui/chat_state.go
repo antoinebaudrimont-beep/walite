@@ -15,6 +15,7 @@ type messageID string
 
 type messageView struct {
 	id           messageID
+	sentAt       time.Time
 	time         string
 	text         string
 	fromMe       bool
@@ -65,6 +66,18 @@ func (state *chatState) selectedChat() (*chatView, bool) {
 	return state.chatAt(state.selectedIndex())
 }
 
+func (state *chatState) chatIndexByID(id string) (int, bool) {
+	if state == nil || id == "" {
+		return 0, false
+	}
+	for index := 0; index < state.chatCount; index++ {
+		if state.chats[index].id == id {
+			return index, true
+		}
+	}
+	return 0, false
+}
+
 func (state *chatState) moveSelection(delta int) bool {
 	if state == nil {
 		return false
@@ -113,16 +126,24 @@ func (state *chatState) appendMessage(chatIndex int, message messageView) bool {
 }
 
 func (state *chatState) findMessageByID(chatIndex int, id messageID) (messageView, bool) {
+	index, found := state.messageIndexByID(chatIndex, id)
+	if !found {
+		return messageView{}, false
+	}
+	return state.chats[chatIndex].messages[index], true
+}
+
+func (state *chatState) messageIndexByID(chatIndex int, id messageID) (int, bool) {
 	chat, ok := state.chatAt(chatIndex)
 	if !ok || id == "" {
-		return messageView{}, false
+		return 0, false
 	}
 	for index := 0; index < chat.messageCount; index++ {
 		if chat.messages[index].id == id {
-			return chat.messages[index], true
+			return index, true
 		}
 	}
-	return messageView{}, false
+	return 0, false
 }
 
 func (state *chatState) allocateMessageID() messageID {

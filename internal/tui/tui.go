@@ -72,11 +72,21 @@ func runWithDependencies(
 		close(stopEvents)
 		<-eventsDone
 	}()
+	liveEvents := input.LiveEvents
 
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case event, ok := <-liveEvents:
+			if !ok {
+				liveEvents = nil
+				continue
+			}
+			if applyLiveMessage(&model, event) {
+				draw(screen, &model)
+				screen.Show()
+			}
 		case event, ok := <-events:
 			if !ok {
 				return nil

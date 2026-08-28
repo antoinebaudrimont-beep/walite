@@ -22,8 +22,9 @@ type snapshotStub struct {
 	ignoreMessageLimit bool
 }
 
-func (stub *snapshotStub) Run(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
-func (stub *snapshotStub) Updates() <-chan model.Update  { return make(chan model.Update) }
+func (stub *snapshotStub) Run(ctx context.Context) error      { <-ctx.Done(); return ctx.Err() }
+func (stub *snapshotStub) Updates() <-chan model.Update       { return make(chan model.Update) }
+func (stub *snapshotStub) LiveEvents() <-chan model.LiveEvent { return nil }
 
 func (stub *snapshotStub) InitialChats(_ context.Context, limit int) ([]model.Chat, error) {
 	stub.chatLimit = limit
@@ -127,6 +128,7 @@ func (service *readySnapshotService) Run(ctx context.Context) error {
 }
 
 func (service *readySnapshotService) Updates() <-chan model.Update { return service.updates }
+func (*readySnapshotService) LiveEvents() <-chan model.LiveEvent   { return nil }
 
 func (service *readySnapshotService) InitialChats(context.Context, int) ([]model.Chat, error) {
 	service.snapshotAfterReady.Store(service.readyPublished.Load())

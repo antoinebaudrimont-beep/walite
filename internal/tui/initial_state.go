@@ -38,10 +38,24 @@ type InitialMessage struct {
 	BodyRetained bool
 }
 
-// Input supplies configuration and application-owned initial data to Run.
+// LiveMessage is an immutable-by-convention committed message presentation
+// event. It deliberately contains no service or storage types.
+type LiveMessage struct {
+	ChatID       string
+	MessageID    string
+	SentAt       time.Time
+	FromMe       bool
+	Text         string
+	BodyRetained bool
+	UnreadCount  uint32
+	ActivityTime time.Time
+}
+
+// Input supplies configuration and application-owned initial/live data to Run.
 type Input struct {
 	Options      Options
 	InitialState InitialState
+	LiveEvents   <-chan LiveMessage
 }
 
 func chatStateFromInitial(initial InitialState) (*chatState, error) {
@@ -80,6 +94,7 @@ func chatStateFromInitial(initial InitialState) (*chatState, error) {
 			}
 			chat.messages[messageIndex] = messageView{
 				id:           messageID(sourceMessage.ID),
+				sentAt:       sourceMessage.SentAt,
 				time:         sourceMessage.SentAt.Format("15:04"),
 				text:         text,
 				fromMe:       sourceMessage.FromMe,

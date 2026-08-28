@@ -4,18 +4,23 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/antoinebaudrimont-beep/walite/internal/config"
 	"github.com/antoinebaudrimont-beep/walite/internal/model"
+	"github.com/antoinebaudrimont-beep/walite/internal/service"
 	"github.com/antoinebaudrimont-beep/walite/internal/tui"
 	"github.com/gdamore/tcell/v2"
 )
 
 var errServiceStopped = errors.New("service stopped before application shutdown")
 
+const livePresentationCapacity = service.LiveEventCapacity
+
 type applicationService interface {
 	Run(context.Context) error
 	Updates() <-chan model.Update
+	LiveEvents() <-chan model.LiveEvent
 	InitialChats(context.Context, int) ([]model.Chat, error)
 	InitialMessages(context.Context, model.ChatID, int) ([]model.Message, error)
 }
@@ -109,22 +114,85 @@ func runStartedApplication(
 		for range serviceCore.Updates() {
 		}
 	}()
+	liveMessages := make(chan tui.LiveMessage, livePresentationCapacity)
+	liveDone := make(chan struct{})
+	serviceLiveEvents := serviceCore.LiveEvents()
+	go func() {
+		defer close(liveDone)
+		forwardLiveMessages(runCtx, serviceLiveEvents, liveMessages)
+	}()
 
 	tuiDone := make(chan error, 1)
-	go func() { tuiDone <- runTUI(runCtx, screen, tui.Input{Options: options, InitialState: initialState}) }()
+	go func() {
+		tuiDone <- runTUI(runCtx, screen, tui.Input{Options: options, InitialState: initialState, LiveEvents: liveMessages})
+	}()
 
 	select {
 	case tuiErr := <-tuiDone:
 		cancel()
 		serviceErr := <-serviceDone
+		<-liveDone
 		<-updatesDone
 		return applicationResultAfterTUI(parent, tuiErr, serviceErr)
 	case serviceErr := <-serviceDone:
-		cancel()
-		tuiErr := <-tuiDone
+		var tuiErr error
+		select {
+		case <-liveDone:
+			cancel()
+			tuiErr = <-tuiDone
+		case tuiErr = <-tuiDone:
+			cancel()
+			<-liveDone
+		}
 		<-updatesDone
 		return applicationResultAfterService(parent, serviceErr, tuiErr)
 	}
+}
+
+func forwardLiveMessages(ctx context.Context, source <-chan model.LiveEvent, destination chan<- tui.LiveMessage) {
+	defer close(destination)
+	if source == nil {
+		return
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-source:
+			if !ok {
+				return
+			}
+			presentation, ok := adaptLiveMessage(event)
+			if !ok {
+				continue
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case destination <- presentation:
+			}
+		}
+	}
+}
+
+func adaptLiveMessage(event model.LiveEvent) (tui.LiveMessage, bool) {
+	if event.Kind() != model.LiveMessageCommitted {
+		return tui.LiveMessage{}, false
+	}
+	message := event.Message()
+	chatID := strings.Clone(message.ChatID().String())
+	messageID := strings.Clone(message.MessageID().String())
+	text := strings.Clone(message.Text())
+	if !message.BodyRetained() {
+		text = ""
+	}
+	if chatID == "" || messageID == "" || message.SentAt().IsZero() || event.ActivityTime().IsZero() || event.ActivityTime().Before(message.SentAt()) {
+		return tui.LiveMessage{}, false
+	}
+	return tui.LiveMessage{
+		ChatID: chatID, MessageID: messageID, SentAt: message.SentAt(), FromMe: message.FromMe(),
+		Text: text, BodyRetained: message.BodyRetained(), UnreadCount: event.UnreadCount(), ActivityTime: event.ActivityTime(),
+	}, true
 }
 
 func awaitServiceReady(updates <-chan model.Update, serviceDone <-chan error) error {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strconv"
 	"testing"
 	"time"
 
@@ -102,6 +103,54 @@ func BenchmarkComposeInputRedraw(b *testing.B) {
 		draw(screen, &model)
 		screen.Show()
 		model.composer.backspace()
+	}
+}
+
+func BenchmarkExistingChatLiveMessageRedraw(b *testing.B) {
+	screen := tcell.NewSimulationScreen("UTF-8")
+	if err := screen.Init(); err != nil {
+		b.Fatal(err)
+	}
+	defer screen.Fini()
+	screen.SetSize(100, 30)
+	b.ReportAllocs()
+	for iteration := 0; iteration < b.N; iteration++ {
+		b.StopTimer()
+		model := defaultDemoView()
+		model.terminalWidth, model.terminalHeight = 100, 30
+		event := LiveMessage{
+			ChatID: "demo", MessageID: "benchmark-live-" + strconv.Itoa(iteration),
+			SentAt: liveTestBase.Add(time.Duration(iteration) * time.Second), Text: "Synthetic existing-chat live benchmark",
+			BodyRetained: true, UnreadCount: 1, ActivityTime: liveTestBase.Add(time.Duration(iteration) * time.Second),
+		}
+		b.StartTimer()
+		applyLiveMessage(&model, event)
+		draw(screen, &model)
+		screen.Show()
+	}
+}
+
+func BenchmarkBackgroundChatPromotionRedraw(b *testing.B) {
+	screen := tcell.NewSimulationScreen("UTF-8")
+	if err := screen.Init(); err != nil {
+		b.Fatal(err)
+	}
+	defer screen.Fini()
+	screen.SetSize(100, 30)
+	b.ReportAllocs()
+	for iteration := 0; iteration < b.N; iteration++ {
+		b.StopTimer()
+		model := defaultDemoView()
+		model.terminalWidth, model.terminalHeight = 100, 30
+		activity := liveTestBase.Add(time.Duration(iteration+1) * time.Second)
+		event := LiveMessage{
+			ChatID: "contact", MessageID: "benchmark-promotion-" + strconv.Itoa(iteration), SentAt: activity,
+			Text: "Synthetic background promotion benchmark", BodyRetained: true, UnreadCount: 13, ActivityTime: activity,
+		}
+		b.StartTimer()
+		applyLiveMessage(&model, event)
+		draw(screen, &model)
+		screen.Show()
 	}
 }
 

@@ -30,11 +30,12 @@ WhatsApp transport or authentication work.
 8. **2.4A — service-backed initial TUI snapshot (complete):**
    replace TUI-owned demo construction with one bounded application snapshot
    after service readiness.
-9. **2.4B0 — committed live-event contract (current, ready for review):** add
+9. **2.4B0 — committed live-event contract (complete):** add
    a distinct bounded, lossless stream for newly committed realtime messages
    and their authoritative unread/activity metadata.
-10. **2.4B1 — live existing-chat TUI updates (pending):** consume committed
-    live events for chats already present in the initial snapshot.
+10. **2.4B1 — live existing-chat TUI updates (current, ready for review):**
+    consume committed live events for chats already present in the initial
+    snapshot.
 11. **2.4B2 — dynamic new-chat insertion (pending):** add newly discovered
     chats without evicting existing UI state implicitly.
 12. **2.4B3 — outgoing service path (pending):** route local sends through the
@@ -51,9 +52,9 @@ WhatsApp transport or authentication work.
 - The production offline fixture remains synthetic, but it is now owned by the
   composition root and reaches the TUI through the store/service application
   boundary.
-- Initial chat/message data is service-backed. Committed live data now has a
-  service contract, but `cmd/walite` intentionally continues to drain only the
-  coalesced status stream until 2.4B1 adds the TUI adapter.
+- Initial chat/message data is service-backed, and committed events update
+  chats already present in that bounded snapshot. Unknown-chat insertion
+  remains deferred to 2.4B2.
 - Changed terminal events still trigger a measured full-screen redraw.
 
 ## Increment 2.2A foundation
@@ -365,7 +366,45 @@ WhatsApp transport or authentication work.
   consumer has stopped, closes the channel, and preserves events already
   accepted by the channel; callers must keep consuming through graceful
   shutdown when delivery of every committed event is required.
-- 2.4B1 will consume this contract for existing chats. New-chat insertion,
-  outgoing service commands, WhatsApp transport/authentication, SQLite
-  production composition, schema changes, and a generic event bus remain out
-  of scope.
+- 2.4B1 consumes this contract only for chats already in the bounded TUI
+  snapshot. New-chat insertion, outgoing service commands, WhatsApp
+  transport/authentication, SQLite production composition, schema changes, and
+  a generic event bus remain out of scope.
+
+## Increment 2.4B1 live updates for existing chats
+
+- The live data path is `service.Core.LiveEvents` to one `cmd/walite` adapter
+  consumer, through one fixed 64-entry application-owned presentation channel,
+  into the TUI event loop. The coalesced `Updates` status/lifecycle consumer
+  remains separate. Adapter and TUI perform no store queries.
+- `tui.LiveMessage` carries copied string IDs/text, sent time, direction,
+  retained-body state, authoritative unread count, and authoritative activity.
+  `internal/tui` continues to import no model, service, store, configuration,
+  SQL, or SQLite package.
+- Existing chats are routed by stable chat ID. Unknown chat events are ignored
+  without insertion, eviction, buffering, selection changes, or redraw; 2.4B2
+  owns dynamic insertion.
+- Messages remain bounded to 32 per chat and are displayed by `(sent_at ASC,
+  message_id ASC)`, independent of commit arrival order. When full, the oldest
+  displayed message is evicted so only the newest bounded working set remains.
+  Duplicate composite IDs do not append or redraw.
+- Chat unread and activity come directly from the committed event. Activity is
+  never moved backward. Chats are ordered by `(activity DESC, chat ID ASC)`,
+  and the selected chat is restored by stable ID after every reorder.
+- Live mutation leaves compose draft/cursor, reply target, emoji/settings
+  popups, and selected chat intact. A selected-chat event keeps the newest
+  viewport at the bottom; while reading older history, the scroll offset is
+  adjusted only when needed to anchor the visible messages and retain the newer
+  message indicator.
+- The TUI blocks on context, terminal events, or live presentation events. One
+  visible mutation causes one normal redraw; duplicate, bounded-away, and
+  unknown-chat no-ops cause none. A closed live channel is disabled in the
+  select loop, leaving terminal input usable with zero polling or idle redraw.
+- During service-led shutdown the application continues forwarding until the
+  service live channel closes before canceling the TUI. If the TUI exits first,
+  cancellation stops a blocked adapter and invokes the B0 forced-cutoff path;
+  there is no replay slice or per-event goroutine.
+- The temporary four-chat working set and 32-message per-chat bound remain
+  prototype presentation limits, not production chat capacity. 2.4B2 must
+  replace or extend the four-chat bound before new-chat insertion is complete.
+  Local compose/send remains TUI-only; the outgoing service path remains 2.4B3.

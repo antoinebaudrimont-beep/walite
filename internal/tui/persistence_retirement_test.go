@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gdamore/tcell/v2"
 )
@@ -132,6 +133,45 @@ func TestRuntimeChatMutationsDoNotSurviveRestartOrCreateState(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".local", "state", "walite", "ui-state.json")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("unexpected replacement UI state exists: %v", err)
+	}
+}
+
+func TestLivePresentationDoesNotCreateOrRestoreUIState(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	live := make(chan LiveMessage, 1)
+	base := time.Date(2100, 9, 10, 11, 0, 0, 0, time.UTC)
+	live <- LiveMessage{
+		ChatID: "demo", MessageID: "session-only-live", SentAt: base,
+		Text: "session-only committed presentation", BodyRetained: true, UnreadCount: 1, ActivityTime: base,
+	}
+	close(live)
+	first := newObservedScreen(100, 30)
+	firstResult := make(chan error, 1)
+	go func() {
+		firstResult <- Run(context.Background(), first, Input{Options: DefaultOptions(), InitialState: testInitialState(), LiveEvents: live})
+	}()
+	<-first.shown
+	<-first.shown
+	if text := screenText(first); !strings.Contains(text, "session-only committed presentation") {
+		t.Fatalf("live presentation missing:\n%s", text)
+	}
+	first.InjectKey(tcell.KeyEscape, 0, tcell.ModNone)
+	if err := <-firstResult; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(prototypeStatePath(home)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("state.json exists after live presentation: %v", err)
+	}
+
+	second, secondResult := startPersistenceTestTUI(t, home)
+	if text := screenText(second); strings.Contains(text, "session-only committed presentation") {
+		t.Fatalf("restart restored live presentation:\n%s", text)
+	}
+	second.InjectKey(tcell.KeyEscape, 0, tcell.ModNone)
+	if err := <-secondResult; err != nil {
+		t.Fatal(err)
 	}
 }
 
