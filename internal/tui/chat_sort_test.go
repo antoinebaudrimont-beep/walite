@@ -9,8 +9,8 @@ func TestSyntheticChatsStartInNewestActivityOrder(t *testing.T) {
 		if model.chats.chats[index].title != want[index] {
 			t.Fatalf("chat %d=%q want=%q", index, model.chats.chats[index].title, want[index])
 		}
-		if index > 0 && model.chats.chats[index-1].activity <= model.chats.chats[index].activity {
-			t.Fatalf("activity order at %d: %d <= %d", index, model.chats.chats[index-1].activity, model.chats.chats[index].activity)
+		if index > 0 && !model.chats.chats[index-1].activityTime.After(model.chats.chats[index].activityTime) {
+			t.Fatalf("activity order at %d: %s <= %s", index, model.chats.chats[index-1].activityTime, model.chats.chats[index].activityTime)
 		}
 	}
 }
@@ -56,7 +56,7 @@ func TestReplySendMovesChatToTopAndKeepsReplyIdentity(t *testing.T) {
 	}
 	reply := model.chats.chats[0].messages[model.chats.chats[0].messageCount-1]
 	if !reply.hasReply || reply.replyToID != targetID {
-		t.Fatalf("reply=%+v target=%d", reply, targetID)
+		t.Fatalf("reply=%+v target=%q", reply, targetID)
 	}
 	if original, ok := model.chats.findMessageByID(0, targetID); !ok || original.id != targetID {
 		t.Fatalf("reply original lost after reorder: %+v found=%t", original, ok)
@@ -106,8 +106,8 @@ func TestUnreadActivityMovesChatAndKeepsAllUnreadCountsAttached(t *testing.T) {
 	}
 }
 
-func unreadByTitle(model viewModel) map[string]uint16 {
-	result := make(map[string]uint16, model.chats.chatCount)
+func unreadByTitle(model viewModel) map[string]uint32 {
+	result := make(map[string]uint32, model.chats.chatCount)
 	for index := 0; index < model.chats.chatCount; index++ {
 		result[model.chats.chats[index].title] = model.chats.chats[index].unreadCount
 	}

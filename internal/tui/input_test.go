@@ -167,7 +167,7 @@ func TestIncomingMessagePreservesOlderReadingPosition(t *testing.T) {
 	afterStart, afterEnd := visibleMessageRange(&model, width, height)
 	chat, _ = model.chats.selectedChat()
 	if chat.messages[afterStart].id != wantFirst || chat.messages[afterEnd-1].id != wantLast {
-		t.Fatalf("viewport changed from IDs %d:%d to %d:%d", wantFirst, wantLast,
+		t.Fatalf("viewport changed from IDs %q:%q to %q:%q", wantFirst, wantLast,
 			chat.messages[afterStart].id, chat.messages[afterEnd-1].id)
 	}
 }

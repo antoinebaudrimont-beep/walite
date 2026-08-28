@@ -44,7 +44,7 @@ func TestChatStateMessageIDsSurviveActivityReorder(t *testing.T) {
 	}
 	message, found := state.findMessageByID(0, targetID)
 	if !found || message.text != targetText {
-		t.Fatalf("message id %d after reorder=%+v found=%t", targetID, message, found)
+		t.Fatalf("message id %q after reorder=%+v found=%t", targetID, message, found)
 	}
 }
 
@@ -62,6 +62,6 @@ func TestReplyTargetRemainsValidAfterChatStateReorder(t *testing.T) {
 		t.Fatalf("selected=%d reply target=%+v", model.chats.selected, model.replyTarget)
 	}
 	if _, found := model.chats.findMessageByID(0, model.replyTarget.id); !found {
-		t.Fatalf("reply target %d missing after reorder", model.replyTarget.id)
+		t.Fatalf("reply target %q missing after reorder", model.replyTarget.id)
 	}
 }

@@ -2,84 +2,42 @@ package tui
 
 import (
 	"strconv"
+	"time"
 	"unicode/utf8"
 )
 
 const (
-	maxChats    = 4
-	maxMessages = 32
+	maxChats    = MaxInitialChats
+	maxMessages = MaxInitialMessagesPerChat
 )
 
-type messageID uint32
+type messageID string
 
 type messageView struct {
-	id        messageID
-	time      string
-	text      string
-	replyToID messageID
-	hasReply  bool
+	id           messageID
+	time         string
+	text         string
+	fromMe       bool
+	bodyRetained bool
+	replyToID    messageID
+	hasReply     bool
 }
 
 type chatView struct {
+	id           string
 	title        string
+	isGroup      bool
 	messages     [maxMessages]messageView
 	messageCount int
-	unreadCount  uint16
-	activity     uint64
+	unreadCount  uint32
+	activityTime time.Time
 }
 
 type chatState struct {
-	chats         [maxChats]chatView
-	chatCount     int
-	selected      int
-	nextMessageID messageID
-	nextActivity  uint64
-}
-
-func newDemoChatState() *chatState {
-	state := &chatState{
-		chats: [maxChats]chatView{
-			newDemoChat("Demo Chat", "Demo", 18),
-			newDemoChat("Project Room", "Project", 15),
-			newDemoChat("Family Demo", "Family-demo", 12),
-			newDemoChat("Test Contact", "Test-contact", 10),
-		},
-		chatCount:    maxChats,
-		nextActivity: maxChats + 1,
-	}
-	for index := 0; index < state.chatCount; index++ {
-		state.chats[index].activity = uint64(state.chatCount - index)
-	}
-	state.chats[0].messages[0] = messageView{time: "09:42", text: "Synthetic message one"}
-	state.chats[0].messages[1] = messageView{time: "09:45", text: "Synthetic reply"}
-	state.chats[0].messages[2] = messageView{time: "09:47", text: "Synthetic terminal preview"}
-	state.chats[0].messages[3] = messageView{
-		time: "09:49",
-		text: "Synthetic wrapping preview that stays bounded while demonstrating a longer conversation line",
-	}
-	state.chats[1].unreadCount = 3
-	state.chats[2].unreadCount = 1
-	state.chats[3].unreadCount = 12
-	state.assignMessageIDs()
-	return state
-}
-
-func newDemoChat(title, label string, count int) chatView {
-	chat := chatView{title: title, messageCount: count}
-	for index := 0; index < count; index++ {
-		chat.messages[index] = messageView{
-			time: "10:" + twoDigits(index),
-			text: label + " synthetic message " + strconv.Itoa(index+1),
-		}
-	}
-	return chat
-}
-
-func twoDigits(value int) string {
-	if value < 10 {
-		return "0" + strconv.Itoa(value)
-	}
-	return strconv.Itoa(value)
+	chats       [maxChats]chatView
+	chatCount   int
+	selected    int
+	nextLocalID uint64
 }
 
 func (state *chatState) count() int {
@@ -141,7 +99,7 @@ func (state *chatState) appendMessage(chatIndex int, message messageView) bool {
 	if !ok {
 		return false
 	}
-	if message.id == 0 {
+	if message.id == "" {
 		message.id = state.allocateMessageID()
 	}
 	if chat.messageCount < len(chat.messages) {
@@ -156,7 +114,7 @@ func (state *chatState) appendMessage(chatIndex int, message messageView) bool {
 
 func (state *chatState) findMessageByID(chatIndex int, id messageID) (messageView, bool) {
 	chat, ok := state.chatAt(chatIndex)
-	if !ok {
+	if !ok || id == "" {
 		return messageView{}, false
 	}
 	for index := 0; index < chat.messageCount; index++ {
@@ -168,35 +126,31 @@ func (state *chatState) findMessageByID(chatIndex int, id messageID) (messageVie
 }
 
 func (state *chatState) allocateMessageID() messageID {
-	if state.nextMessageID == 0 {
-		state.nextMessageID = 1
+	for {
+		state.nextLocalID++
+		id := messageID("local-" + strconv.FormatUint(state.nextLocalID, 10))
+		if !state.containsMessageID(id) {
+			return id
+		}
 	}
-	id := state.nextMessageID
-	state.nextMessageID++
-	return id
 }
 
-func (state *chatState) assignMessageIDs() {
-	next := messageID(1)
+func (state *chatState) containsMessageID(id messageID) bool {
 	for chatIndex := 0; chatIndex < state.chatCount; chatIndex++ {
 		chat := &state.chats[chatIndex]
 		for messageIndex := 0; messageIndex < chat.messageCount; messageIndex++ {
-			chat.messages[messageIndex].id = next
-			next++
+			if chat.messages[messageIndex].id == id {
+				return true
+			}
 		}
 	}
-	state.nextMessageID = next
+	return false
 }
 
 func (state *chatState) promoteChatActivity(chatIndex int) bool {
 	if state == nil || chatIndex < 0 || chatIndex >= state.chatCount {
 		return false
 	}
-	if state.nextActivity == 0 {
-		state.nextActivity = 1
-	}
-	state.chats[chatIndex].activity = state.nextActivity
-	state.nextActivity++
 	if chatIndex == 0 {
 		return true
 	}
@@ -219,22 +173,22 @@ func (state *chatState) recordIncomingMessage(chatIndex int, text string) bool {
 		return false
 	}
 	selected := chatIndex == state.selected
-	if !state.appendMessage(chatIndex, messageView{time: "now", text: text}) {
+	if !state.appendMessage(chatIndex, messageView{time: "now", text: text, bodyRetained: true}) {
 		return false
 	}
-	if !selected && state.chats[chatIndex].unreadCount < ^uint16(0) {
+	if !selected && state.chats[chatIndex].unreadCount < ^uint32(0) {
 		state.chats[chatIndex].unreadCount++
 	}
 	return state.promoteChatActivity(chatIndex)
 }
 
-func (state *chatState) recordUnreadActivity(chatIndex int, count uint16) bool {
+func (state *chatState) recordUnreadActivity(chatIndex int, count uint32) bool {
 	chat, ok := state.chatAt(chatIndex)
 	if !ok || count == 0 {
 		return false
 	}
-	if count > ^uint16(0)-chat.unreadCount {
-		chat.unreadCount = ^uint16(0)
+	if count > ^uint32(0)-chat.unreadCount {
+		chat.unreadCount = ^uint32(0)
 	} else {
 		chat.unreadCount += count
 	}

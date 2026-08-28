@@ -118,10 +118,13 @@ func TestRunUsesSuppliedOptions(t *testing.T) {
 	screen := newObservedScreen(100, 30)
 	result := make(chan error, 1)
 	go func() {
-		result <- runWithDependencies(context.Background(), screen, Options{
-			Theme:          ThemeDefault,
-			ShowTimestamps: false,
-			ConfirmQuit:    true,
+		result <- runWithDependencies(context.Background(), screen, Input{
+			Options: Options{
+				Theme:          ThemeDefault,
+				ShowTimestamps: false,
+				ConfirmQuit:    true,
+			},
+			InitialState: testInitialState(),
 		}, "")
 	}()
 
@@ -144,9 +147,9 @@ func TestRunAppliesHiddenTimestampOptionToMessages(t *testing.T) {
 	screen := newObservedScreen(100, 30)
 	result := make(chan error, 1)
 	go func() {
-		result <- runWithDependencies(context.Background(), screen, Options{
-			Theme:          ThemeDefault,
-			ShowTimestamps: false,
+		result <- runWithDependencies(context.Background(), screen, Input{
+			Options:      Options{Theme: ThemeDefault, ShowTimestamps: false},
+			InitialState: testInitialState(),
 		}, "")
 	}()
 

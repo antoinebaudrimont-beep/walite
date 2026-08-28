@@ -307,16 +307,16 @@ func assertRunRestoredTerminal(t *testing.T, screen *observedScreen) {
 }
 
 func TestRunRejectsInvalidInputAndDoesNotFinalizeFailedInit(t *testing.T) {
-	if err := Run(nil, newObservedScreen(), DefaultOptions()); err == nil {
+	if err := Run(nil, newObservedScreen(), Input{Options: DefaultOptions()}); err == nil {
 		t.Fatal("nil context accepted")
 	}
-	if err := Run(context.Background(), nil, DefaultOptions()); err == nil {
+	if err := Run(context.Background(), nil, Input{Options: DefaultOptions()}); err == nil {
 		t.Fatal("nil screen accepted")
 	}
 
 	screen := newObservedScreen()
 	screen.initErr = errors.New("synthetic init failure")
-	if err := Run(context.Background(), screen, DefaultOptions()); !errors.Is(err, screen.initErr) {
+	if err := Run(context.Background(), screen, Input{Options: DefaultOptions(), InitialState: testInitialState()}); !errors.Is(err, screen.initErr) {
 		t.Fatalf("Run=%v", err)
 	}
 	select {

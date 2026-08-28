@@ -65,7 +65,7 @@ func chooseReplyTarget(model *viewModel) bool {
 		return false
 	}
 	index := model.replySelect.index
-	if index < 0 || index >= chat.messageCount || chat.messages[index].id == 0 {
+	if index < 0 || index >= chat.messageCount || chat.messages[index].id == "" {
 		return false
 	}
 	preserveDraft := model.replySelect.fromCompose

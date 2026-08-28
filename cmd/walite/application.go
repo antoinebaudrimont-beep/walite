@@ -16,12 +16,14 @@ var errServiceStopped = errors.New("service stopped before application shutdown"
 type applicationService interface {
 	Run(context.Context) error
 	Updates() <-chan model.Update
+	InitialChats(context.Context, int) ([]model.Chat, error)
+	InitialMessages(context.Context, model.ChatID, int) ([]model.Message, error)
 }
 
 type applicationDependencies struct {
 	configuration config.UIStore
 	newService    func() (applicationService, error)
-	runTUI        func(context.Context, tcell.Screen, tui.Options) error
+	runTUI        func(context.Context, tcell.Screen, tui.Input) error
 }
 
 func run(ctx context.Context, screen tcell.Screen) error {
@@ -41,7 +43,11 @@ func newOfflineApplicationService() (applicationService, error) {
 	if err != nil {
 		return nil, err
 	}
-	return scenario.core, nil
+	chats, err := seedOfflineInitialSnapshot(context.Background(), scenario.store)
+	if err != nil {
+		return nil, err
+	}
+	return &offlineApplicationService{core: scenario.core, store: scenario.store, chats: chats}, nil
 }
 
 func runApplication(ctx context.Context, screen tcell.Screen, dependencies applicationDependencies) error {
@@ -76,7 +82,7 @@ func runStartedApplication(
 	screen tcell.Screen,
 	options tui.Options,
 	serviceCore applicationService,
-	runTUI func(context.Context, tcell.Screen, tui.Options) error,
+	runTUI func(context.Context, tcell.Screen, tui.Input) error,
 ) error {
 	runCtx, cancel := context.WithCancel(parent)
 	defer cancel()
@@ -87,6 +93,15 @@ func runStartedApplication(
 		cancel()
 		return err
 	}
+	initialState, err := buildInitialTUIState(runCtx, serviceCore)
+	if err != nil {
+		cancel()
+		serviceErr := <-serviceDone
+		if serviceErr != nil && !errors.Is(serviceErr, context.Canceled) {
+			return errors.Join(fmt.Errorf("load initial snapshot: %w", err), fmt.Errorf("stop service: %w", serviceErr))
+		}
+		return fmt.Errorf("load initial snapshot: %w", err)
+	}
 
 	updatesDone := make(chan struct{})
 	go func() {
@@ -96,7 +111,7 @@ func runStartedApplication(
 	}()
 
 	tuiDone := make(chan error, 1)
-	go func() { tuiDone <- runTUI(runCtx, screen, options) }()
+	go func() { tuiDone <- runTUI(runCtx, screen, tui.Input{Options: options, InitialState: initialState}) }()
 
 	select {
 	case tuiErr := <-tuiDone:

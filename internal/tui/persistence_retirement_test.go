@@ -141,7 +141,9 @@ func startPersistenceTestTUI(t *testing.T, home string) (*observedScreen, <-chan
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	screen := newObservedScreen(100, 30)
 	result := make(chan error, 1)
-	go func() { result <- Run(context.Background(), screen, DefaultOptions()) }()
+	go func() {
+		result <- Run(context.Background(), screen, Input{Options: DefaultOptions(), InitialState: testInitialState()})
+	}()
 	<-screen.shown
 	return screen, result
 }

@@ -23,7 +23,7 @@ func benchmarkFirstFrame(b *testing.B) {
 		result := make(chan error, 1)
 		b.StartTimer()
 		go func() {
-			result <- runWithDependencies(ctx, screen, DefaultOptions(), "")
+			result <- runWithDependencies(ctx, screen, Input{Options: DefaultOptions(), InitialState: testInitialState()}, "")
 		}()
 		<-screen.shown
 		b.StopTimer()

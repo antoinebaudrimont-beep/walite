@@ -34,6 +34,9 @@ func handleKey(model *viewModel, event *tcell.EventKey, width, height int) (chan
 	case event.Key() == tcell.KeyEscape:
 		return false, true
 	case event.Key() == tcell.KeyEnter:
+		if _, ok := model.chats.selectedChat(); !ok {
+			return false, false
+		}
 		model.mode = modeCompose
 		model.composer.clear()
 		model.replyTarget = replyTarget{}
@@ -196,7 +199,7 @@ func submitLocalMessage(model *viewModel) bool {
 		return false
 	}
 	selectedIndex := model.chats.selectedIndex()
-	message := messageView{time: "now", text: model.composer.text()}
+	message := messageView{time: "now", text: model.composer.text(), fromMe: true, bodyRetained: true}
 	if model.replyTarget.valid {
 		message.replyToID = model.replyTarget.id
 		message.hasReply = true

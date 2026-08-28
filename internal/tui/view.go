@@ -30,10 +30,6 @@ type viewModel struct {
 	preferencesPath string
 }
 
-func defaultDemoView() viewModel {
-	return viewModel{chats: newDemoChatState(), options: DefaultOptions()}
-}
-
 func draw(screen tcell.Screen, model *viewModel) {
 	width, height := screen.Size()
 	model.terminalWidth = width
@@ -79,9 +75,12 @@ func drawCompact(screen tcell.Screen, model *viewModel, width, height int) {
 }
 
 func drawNarrow(screen tcell.Screen, model *viewModel, width, height int) {
+	putText(screen, 0, 0, width, title, tcell.StyleDefault.Bold(true))
 	selectedIndex := model.chats.selectedIndex()
 	chat, ok := model.chats.selectedChat()
 	if !ok {
+		putText(screen, 0, 2, width, "No chats", tcell.StyleDefault.Dim(true))
+		putText(screen, 0, height-1, width, narrowNavigationFooter(model, width), tcell.StyleDefault.Dim(true))
 		return
 	}
 	replyRows := 0
@@ -89,7 +88,6 @@ func drawNarrow(screen tcell.Screen, model *viewModel, width, height int) {
 		replyRows = 1
 	}
 	composeSeparator := height - 3 - replyRows
-	putText(screen, 0, 0, width, title, tcell.StyleDefault.Bold(true))
 	putText(screen, 0, 2, width, chat.title, tcell.StyleDefault.Bold(true))
 	drawNewerMessagesIndicator(screen, model, width, height, 0, 3, width)
 	start, end := visibleMessageRange(model, width, height)
@@ -141,10 +139,12 @@ func drawTwoPane(screen tcell.Screen, model *viewModel, width, height int) {
 
 	selectedIndex := model.chats.selectedIndex()
 	chat, ok := model.chats.selectedChat()
+	putText(screen, 2, 1, separator-2, title, tcell.StyleDefault.Bold(true))
 	if !ok {
+		putText(screen, 2, 3, separator-2, "No chats", tcell.StyleDefault.Dim(true))
+		putText(screen, 2, footerTop+1, width-3, navigationFooter(model, false), tcell.StyleDefault.Dim(true))
 		return
 	}
-	putText(screen, 2, 1, separator-2, title, tcell.StyleDefault.Bold(true))
 	putText(screen, separator+2, 1, width-2, chat.title, tcell.StyleDefault.Bold(true))
 	drawNewerMessagesIndicator(screen, model, width, height, separator+2, 2, width-2)
 
@@ -354,7 +354,7 @@ func timestampText(value string) string {
 	return truncateDisplayWidth(value, timestampTextWidth)
 }
 
-func drawUnreadSeparator(screen tcell.Screen, x, y, limit int, count uint16) {
+func drawUnreadSeparator(screen tcell.Screen, x, y, limit int, count uint32) {
 	if x >= limit || count == 0 {
 		return
 	}

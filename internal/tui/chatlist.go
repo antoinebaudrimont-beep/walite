@@ -8,7 +8,7 @@ import (
 	"github.com/rivo/uniseg"
 )
 
-func formatChatRow(title string, unread uint16, selected bool, width int) string {
+func formatChatRow(title string, unread uint32, selected bool, width int) string {
 	if width <= 0 {
 		return ""
 	}
@@ -26,7 +26,7 @@ func formatChatRow(title string, unread uint16, selected bool, width int) string
 	return prefix + truncateDisplayWidth(title, titleWidth) + suffix
 }
 
-func formatUnreadSuffix(unread uint16, width int) string {
+func formatUnreadSuffix(unread uint32, width int) string {
 	if unread == 0 || width <= 0 {
 		return ""
 	}

@@ -13,34 +13,34 @@ const title = "walite"
 // Run initializes screen, displays the first frame, and processes terminal
 // events until the context is canceled or the user requests exit. Run always
 // finalizes a successfully initialized screen before returning.
-func Run(ctx context.Context, screen tcell.Screen, options Options) error {
+func Run(ctx context.Context, screen tcell.Screen, input Input) error {
 	if ctx == nil || screen == nil {
 		return errors.New("tui rejected")
 	}
-	if err := options.validate(); err != nil {
+	if err := input.Options.validate(); err != nil {
 		return err
 	}
 	preferencesPath := ""
 	if path, err := defaultPreferencesPath(); err == nil {
 		preferencesPath = path
 	}
-	return runWithDependencies(ctx, screen, options, preferencesPath)
-}
-
-func runWithPreferences(ctx context.Context, screen tcell.Screen, preferencesPath string) error {
-	return runWithDependencies(ctx, screen, DefaultOptions(), preferencesPath)
+	return runWithDependencies(ctx, screen, input, preferencesPath)
 }
 
 func runWithDependencies(
 	ctx context.Context,
 	screen tcell.Screen,
-	options Options,
+	input Input,
 	preferencesPath string,
 ) error {
 	if ctx == nil || screen == nil {
 		return errors.New("tui rejected")
 	}
-	if err := options.validate(); err != nil {
+	if err := input.Options.validate(); err != nil {
+		return err
+	}
+	chats, err := chatStateFromInitial(input.InitialState)
+	if err != nil {
 		return err
 	}
 	if err := screen.Init(); err != nil {
@@ -48,7 +48,7 @@ func runWithDependencies(
 	}
 
 	screen.HideCursor()
-	model := viewModel{chats: newDemoChatState(), options: options}
+	model := viewModel{chats: chats, options: input.Options}
 	if selectedChat, ok := model.chats.selectedChat(); ok {
 		model.chatView.unreadBoundary = unreadBoundaryForChat(selectedChat)
 		selectedChat.unreadCount = 0

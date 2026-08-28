@@ -110,8 +110,8 @@ func attributesAt(screen tcell.SimulationScreen, x, y int) tcell.AttrMask {
 	return attributes
 }
 
-func unreadCounts(model viewModel) [maxChats]uint16 {
-	var counts [maxChats]uint16
+func unreadCounts(model viewModel) [maxChats]uint32 {
+	var counts [maxChats]uint32
 	for index := range model.chats.chats {
 		counts[index] = model.chats.chats[index].unreadCount
 	}

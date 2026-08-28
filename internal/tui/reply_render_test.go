@@ -61,11 +61,11 @@ func TestDrawReplyToEvictedOriginalUsesFallback(t *testing.T) {
 	chat := &model.chats.chats[0]
 	chat.messageCount = maxMessages
 	for index := 0; index < maxMessages; index++ {
-		chat.messages[index] = messageView{id: messageID(100 + index), time: "old", text: "old-" + twoDigits(index)}
+		chat.messages[index] = messageView{id: testMessageID(100 + index), time: "old", text: "old-" + twoDigits(index)}
 	}
-	model.chats.nextMessageID = 1000
+	model.chats.nextLocalID = 1000
 	model.mode = modeCompose
-	model.replyTarget = replyTarget{valid: true, id: 100}
+	model.replyTarget = replyTarget{valid: true, id: testMessageID(100)}
 	if !model.composer.insertText("reply after eviction") || !submitLocalMessage(&model) {
 		t.Fatal("reply send failed")
 	}

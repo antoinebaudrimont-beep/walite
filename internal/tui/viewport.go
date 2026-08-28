@@ -16,7 +16,7 @@ type chatViewState struct {
 type unreadBoundaryState struct {
 	valid          bool
 	firstMessageID messageID
-	count          uint16
+	count          uint32
 }
 
 func (state *chatViewState) reset() {
@@ -36,7 +36,7 @@ func unreadBoundaryForChat(chat *chatView) unreadBoundaryState {
 		firstUnread = 0
 	}
 	id := chat.messages[firstUnread].id
-	if id == 0 {
+	if id == "" {
 		return unreadBoundaryState{}
 	}
 	return unreadBoundaryState{valid: true, firstMessageID: id, count: chat.unreadCount}

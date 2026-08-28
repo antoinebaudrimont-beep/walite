@@ -29,7 +29,9 @@ func TestPackageDoesNotImportPersistenceImplementations(t *testing.T) {
 				t.Fatal(err)
 			}
 			if path == "github.com/antoinebaudrimont-beep/walite/internal/config" ||
-				path == "github.com/antoinebaudrimont-beep/walite/internal/store" {
+				path == "github.com/antoinebaudrimont-beep/walite/internal/store" ||
+				path == "github.com/antoinebaudrimont-beep/walite/internal/service" ||
+				path == "database/sql" || strings.Contains(path, "sqlite") {
 				t.Fatalf("%s imports forbidden package %s", entry.Name(), path)
 			}
 		}

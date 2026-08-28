@@ -15,7 +15,7 @@ func TestDefaultOptions(t *testing.T) {
 
 func TestRunRejectsInvalidOptionsBeforeScreenInitialization(t *testing.T) {
 	screen := newObservedScreen()
-	err := Run(context.Background(), screen, Options{Theme: "unsupported"})
+	err := Run(context.Background(), screen, Input{Options: Options{Theme: "unsupported"}})
 	if !errors.Is(err, ErrInvalidOptions) {
 		t.Fatalf("Run=%v", err)
 	}

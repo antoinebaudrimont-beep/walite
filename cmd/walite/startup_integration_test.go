@@ -82,6 +82,23 @@ func (observed *observedApplicationService) Updates() <-chan model.Update {
 	return observed.delegate.Updates()
 }
 
+func (observed *observedApplicationService) InitialChats(ctx context.Context, limit int) ([]model.Chat, error) {
+	return observed.delegate.InitialChats(ctx, limit)
+}
+
+func (observed *observedApplicationService) InitialMessages(ctx context.Context, chatID model.ChatID, limit int) ([]model.Message, error) {
+	return observed.delegate.InitialMessages(ctx, chatID, limit)
+}
+
+func scenarioApplicationService(t *testing.T, scenario demoScenario) applicationService {
+	t.Helper()
+	chats, err := seedOfflineInitialSnapshot(context.Background(), scenario.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &offlineApplicationService{core: scenario.core, store: scenario.store, chats: chats}
+}
+
 func TestConfigOptionsMapping(t *testing.T) {
 	settings := config.UI{
 		Theme:          config.ThemeDefault,
@@ -103,7 +120,7 @@ func TestProductionServiceStartsBeforeInteractiveTUIAndIsJoined(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	observedService := observeApplicationService(scenario.core)
+	observedService := observeApplicationService(scenarioApplicationService(t, scenario))
 	screen := newStartupObservedScreen()
 	applicationDone := make(chan error, 1)
 	go func() {
@@ -208,6 +225,14 @@ func (failing *startupFailingService) Run(context.Context) error {
 
 func (failing *startupFailingService) Updates() <-chan model.Update { return failing.updates }
 
+func (failing *startupFailingService) InitialChats(context.Context, int) ([]model.Chat, error) {
+	return nil, failing.failure
+}
+
+func (failing *startupFailingService) InitialMessages(context.Context, model.ChatID, int) ([]model.Message, error) {
+	return nil, failing.failure
+}
+
 func TestServiceStartFailureDoesNotInitializeScreen(t *testing.T) {
 	failure := errors.New("synthetic service start failure")
 	failingService := newStartupFailingService(failure)
@@ -237,7 +262,7 @@ func TestScreenInitializationFailureStopsAndJoinsService(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	observedService := observeApplicationService(scenario.core)
+	observedService := observeApplicationService(scenarioApplicationService(t, scenario))
 	failure := errors.New("synthetic screen initialization failure")
 	screen := newStartupObservedScreen()
 	screen.initErr = failure
@@ -284,7 +309,7 @@ func TestApplicationStopsAndJoinsServiceOnEscapeAndContextCancellation(t *testin
 			if err != nil {
 				t.Fatal(err)
 			}
-			observedService := observeApplicationService(scenario.core)
+			observedService := observeApplicationService(scenarioApplicationService(t, scenario))
 			screen := newStartupObservedScreen()
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()

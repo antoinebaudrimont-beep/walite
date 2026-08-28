@@ -8,18 +8,18 @@ import (
 
 func TestDefaultMessagesHaveDeterministicStableIDs(t *testing.T) {
 	model := defaultDemoView()
-	want := messageID(1)
+	want := 1
 	for chatIndex := 0; chatIndex < model.chats.chatCount; chatIndex++ {
 		chat := &model.chats.chats[chatIndex]
 		for messageIndex := 0; messageIndex < chat.messageCount; messageIndex++ {
-			if chat.messages[messageIndex].id != want {
-				t.Fatalf("chat=%d message=%d id=%d want=%d", chatIndex, messageIndex, chat.messages[messageIndex].id, want)
+			if chat.messages[messageIndex].id != testMessageID(want) {
+				t.Fatalf("chat=%d message=%d id=%q want=%q", chatIndex, messageIndex, chat.messages[messageIndex].id, testMessageID(want))
 			}
 			want++
 		}
 	}
-	if model.chats.nextMessageID != want {
-		t.Fatalf("next ID=%d want=%d", model.chats.nextMessageID, want)
+	if got := model.chats.allocateMessageID(); got != "local-1" {
+		t.Fatalf("first local ID=%q", got)
 	}
 }
 
@@ -117,8 +117,8 @@ func TestSubmitSyntheticReplyUsesStableTargetAndClearsState(t *testing.T) {
 		t.Fatal("reply send failed")
 	}
 	message := chat.messages[chat.messageCount-1]
-	if chat.messageCount != before+1 || !message.hasReply || message.replyToID != targetID || message.id == 0 {
-		t.Fatalf("count=%d message=%+v target=%d", chat.messageCount, message, targetID)
+	if chat.messageCount != before+1 || !message.hasReply || message.replyToID != targetID || message.id == "" {
+		t.Fatalf("count=%d message=%+v target=%q", chat.messageCount, message, targetID)
 	}
 	if model.replyTarget.valid || model.composer.length != 0 || model.chatView.scrollOffset != 0 || model.mode != modeCompose {
 		t.Fatalf("target=%+v draft=%q offset=%d mode=%d", model.replyTarget, model.composer.text(), model.chatView.scrollOffset, model.mode)
@@ -130,16 +130,16 @@ func TestReplyToEvictedOriginalRetainsIDWithoutPointer(t *testing.T) {
 	chat := &model.chats.chats[0]
 	chat.messageCount = maxMessages
 	for index := 0; index < maxMessages; index++ {
-		chat.messages[index] = messageView{id: messageID(100 + index), time: "old", text: "old-" + twoDigits(index)}
+		chat.messages[index] = messageView{id: testMessageID(100 + index), time: "old", text: "old-" + twoDigits(index)}
 	}
-	model.chats.nextMessageID = 1000
+	model.chats.nextLocalID = 1000
 	model.mode = modeCompose
 	model.replyTarget = replyTarget{valid: true, id: chat.messages[0].id}
 	if !model.composer.insertText("reply after eviction") || !submitLocalMessage(&model) {
 		t.Fatal("reply send failed")
 	}
 	reply := chat.messages[maxMessages-1]
-	if !reply.hasReply || reply.replyToID != 100 {
+	if !reply.hasReply || reply.replyToID != testMessageID(100) {
 		t.Fatalf("reply=%+v", reply)
 	}
 	if _, found := model.chats.findMessageByID(0, reply.replyToID); found {

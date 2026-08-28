@@ -25,12 +25,11 @@ WhatsApp transport or authentication work.
    newest and recent message bodies, account for physical SQLite files, enforce
    one bounded pressure cycle, and expose controlled degradation states without
    switching production storage.
-7. **2.3 — prototype JSON chat persistence retirement (current, ready for
-   review):** remove TUI chat/message serialization, ignore obsolete prototype
+7. **2.3 — prototype JSON chat persistence retirement (complete):** remove TUI chat/message serialization, ignore obsolete prototype
    files, and rebuild the temporary synthetic state in memory on every start.
-8. **2.4 — service-to-TUI data adapter:** replace synthetic TUI-owned chat data
-   with bounded snapshots and immutable service updates without moving storage
-   ownership into the TUI.
+8. **2.4A — service-backed initial TUI snapshot (current, ready for review):**
+   replace TUI-owned demo construction with one bounded application snapshot
+   after service readiness. **2.4B** will add immutable live updates.
 9. **2.5 — offline integration validation:** verify startup ordering,
    cancellation, store failures, retention, pagination, race safety, and target
    performance with only offline fakes.
@@ -40,8 +39,11 @@ WhatsApp transport or authentication work.
 ## Remaining temporary deviations after 2.1
 
 - Emoji preference path and file I/O remain in `internal/tui`.
-- TUI chat/message data remains synthetic, in-memory only, and is not yet
-  service-driven.
+- The production offline fixture remains synthetic, but it is now owned by the
+  composition root and reaches the TUI through the store/service application
+  boundary.
+- Initial chat/message data is service-backed; live chat/message updates are
+  still drained rather than applied until 2.4B.
 - Changed terminal events still trigger a measured full-screen redraw.
 
 ## Increment 2.2A foundation
@@ -291,3 +293,27 @@ WhatsApp transport or authentication work.
   fresh demo state. Existing TUI interaction tests continue to cover compose,
   reply, scrolling, emoji, unread separator, timestamps, resize, and terminal
   restoration.
+
+## Increment 2.4A service-backed initial snapshot
+
+- Startup order is configuration load, service construction and readiness,
+  bounded initial snapshot loading, then TUI initialization. Later service
+  updates continue to be drained; no live update loop is introduced here.
+- `cmd/walite` owns the adapter. It requests at most four chats and the newest
+  32 messages per chat, sorts chats by activity descending with chat ID as the
+  deterministic tie-break, and converts store pages from newest-first to the
+  TUI's oldest-first rendering order.
+- `internal/tui` accepts plain immutable-by-convention DTOs with stable string
+  IDs, chat title/group/unread/activity metadata, and message timestamp,
+  direction, retained-body state, and text. It copies those slices into its
+  fixed working set before screen initialization and imports no model, service,
+  store, configuration, SQL, or SQLite package.
+- The useful four-chat offline fixture moved to `cmd/walite` and is seeded
+  through `store.Memory`; the TUI no longer constructs production chat or
+  message demo data. The SQLite production switch remains deferred because it
+  would require a bounded chat-list query not present in this increment.
+- Empty, one-chat, multi-chat, newly known contact, group, Unicode, bodyless,
+  direction, stable-ID/reply, deterministic equal-time ordering, readiness,
+  and large-history bounds are covered. Local compose/send and in-session
+  unread clearing remain an intentionally in-memory overlay until later
+  service command/update work.

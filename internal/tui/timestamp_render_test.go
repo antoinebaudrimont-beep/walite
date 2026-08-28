@@ -73,7 +73,7 @@ func TestTimestampConfigurationAffectsViewportCalculations(t *testing.T) {
 	chat := &model.chats.chats[0]
 	chat.messageCount = 8
 	for index := 0; index < chat.messageCount; index++ {
-		chat.messages[index] = messageView{id: messageID(index + 1), time: "10:14", text: strings.Repeat("x", 40)}
+		chat.messages[index] = messageView{id: testMessageID(index + 1), time: "10:14", text: strings.Repeat("x", 40)}
 	}
 	width, height := 70, 12
 	model.options.ShowTimestamps = true
