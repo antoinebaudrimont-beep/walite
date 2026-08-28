@@ -68,6 +68,10 @@ func (gated *gatedStore) Write(ctx context.Context, batch model.WriteBatch) erro
 	return gated.delegate.Write(ctx, batch)
 }
 
+func (gated *gatedStore) WriteRealtime(ctx context.Context, batch model.WriteBatch) (model.LiveEventBatch, error) {
+	return gated.delegate.WriteRealtime(ctx, batch)
+}
+
 func (gated *gatedStore) Page(ctx context.Context, chat model.ChatID, cursor model.Cursor, limit int) ([]model.Message, model.Cursor, error) {
 	return gated.delegate.Page(ctx, chat, cursor, limit)
 }

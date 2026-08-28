@@ -10,6 +10,11 @@ import (
 	"github.com/antoinebaudrimont-beep/walite/internal/model"
 )
 
+// LiveEventCapacity is the fixed lossless delivery window. A slow consumer
+// applies backpressure to the single writer after commit; storage transactions
+// are never held open while waiting for this channel.
+const LiveEventCapacity = 64
+
 type QueueOptions struct {
 	Entries int
 	Bytes   int64
@@ -105,6 +110,7 @@ type Core struct {
 	resultQ                   *boundedQueue[writeResult]
 	updateMailbox             *fixedMailbox[viewSlot, model.Update]
 	updates                   chan model.Update
+	liveEvents                chan model.LiveEvent
 	localDrops                *saturatingCounter
 	localDropWake             chan struct{}
 	publisherPendingHook      func()
@@ -152,7 +158,7 @@ func New(options Options, source EventSource, store MessageStore, policy Retenti
 	}
 	mailbox, _ := newFixedMailbox(keys, updateBudget, weighUpdate)
 	drops := &saturatingCounter{}
-	return &Core{options: options, source: source, store: store, policy: policy, clock: clock, realtimeQ: realtimeQ, historyQ: historyQ, liveWriteQ: liveQ, historyWriteQ: historyWriteQ, resultQ: resultQ, updateMailbox: mailbox, updates: make(chan model.Update, 1), localDrops: drops, localDropWake: make(chan struct{}, 1)}, nil
+	return &Core{options: options, source: source, store: store, policy: policy, clock: clock, realtimeQ: realtimeQ, historyQ: historyQ, liveWriteQ: liveQ, historyWriteQ: historyWriteQ, resultQ: resultQ, updateMailbox: mailbox, updates: make(chan model.Update, 1), liveEvents: make(chan model.LiveEvent, LiveEventCapacity), localDrops: drops, localDropWake: make(chan struct{}, 1)}, nil
 }
 
 func validateOptions(o Options, source EventSource, store MessageStore, policy RetentionPolicy, clock Clock) error {
@@ -176,6 +182,10 @@ func validateOptions(o Options, source EventSource, store MessageStore, policy R
 }
 
 func (core *Core) Updates() <-chan model.Update { return core.updates }
+
+// LiveEvents returns newly inserted realtime messages in successful commit
+// order. The service owns and closes the bounded channel.
+func (core *Core) LiveEvents() <-chan model.LiveEvent { return core.liveEvents }
 
 func (core *Core) Run(parent context.Context) error {
 	if parent == nil {
@@ -211,7 +221,7 @@ func (core *Core) Run(parent context.Context) error {
 	transformer, _ := newHistoryTransformer(core.source, core.historyQ, core.options.HistoryChunkRecords, core.options.HistoryChunkBytes)
 	ingester, _ := newHistoryIngester(core.store, core.policy, core.clock, core.historyQ, core.historyWriteQ)
 	writerShutdown := make(chan struct{})
-	writer, _ := newLiveFirstWriter(core.store, core.liveWriteQ, core.historyWriteQ, core.resultQ, core.clock, core.options.BatchWait, core.options.BatchMaxOperations, writerRetention{policy: core.policy, snapshotLimit: core.options.RetentionSnapshotLimit, historyStoreCtx: historyStoreCtx, shutdown: writerShutdown, finalLiveLimit: core.options.BatchMaxOperations})
+	writer, _ := newLiveFirstWriter(core.store, core.liveWriteQ, core.historyWriteQ, core.resultQ, core.clock, core.options.BatchWait, core.options.BatchMaxOperations, writerRetention{policy: core.policy, snapshotLimit: core.options.RetentionSnapshotLimit, historyStoreCtx: historyStoreCtx, shutdown: writerShutdown, finalLiveLimit: core.options.BatchMaxOperations, liveEvents: core.liveEvents})
 	coordinatorShutdown := make(chan struct{})
 	coordinator := &realtimeCoordinator{source: core.source, store: core.store, policy: core.policy, clock: core.clock, realtimeQ: core.realtimeQ, liveWriteQ: core.liveWriteQ, resultQ: core.resultQ, updates: core.updateMailbox, liveWriteBusy: core.options.LiveWriteBusy, localDrops: core.localDrops, localDropWake: core.localDropWake, shutdown: coordinatorShutdown, finalLimit: core.options.BatchMaxOperations}
 	recorder := &firstCause{channel: make(chan error, 1)}

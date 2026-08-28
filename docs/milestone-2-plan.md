@@ -27,13 +27,22 @@ WhatsApp transport or authentication work.
    switching production storage.
 7. **2.3 — prototype JSON chat persistence retirement (complete):** remove TUI chat/message serialization, ignore obsolete prototype
    files, and rebuild the temporary synthetic state in memory on every start.
-8. **2.4A — service-backed initial TUI snapshot (current, ready for review):**
+8. **2.4A — service-backed initial TUI snapshot (complete):**
    replace TUI-owned demo construction with one bounded application snapshot
-   after service readiness. **2.4B** will add immutable live updates.
-9. **2.5 — offline integration validation:** verify startup ordering,
+   after service readiness.
+9. **2.4B0 — committed live-event contract (current, ready for review):** add
+   a distinct bounded, lossless stream for newly committed realtime messages
+   and their authoritative unread/activity metadata.
+10. **2.4B1 — live existing-chat TUI updates (pending):** consume committed
+    live events for chats already present in the initial snapshot.
+11. **2.4B2 — dynamic new-chat insertion (pending):** add newly discovered
+    chats without evicting existing UI state implicitly.
+12. **2.4B3 — outgoing service path (pending):** route local sends through the
+    application service and committed-event path.
+13. **2.5 — offline integration validation:** verify startup ordering,
    cancellation, store failures, retention, pagination, race safety, and target
    performance with only offline fakes.
-10. **2.6 — transport readiness boundary:** only after the offline cache and UI
+14. **2.6 — transport readiness boundary:** only after the offline cache and UI
    adapter pass may WhatsApp transport and authentication work begin.
 
 ## Remaining temporary deviations after 2.1
@@ -42,8 +51,9 @@ WhatsApp transport or authentication work.
 - The production offline fixture remains synthetic, but it is now owned by the
   composition root and reaches the TUI through the store/service application
   boundary.
-- Initial chat/message data is service-backed; live chat/message updates are
-  still drained rather than applied until 2.4B.
+- Initial chat/message data is service-backed. Committed live data now has a
+  service contract, but `cmd/walite` intentionally continues to drain only the
+  coalesced status stream until 2.4B1 adds the TUI adapter.
 - Changed terminal events still trigger a measured full-screen redraw.
 
 ## Increment 2.2A foundation
@@ -317,3 +327,45 @@ WhatsApp transport or authentication work.
   and large-history bounds are covered. Local compose/send and in-session
   unread clearing remain an intentionally in-memory overlay until later
   service command/update work.
+
+## Increment 2.4B0 committed live-event contract
+
+- `model.Update` remains the lifecycle/progress/status contract. Its fixed
+  per-kind mailbox deliberately replaces older values, so it is unsuitable for
+  distinct-message delivery; the existing `UpdateLive` admission signal is
+  retained temporarily for compatibility but is not a committed-message
+  acknowledgement.
+- `service.Core.LiveEvents` is a separate receive-only stream with a fixed
+  capacity of 64. It contains one immutable `model.LiveEvent` for each newly
+  inserted realtime message and never coalesces distinct committed messages.
+- The serialized writer calls the store's atomic `WriteRealtime` operation and
+  publishes only the bounded result returned after that operation succeeds.
+  Persistence failure produces no event. Storage has returned—and therefore no
+  transaction is open—before a full live channel can apply backpressure.
+- Events follow successful writer commit order. Messages returned by one
+  commit retain request order; this is not a timestamp-order guarantee. The
+  single writer is the only producer, and no per-event goroutines or overflow
+  slices are used.
+- Each event carries the committed immutable message plus the authoritative
+  unread count and last-message activity after that logical insert. Incoming
+  realtime messages increment unread, `from_me` messages do not, and delayed
+  messages cannot move activity backward. Bodyless messages remain bodyless
+  with empty text.
+- Duplicate composite message IDs, including body-retention improvements, do
+  not emit another new-message event or increment unread. History/backfill
+  writes never enter this stream.
+- A consumer may lag by 64 events without blocking the service. At capacity,
+  the writer pauses after commit until the consumer drains space; events are
+  neither dropped nor reordered. Consumers should drain concurrently during
+  normal operation and graceful shutdown.
+- The service owns the channel. Natural and graceful completion stops new
+  production, preserves already buffered committed events for the receiver,
+  and closes the channel once from the writer's single exit path. Forced
+  context cancellation is the bounded cutoff: it unblocks a publisher when a
+  consumer has stopped, closes the channel, and preserves events already
+  accepted by the channel; callers must keep consuming through graceful
+  shutdown when delivery of every committed event is required.
+- 2.4B1 will consume this contract for existing chats. New-chat insertion,
+  outgoing service commands, WhatsApp transport/authentication, SQLite
+  production composition, schema changes, and a generic event bus remain out
+  of scope.

@@ -345,6 +345,9 @@ func (*panicHistoryStore) RetentionSnapshot(context.Context, model.ChatID) (mode
 
 func (*historyStore) EnsureChat(context.Context, model.Chat) error  { return nil }
 func (*historyStore) Write(context.Context, model.WriteBatch) error { return nil }
+func (*historyStore) WriteRealtime(context.Context, model.WriteBatch) (model.LiveEventBatch, error) {
+	return model.NewLiveEventBatch(nil)
+}
 func (*historyStore) Page(context.Context, model.ChatID, model.Cursor, int) ([]model.Message, model.Cursor, error) {
 	return nil, model.NoCursor(), nil
 }

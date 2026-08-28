@@ -31,6 +31,7 @@ type EventSource interface {
 type MessageStore interface {
 	EnsureChat(context.Context, model.Chat) error
 	Write(context.Context, model.WriteBatch) error
+	WriteRealtime(context.Context, model.WriteBatch) (model.LiveEventBatch, error)
 	Page(context.Context, model.ChatID, model.Cursor, int) ([]model.Message, model.Cursor, error)
 	RetentionSnapshot(context.Context, model.ChatID) (model.RetentionSnapshot, error)
 	ApplyPrune(context.Context, model.PrunePlan) (model.PruneResult, error)

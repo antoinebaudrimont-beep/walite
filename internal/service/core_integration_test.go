@@ -45,6 +45,9 @@ func (gated *integrationGatedStore) Write(ctx context.Context, batch model.Write
 	}
 	return gated.delegate.Write(ctx, batch)
 }
+func (gated *integrationGatedStore) WriteRealtime(ctx context.Context, batch model.WriteBatch) (model.LiveEventBatch, error) {
+	return gated.delegate.WriteRealtime(ctx, batch)
+}
 func (gated *integrationGatedStore) Page(ctx context.Context, chat model.ChatID, cursor model.Cursor, limit int) ([]model.Message, model.Cursor, error) {
 	return gated.delegate.Page(ctx, chat, cursor, limit)
 }
@@ -83,6 +86,9 @@ func TestCoreLazy100000HistoryLivePrecedenceAndRetention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if cap(core.LiveEvents()) != service.LiveEventCapacity || service.LiveEventCapacity != 64 {
+		t.Fatalf("live event capacity=%d constant=%d", cap(core.LiveEvents()), service.LiveEventCapacity)
+	}
 	done := make(chan error, 1)
 	go func() { done <- core.Run(context.Background()) }()
 	ready, live := false, false
@@ -108,6 +114,13 @@ func TestCoreLazy100000HistoryLivePrecedenceAndRetention(t *testing.T) {
 	}
 	if !ready || !live {
 		t.Fatalf("ready=%t live=%t", ready, live)
+	}
+	committed, ok := <-core.LiveEvents()
+	if !ok || committed.Message().MessageID().String() != liveMessage.MessageID().String() || committed.Message().Text() != liveMessage.Text() {
+		t.Fatalf("committed live event=%+v open=%t", committed, ok)
+	}
+	if _, ok := <-core.LiveEvents(); ok {
+		t.Fatal("live event channel remained open after service completion")
 	}
 	usage, err := memory.Usage(context.Background())
 	if err != nil {

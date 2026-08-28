@@ -111,23 +111,37 @@ func (memory *Memory) EnsureChat(ctx context.Context, chat model.Chat) error {
 }
 
 func (memory *Memory) Write(ctx context.Context, batch model.WriteBatch) error {
+	_, err := memory.writeBatch(ctx, batch, false)
+	return err
+}
+
+// WriteRealtime atomically persists one realtime batch and returns only newly
+// inserted messages with authoritative chat metadata in request order.
+func (memory *Memory) WriteRealtime(ctx context.Context, batch model.WriteBatch) (model.LiveEventBatch, error) {
+	if batch.Origin() != model.WriteRealtime {
+		return model.LiveEventBatch{}, &Error{kind: rejected}
+	}
+	return memory.writeBatch(ctx, batch, true)
+}
+
+func (memory *Memory) writeBatch(ctx context.Context, batch model.WriteBatch, emitLive bool) (model.LiveEventBatch, error) {
 	if err := checkContext(ctx); err != nil {
-		return err
+		return model.LiveEventBatch{}, err
 	}
 	validated := make([]model.Message, batch.Len())
 	for i := range validated {
 		message, ok := batch.At(i)
 		if !ok {
-			return &Error{kind: rejected}
+			return model.LiveEventBatch{}, &Error{kind: rejected}
 		}
 		validated[i] = message
 	}
 	rebuilt, err := model.NewWriteBatch(batch.Origin(), validated)
 	if err != nil || rebuilt.Len() != batch.Len() {
-		return &Error{kind: rejected}
+		return model.LiveEventBatch{}, &Error{kind: rejected}
 	}
 	if rebuilt.Len() == 0 {
-		return nil
+		return model.NewLiveEventBatch(nil)
 	}
 
 	memory.mu.Lock()
@@ -135,6 +149,7 @@ func (memory *Memory) Write(ctx context.Context, batch model.WriteBatch) error {
 	newChats := make(map[string]struct{}, rebuilt.Len())
 	newIDs := make(map[string]map[string]struct{}, rebuilt.Len())
 	staged := make(map[string]map[string]model.Message, rebuilt.Len())
+	var inserted [model.MaxWriteBatchMessages]bool
 	for i := 0; i < rebuilt.Len(); i++ {
 		message, _ := rebuilt.At(i)
 		chatKey, messageKey := message.ChatID().String(), message.MessageID().String()
@@ -151,12 +166,13 @@ func (memory *Memory) Write(ctx context.Context, batch model.WriteBatch) error {
 		}
 		if exists {
 			if !prior.SentAt().Equal(message.SentAt()) || prior.FromMe() != message.FromMe() {
-				return &Error{kind: rejected}
+				return model.LiveEventBatch{}, &Error{kind: rejected}
 			}
 			if prior.BodyRetained() && !message.BodyRetained() {
 				message = prior
 			}
 		} else {
+			inserted[i] = true
 			if newIDs[chatKey] == nil {
 				newIDs[chatKey] = make(map[string]struct{}, rebuilt.Len())
 			}
@@ -168,7 +184,7 @@ func (memory *Memory) Write(ctx context.Context, batch model.WriteBatch) error {
 		staged[chatKey][messageKey] = message
 	}
 	if len(memory.chats)+len(newChats) > memory.maxChats {
-		return &Error{kind: capacity}
+		return model.LiveEventBatch{}, &Error{kind: capacity}
 	}
 	for chatKey, ids := range newIDs {
 		count := 0
@@ -176,22 +192,88 @@ func (memory *Memory) Write(ctx context.Context, batch model.WriteBatch) error {
 			count = len(chat.messages)
 		}
 		if count+len(ids) > model.MaxRetentionSnapshotSummaries {
-			return &Error{kind: capacity}
+			return model.LiveEventBatch{}, &Error{kind: capacity}
 		}
 	}
-	for chatKey := range newChats {
-		chat, err := model.NewChat(model.ChatInput{ID: chatKey, Placeholder: true})
-		if err != nil {
-			return &Error{kind: rejected}
+	stagedChats := make(map[string]model.Chat, len(newChats)+len(staged))
+	var liveEvents [model.MaxWriteBatchMessages]model.LiveEvent
+	liveCount := 0
+	for index := 0; index < rebuilt.Len(); index++ {
+		if !inserted[index] {
+			continue
 		}
-		memory.chats[chatKey] = &memoryChat{chat: chat, messages: make(map[string]model.Message, model.MaxRetentionSnapshotSummaries)}
+		message, _ := rebuilt.At(index)
+		chatKey := message.ChatID().String()
+		chat, ok := stagedChats[chatKey]
+		if !ok {
+			if current := memory.chats[chatKey]; current != nil {
+				chat = current.chat
+			} else {
+				chat, err = model.NewChat(model.ChatInput{ID: chatKey, Placeholder: true})
+				if err != nil {
+					return model.LiveEventBatch{}, &Error{kind: rejected}
+				}
+			}
+		}
+		chat, err = advanceChatForMessage(chat, message, rebuilt.Origin() == model.WriteRealtime)
+		if err != nil {
+			return model.LiveEventBatch{}, &Error{kind: rejected}
+		}
+		stagedChats[chatKey] = chat
+		if emitLive {
+			committed := staged[chatKey][message.MessageID().String()]
+			event, eventErr := model.NewLiveMessageCommitted(committed, chat.UnreadCount(), chat.LastMessageAt())
+			if eventErr != nil {
+				return model.LiveEventBatch{}, &Error{kind: rejected}
+			}
+			liveEvents[liveCount] = event
+			liveCount++
+		}
+	}
+	committedBatch, err := model.NewLiveEventBatch(liveEvents[:liveCount])
+	if err != nil {
+		return model.LiveEventBatch{}, &Error{kind: rejected}
+	}
+	for chatKey := range newChats {
+		memory.chats[chatKey] = &memoryChat{messages: make(map[string]model.Message, model.MaxRetentionSnapshotSummaries)}
+	}
+	for chatKey, chat := range stagedChats {
+		memory.chats[chatKey].chat = chat
 	}
 	for chatKey, messages := range staged {
 		for id, message := range messages {
 			memory.chats[chatKey].messages[id] = message
 		}
 	}
-	return nil
+	return committedBatch, nil
+}
+
+func advanceChatForMessage(chat model.Chat, message model.Message, countUnread bool) (model.Chat, error) {
+	lastMessageAt := chat.LastMessageAt()
+	if lastMessageAt.IsZero() || message.SentAt().After(lastMessageAt) {
+		lastMessageAt = message.SentAt()
+	}
+	unreadCount := chat.UnreadCount()
+	if countUnread && !message.FromMe() && unreadCount < ^uint32(0) {
+		unreadCount++
+	}
+	contactID := ""
+	if chat.HasContact() {
+		contactID = chat.ContactID().String()
+	}
+	return model.NewChat(model.ChatInput{
+		ID:            chat.ID().String(),
+		ContactID:     contactID,
+		DisplayName:   chat.DisplayName(),
+		IsGroup:       chat.IsGroup(),
+		LastMessageAt: lastMessageAt,
+		UnreadCount:   unreadCount,
+		Muted:         chat.Muted(),
+		Archived:      chat.Archived(),
+		Placeholder:   chat.Placeholder(),
+		UpdatedAt:     chat.UpdatedAt(),
+		IngestSeq:     chat.IngestSeq(),
+	})
 }
 
 func validateChatID(id model.ChatID) (model.ChatID, error) { return model.NewChatID(id.String()) }

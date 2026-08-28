@@ -28,6 +28,7 @@ type liveFirstWriter struct {
 	liveQ                  *boundedQueue[model.Message]
 	historyQ               *boundedQueue[model.Message]
 	resultQ                *boundedQueue[writeResult]
+	liveEvents             chan<- model.LiveEvent
 	clock                  Clock
 	batchWait              time.Duration
 	batchMaxOperations     int
@@ -37,6 +38,7 @@ type liveFirstWriter struct {
 	shutdown               <-chan struct{}
 	finalLiveLimit         int
 	afterHistorySelected   func()
+	afterLivePublished     func(int)
 }
 
 func newLiveFirstWriter(
@@ -57,14 +59,20 @@ func newLiveFirstWriter(
 		store: store, liveQ: liveQ, historyQ: historyQ, resultQ: resultQ,
 		clock: clock, batchWait: batchWait, batchMaxOperations: batchMaxOperations,
 	}
-	if len(retention) > 1 || (len(retention) == 1 && (retention[0].policy == nil || retention[0].snapshotLimit <= 0 || retention[0].snapshotLimit > model.MaxRetentionSnapshotSummaries)) {
+	if len(retention) > 1 {
 		return nil, errQueueInvariant
 	}
 	if len(retention) == 1 {
+		hasRetentionOptions := retention[0].snapshotLimit != 0 || retention[0].historyStoreCtx != nil || retention[0].shutdown != nil || retention[0].finalLiveLimit != 0
+		if (retention[0].policy == nil && hasRetentionOptions) ||
+			(retention[0].policy != nil && (retention[0].snapshotLimit <= 0 || retention[0].snapshotLimit > model.MaxRetentionSnapshotSummaries)) {
+			return nil, errQueueInvariant
+		}
 		writer.policy, writer.retentionSnapshotLimit = retention[0].policy, retention[0].snapshotLimit
 		writer.historyStoreCtx = retention[0].historyStoreCtx
 		writer.shutdown = retention[0].shutdown
 		writer.finalLiveLimit = retention[0].finalLiveLimit
+		writer.liveEvents = retention[0].liveEvents
 	}
 	return writer, nil
 }
@@ -75,6 +83,7 @@ type writerRetention struct {
 	historyStoreCtx context.Context
 	shutdown        <-chan struct{}
 	finalLiveLimit  int
+	liveEvents      chan<- model.LiveEvent
 }
 
 func (writer *liveFirstWriter) Run(ctx context.Context) error {
@@ -95,6 +104,9 @@ func (writer *liveFirstWriter) Run(ctx context.Context) error {
 		writer.liveQ.drainAndRelease()
 		writer.historyQ.drainAndRelease()
 		writer.resultQ.Close()
+		if writer.liveEvents != nil {
+			close(writer.liveEvents)
+		}
 	}()
 
 	liveOpen, historyOpen := true, true
@@ -317,17 +329,30 @@ func (writer *liveFirstWriter) apply(ctx context.Context, origin model.WriteOrig
 		return err
 	}
 	written, discarded := len(leases), 0
+	var committed model.LiveEventBatch
+	writeSucceeded := false
 	if writer.policy != nil {
-		written, discarded, err = writer.applyBoundedBatch(ctx, batch)
+		written, discarded, committed, writeSucceeded, err = writer.applyBoundedBatch(ctx, batch)
+	} else if origin == model.WriteRealtime {
+		committed, err = writer.store.WriteRealtime(ctx, batch)
+		writeSucceeded = err == nil
 	} else {
 		err = writer.store.Write(ctx, batch)
+		writeSucceeded = err == nil
+	}
+	if committed.Len() > 0 {
+		if publishErr := writer.publishCommitted(ctx, committed); publishErr != nil {
+			return publishErr
+		}
 	}
 	result := writeResult{Origin: origin, Attempted: len(leases), Written: written, Discarded: discarded}
 	if err != nil {
 		if origin == model.WriteHistory && errors.Is(err, context.Canceled) {
 			return err
 		}
-		result.Written = 0
+		if !writeSucceeded {
+			result.Written = 0
+		}
 		result.StoreFailed = true
 		_ = writer.resultQ.TryPut(result)
 		return err
@@ -341,32 +366,53 @@ func (writer *liveFirstWriter) apply(ctx context.Context, origin model.WriteOrig
 	return nil
 }
 
-func (writer *liveFirstWriter) applyBoundedBatch(ctx context.Context, batch model.WriteBatch) (int, int, error) {
+func (writer *liveFirstWriter) publishCommitted(ctx context.Context, batch model.LiveEventBatch) error {
+	if writer.liveEvents == nil {
+		return nil
+	}
+	for index := 0; index < batch.Len(); index++ {
+		event, ok := batch.At(index)
+		if !ok {
+			return errQueueInvariant
+		}
+		select {
+		case writer.liveEvents <- event:
+			if writer.afterLivePublished != nil {
+				writer.afterLivePublished(index)
+			}
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
+}
+
+func (writer *liveFirstWriter) applyBoundedBatch(ctx context.Context, batch model.WriteBatch) (int, int, model.LiveEventBatch, bool, error) {
 	var retained [model.MaxWriteBatchMessages]model.Message
 	var chats [model.MaxWriteBatchMessages]model.ChatID
 	retainedCount, chatCount, discarded := 0, 0, 0
 	for index := 0; index < batch.Len(); index++ {
 		if err := ctx.Err(); err != nil {
-			return 0, discarded, err
+			return 0, discarded, model.LiveEventBatch{}, false, err
 		}
 		message, ok := batch.At(index)
 		if !ok {
-			return 0, discarded, errQueueInvariant
+			return 0, discarded, model.LiveEventBatch{}, false, errQueueInvariant
 		}
 		snapshot, err := writer.store.RetentionSnapshot(ctx, message.ChatID())
 		if err != nil {
-			return 0, discarded, err
+			return 0, discarded, model.LiveEventBatch{}, false, err
 		}
 		if snapshot.Len() > writer.retentionSnapshotLimit {
-			return 0, discarded, errQueueInvariant
+			return 0, discarded, model.LiveEventBatch{}, false, errQueueInvariant
 		}
 		usage, err := writer.store.Usage(ctx)
 		if err != nil {
-			return 0, discarded, err
+			return 0, discarded, model.LiveEventBatch{}, false, err
 		}
 		decision, err := writer.policy.Decide(message, model.RetentionState{Now: writer.clock.Now(), NewerBodies: countNewerBodies(snapshot, message), Usage: usage, Origin: batch.Origin()})
 		if err != nil {
-			return 0, discarded, err
+			return 0, discarded, model.LiveEventBatch{}, false, err
 		}
 		switch decision.Action() {
 		case model.KeepBody:
@@ -378,7 +424,7 @@ func (writer *liveFirstWriter) applyBoundedBatch(ctx context.Context, batch mode
 		case model.Discard:
 			discarded++
 		default:
-			return 0, discarded, errQueueInvariant
+			return 0, discarded, model.LiveEventBatch{}, false, errQueueInvariant
 		}
 		seen := false
 		for chatIndex := 0; chatIndex < chatCount; chatIndex++ {
@@ -392,39 +438,47 @@ func (writer *liveFirstWriter) applyBoundedBatch(ctx context.Context, batch mode
 			chatCount++
 		}
 	}
+	var committed model.LiveEventBatch
+	writeSucceeded := false
 	if retainedCount > 0 {
 		filtered, err := model.NewWriteBatch(batch.Origin(), retained[:retainedCount])
 		if err != nil {
-			return 0, discarded, err
+			return 0, discarded, model.LiveEventBatch{}, false, err
 		}
-		if err := writer.store.Write(ctx, filtered); err != nil {
-			return 0, discarded, err
+		if batch.Origin() == model.WriteRealtime {
+			committed, err = writer.store.WriteRealtime(ctx, filtered)
+		} else {
+			err = writer.store.Write(ctx, filtered)
 		}
+		if err != nil {
+			return 0, discarded, model.LiveEventBatch{}, false, err
+		}
+		writeSucceeded = true
 	}
 	for index := 0; index < chatCount; index++ {
 		if err := ctx.Err(); err != nil {
-			return retainedCount, discarded, err
+			return retainedCount, discarded, committed, writeSucceeded, err
 		}
 		snapshot, err := writer.store.RetentionSnapshot(ctx, chats[index])
 		if err != nil {
-			return retainedCount, discarded, err
+			return retainedCount, discarded, committed, writeSucceeded, err
 		}
 		if snapshot.Len() > writer.retentionSnapshotLimit {
-			return retainedCount, discarded, errQueueInvariant
+			return retainedCount, discarded, committed, writeSucceeded, errQueueInvariant
 		}
 		usage, err := writer.store.Usage(ctx)
 		if err != nil {
-			return retainedCount, discarded, err
+			return retainedCount, discarded, committed, writeSucceeded, err
 		}
 		plan, err := writer.policy.PlanPrune(snapshot, model.RetentionState{Now: writer.clock.Now(), Usage: usage, Origin: batch.Origin()})
 		if err != nil {
-			return retainedCount, discarded, err
+			return retainedCount, discarded, committed, writeSucceeded, err
 		}
 		if _, err := writer.store.ApplyPrune(ctx, plan); err != nil {
-			return retainedCount, discarded, err
+			return retainedCount, discarded, committed, writeSucceeded, err
 		}
 	}
-	return retainedCount, discarded, nil
+	return retainedCount, discarded, committed, writeSucceeded, nil
 }
 
 func releaseMessageLeases(leases []lease[model.Message]) {

@@ -29,11 +29,18 @@ type writerStore struct {
 	fail           error
 	historyEntered chan struct{}
 	historyRelease <-chan struct{}
+	committed      map[string]struct{}
+	chatUnread     map[string]uint32
+	chatActivity   map[string]time.Time
 }
 
 type panicWriterStore struct{ writerStore }
 
 func (*panicWriterStore) Write(context.Context, model.WriteBatch) error {
+	panic("private writer panic")
+}
+
+func (*panicWriterStore) WriteRealtime(context.Context, model.WriteBatch) (model.LiveEventBatch, error) {
 	panic("private writer panic")
 }
 
@@ -101,6 +108,45 @@ func (store *writerStore) Write(ctx context.Context, batch model.WriteBatch) err
 		}
 	}
 	return failure
+}
+
+func (store *writerStore) WriteRealtime(ctx context.Context, batch model.WriteBatch) (model.LiveEventBatch, error) {
+	if err := store.Write(ctx, batch); err != nil {
+		return model.LiveEventBatch{}, err
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.committed == nil {
+		store.committed = make(map[string]struct{})
+		store.chatUnread = make(map[string]uint32)
+		store.chatActivity = make(map[string]time.Time)
+	}
+	var events [model.MaxLiveEventsPerCommit]model.LiveEvent
+	count := 0
+	for index := 0; index < batch.Len(); index++ {
+		message, _ := batch.At(index)
+		key := message.ChatID().String() + "\x00" + message.MessageID().String()
+		if _, exists := store.committed[key]; exists {
+			continue
+		}
+		store.committed[key] = struct{}{}
+		chatKey := message.ChatID().String()
+		activity := store.chatActivity[chatKey]
+		if activity.IsZero() || message.SentAt().After(activity) {
+			activity = message.SentAt()
+			store.chatActivity[chatKey] = activity
+		}
+		if !message.FromMe() && store.chatUnread[chatKey] < ^uint32(0) {
+			store.chatUnread[chatKey]++
+		}
+		event, err := model.NewLiveMessageCommitted(message, store.chatUnread[chatKey], activity)
+		if err != nil {
+			return model.LiveEventBatch{}, err
+		}
+		events[count] = event
+		count++
+	}
+	return model.NewLiveEventBatch(events[:count])
 }
 
 func (*writerStore) EnsureChat(context.Context, model.Chat) error { return nil }
