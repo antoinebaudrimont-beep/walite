@@ -39,13 +39,13 @@ WhatsApp transport or authentication work.
 11. **2.4B2 — dynamic new-chat insertion (complete):** add
     newly discovered chats to a small bounded presentation working set with a
     deterministic selected-chat-preserving capacity policy.
-12. **2.4B3 — outgoing service path (current, ready for review):** route plain
-    text sends through the application service and committed-event path.
-13. **2.5 — offline integration validation:** verify startup ordering,
+12. **2.4B3 — outgoing service path (complete):** route plain text sends
+    through the application service and committed-event path.
+13. **2.5 — offline integration validation (complete):** verify startup ordering,
    cancellation, store failures, retention, pagination, race safety, and target
    performance with only offline fakes.
-14. **2.6 — transport readiness boundary:** only after the offline cache and UI
-   adapter pass may WhatsApp transport and authentication work begin.
+14. **2.6 — transport readiness boundary (complete):** the offline cache and UI
+    adapter pass; WhatsApp transport and authentication work may begin.
 
 ## Remaining temporary deviations after 2.1
 
@@ -487,3 +487,95 @@ WhatsApp transport or authentication work.
   transport, media, receipts, typing, reactions, schema migration, or SQLite
   production composition. The next work is 2.5/2.6 offline validation and
   transport-readiness review before real WhatsApp transport/authentication.
+
+## Increment 2.5 offline integration validation
+
+- Production remains intentionally offline: `cmd/walite` loads UI
+  configuration, constructs `service.Core` with `store.Memory`,
+  `wa.FakeSource`, `wa.OfflineTextSender`, and the retention policy, seeds a
+  bounded initial snapshot, waits for service readiness, and then starts the
+  TUI plus its committed-live-event forwarder. Neither `go.mod` nor the
+  production import graph contains a WhatsApp transport dependency.
+- Existing deterministic tests cover configuration and readiness before first
+  frame, bounded initial snapshots, incoming realtime commit and presentation,
+  unknown-chat insertion with the 16-chat working-set bound, the complete
+  offline outgoing path, transport/store/admission failures, cancellation,
+  and both service-led and TUI-led shutdown. The gate added no duplicate tests
+  and uses no timing sleeps.
+- The outgoing proof remains
+  `tui.SendRequest -> cmd/walite adapter -> Core.SendText -> reserved realtime
+  admission -> transport-owned ID/time -> WriteRealtime -> LiveEvents -> TUI`.
+  Store failure publishes no committed event; realtime saturation rejects
+  before transport; cancellation and one-send-in-flight behavior remain
+  explicit.
+- Core 2 Duo validation baseline, three benchmark samples: first frame
+  5.289-6.648 ms/op (about 1.80 MB/op and 13,842 allocations); existing-chat
+  live update 1.991-2.353 ms/op (about 67 kB/op and 6,363-6,365 allocations);
+  background promotion 1.748-1.961 ms/op (about 64 kB/op and 6,126-6,127
+  allocations). No send/service benchmark exists, so none was invented.
+- A production offline binary sampled immediately after its first rendered
+  frame used 13,840 KiB RSS, 9,584 KiB PSS, and 6,784 KiB private memory (the
+  USS approximation from `Private_Clean + Private_Dirty + Private_Hugetlb`).
+  This is an observational baseline, not a test threshold.
+
+## Increment 2.6 transport readiness boundary
+
+- `service.EventSource` and `service.TextSender` are structural, model-only
+  contracts. A real `internal/wa` adapter can replace `FakeSource` and
+  `OfflineTextSender` without changing the TUI, committed `LiveEvent`
+  contract, store writer, chat working-set policy, or outgoing application
+  adapter. The composition root changes constructors; the adapter normalizes
+  protocol callbacks into the existing bounded queues. Milestone 3A may leave
+  real outgoing send disabled while QR and incoming text are proven.
+- The smallest authentication addition is transport-specific rather than a
+  generic framework: the real adapter must report whether its device store is
+  linked; expose `Pair(ctx, show func(model.QRFrame) error) error`,
+  `Connect(ctx) error`, and idempotent `Disconnect()` operations; and publish
+  bounded states for `AuthRequired`, `QRReady` (bounded raster plus expiry,
+  never the raw token), `Connecting`, `Online`, `Disconnected`, `LoggedOut`,
+  and a content-free failure category. QR replacement needs the architecture's
+  protected one-frame mailbox; connection states can use the existing
+  coalesced status pattern. This is the only new presentation seam required by
+  QR login; it does not alter message delivery.
+- The checked-out whatsmeow source at `662ad1d` confirms the likely adapter
+  flow: `sqlstore.Container.GetFirstDevice`, `Store.ID == nil` for an unlinked
+  device, `GetQRChannel(ctx)` before `ConnectContext(ctx)`, QR `code`, timeout,
+  success, and error terminal events, followed by `Connected`, `Disconnected`,
+  and `LoggedOut` events. Its QR helper can debug-log the raw code, so walite
+  must use a no-op or explicitly redacting logger for pairing. Raw QR data and
+  session keys must never cross the adapter, enter application logs, or be
+  stored in the application cache.
+- Device/session persistence must be a separate secure whatsmeow
+  `sqlstore.Container`, under a 0700 walite data directory with 0600 database
+  files, loaded before client construction and closed during bounded shutdown.
+  The exact supported SQLite connector/dialect must be verified when the
+  dependency is pinned. This session database is distinct from walite's
+  message cache.
+- Switching the production application cache from `store.Memory` to
+  `SQLiteStore` is not required for QR, reconnection, or the first real live
+  messages. An empty bounded memory snapshot is safe, and B2 admits the first
+  unknown chat. Production cache composition remains deferred so it does not
+  delay the shortest safe route to an authenticated connection.
+- Reply transport remains deferred because the domain message and cache schema
+  do not carry reply relationships. That limitation does not block QR,
+  connection state, incoming plain text, or later plain-text transport.
+
+## Milestone 3A — Real WhatsApp QR authentication and connection
+
+First visible acceptance target:
+
+1. Launch walite.
+2. Display a QR code in the terminal when no saved session exists.
+3. Scan the QR successfully with WhatsApp on the phone.
+4. Persist the linked device/session securely.
+5. Restart and reconnect from the saved session without another QR.
+6. Expose connected and disconnected state without leaking credentials or QR
+   contents.
+7. Receive at least one real WhatsApp text message through the existing
+   `realtime -> WriteRealtime -> LiveEvents -> TUI` pipeline.
+
+Milestone 3A integrates and pins the maintained `go.mau.fi/whatsmeow`
+multi-device client after checking the pinned source and connector
+compatibility. Outgoing real send, reply metadata, media, receipts, reactions,
+calls, and HistorySync import remain outside this first QR milestone unless a
+library requirement makes a narrower exception technically inseparable.
