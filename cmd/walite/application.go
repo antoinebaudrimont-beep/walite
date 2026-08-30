@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/antoinebaudrimont-beep/walite/internal/config"
 	"github.com/antoinebaudrimont-beep/walite/internal/model"
 	"github.com/antoinebaudrimont-beep/walite/internal/service"
 	"github.com/antoinebaudrimont-beep/walite/internal/tui"
+	"github.com/antoinebaudrimont-beep/walite/internal/wa"
 	"github.com/gdamore/tcell/v2"
 )
 
@@ -41,10 +43,40 @@ func run(ctx context.Context, screen tcell.Screen) error {
 	if err != nil {
 		return fmt.Errorf("configuration store: %w", err)
 	}
-	return runApplication(ctx, screen, applicationDependencies{
-		configuration: configurationStore,
-		newService:    newOfflineApplicationService,
-		runTUI:        tui.Run,
+	sessionPath, err := config.DefaultWhatsAppSessionPath()
+	if err != nil {
+		return fmt.Errorf("WhatsApp session path: %w", err)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("application executable: %w", err)
+	}
+	return runWithPairingWindow(ctx, screen, pairingStartupDependencies{
+		sessionLinked: func(ctx context.Context) (bool, error) {
+			return wa.SessionLinked(ctx, sessionPath)
+		},
+		launchPairing: func(ctx context.Context) error {
+			return launchXFCEPairingWindow(ctx, executable, runPairingCommand)
+		},
+		runLinked: func(ctx context.Context, screen tcell.Screen) error {
+			return runAuthenticatedApplication(ctx, screen, authenticatedApplicationDependencies{
+				configuration: configurationStore,
+				newConnection: func(ctx context.Context) (applicationConnection, error) {
+					connection, err := wa.NewConnection(ctx, sessionPath)
+					if err != nil {
+						return nil, err
+					}
+					if !connection.Linked() {
+						_ = connection.Close()
+						return nil, errPairingSessionUnlinked
+					}
+					return connection, nil
+				},
+				newService:    newOfflineApplicationService,
+				runConnection: tui.RunConnectionInitialized,
+				runTUI:        tui.RunInitialized,
+			})
+		},
 	})
 }
 

@@ -32,7 +32,9 @@ func TestPackageDoesNotImportPersistenceImplementations(t *testing.T) {
 				path == "github.com/antoinebaudrimont-beep/walite/internal/model" ||
 				path == "github.com/antoinebaudrimont-beep/walite/internal/store" ||
 				path == "github.com/antoinebaudrimont-beep/walite/internal/service" ||
-				path == "database/sql" || strings.Contains(path, "sqlite") {
+				path == "github.com/antoinebaudrimont-beep/walite/internal/wa" ||
+				path == "database/sql" || strings.Contains(path, "sqlite") ||
+				strings.HasPrefix(path, "go.mau.fi/whatsmeow") {
 				t.Fatalf("%s imports forbidden package %s", entry.Name(), path)
 			}
 		}

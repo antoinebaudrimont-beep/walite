@@ -27,6 +27,23 @@ func Run(ctx context.Context, screen tcell.Screen, input Input) error {
 	return runWithDependencies(ctx, screen, input, preferencesPath)
 }
 
+// RunInitialized displays the normal chat interface on a screen whose
+// lifecycle is owned by the caller. It neither initializes nor finalizes the
+// screen.
+func RunInitialized(ctx context.Context, screen tcell.Screen, input Input) error {
+	if ctx == nil || screen == nil {
+		return errors.New("tui rejected")
+	}
+	if err := input.Options.validate(); err != nil {
+		return err
+	}
+	preferencesPath := ""
+	if path, err := defaultPreferencesPath(); err == nil {
+		preferencesPath = path
+	}
+	return runInitializedWithDependencies(ctx, screen, input, preferencesPath)
+}
+
 func runWithDependencies(
 	ctx context.Context,
 	screen tcell.Screen,
@@ -46,7 +63,36 @@ func runWithDependencies(
 	if err := screen.Init(); err != nil {
 		return err
 	}
+	defer screen.Fini()
+	return runInitialized(ctx, screen, input, preferencesPath, chats)
+}
 
+func runInitializedWithDependencies(
+	ctx context.Context,
+	screen tcell.Screen,
+	input Input,
+	preferencesPath string,
+) error {
+	if ctx == nil || screen == nil {
+		return errors.New("tui rejected")
+	}
+	if err := input.Options.validate(); err != nil {
+		return err
+	}
+	chats, err := chatStateFromInitial(input.InitialState)
+	if err != nil {
+		return err
+	}
+	return runInitialized(ctx, screen, input, preferencesPath, chats)
+}
+
+func runInitialized(
+	ctx context.Context,
+	screen tcell.Screen,
+	input Input,
+	preferencesPath string,
+	chats *chatState,
+) error {
 	screen.HideCursor()
 	model := viewModel{chats: chats, options: input.Options}
 	if input.Send != nil {
@@ -60,7 +106,6 @@ func runWithDependencies(
 		model.preferencesPath = preferencesPath
 		_ = loadEmojiPreferences(preferencesPath, &model.emojiPicker)
 	}
-	defer screen.Fini()
 	draw(screen, &model)
 	screen.Show()
 

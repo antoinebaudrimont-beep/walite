@@ -58,7 +58,9 @@ Walite is one lightweight WhatsApp-only terminal process for a personal account.
 
 - Is the only package importing whatsmeow or its protobufs.
 - Owns the whatsmeow client, pairing, connection, event handler registration, minimal event copying, incremental HistorySync traversal, older-history request construction, and explicit media download.
-- Does not import SQLite or terminal packages.
+- Does not own or import the application-cache store or terminal packages. It
+  may use the SQLite driver through whatsmeow's supported private credential
+  store; that database remains separate from the application cache.
 - Imports only `internal/model` from the application packages. It structurally implements interfaces declared by `internal/service` without importing `service`.
 
 `internal/store`

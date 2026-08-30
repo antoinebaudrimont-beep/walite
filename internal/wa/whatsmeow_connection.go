@@ -1,0 +1,249 @@
+package wa
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"syscall"
+
+	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/store/sqlstore"
+	"go.mau.fi/whatsmeow/types/events"
+	_ "modernc.org/sqlite"
+)
+
+type whatsmeowConnectionClient struct {
+	container *sqlstore.Container
+	client    *whatsmeow.Client
+	events    chan protocolEvent
+	eventMu   sync.Mutex
+	handlerID uint32
+	closeOnce sync.Once
+	closeErr  error
+}
+
+func newWhatsmeowConnectionClient(ctx context.Context, sessionPath string) (*whatsmeowConnectionClient, error) {
+	if ctx == nil || ctx.Err() != nil {
+		var cause error
+		if ctx != nil {
+			cause = context.Cause(ctx)
+		}
+		return nil, &connectionError{kind: ErrConnectionRejected, cause: cause}
+	}
+	path, err := prepareSessionPath(sessionPath)
+	if err != nil {
+		return nil, &connectionError{kind: ErrConnectionRejected, cause: err}
+	}
+	databaseURL := (&url.URL{
+		Scheme:   "file",
+		Path:     path,
+		RawQuery: "_pragma=foreign_keys(1)&_pragma=busy_timeout(1000)",
+	}).String()
+	database, err := sql.Open("sqlite", databaseURL)
+	if err != nil {
+		return nil, &connectionError{kind: ErrConnectionRejected, cause: err}
+	}
+	database.SetMaxOpenConns(1)
+	database.SetMaxIdleConns(1)
+	fail := func(cause error) (*whatsmeowConnectionClient, error) {
+		_ = database.Close()
+		return nil, &connectionError{kind: ErrConnectionRejected, cause: cause}
+	}
+	if err := database.PingContext(ctx); err != nil {
+		return fail(err)
+	}
+	container := sqlstore.NewWithDB(database, "sqlite", nil)
+	if err := container.Upgrade(ctx); err != nil {
+		_ = container.Close()
+		return nil, &connectionError{kind: ErrConnectionRejected, cause: err}
+	}
+	device, err := container.GetFirstDevice(ctx)
+	if err != nil {
+		_ = container.Close()
+		return nil, &connectionError{kind: ErrConnectionRejected, cause: err}
+	}
+	if err := tightenSessionPath(path); err != nil {
+		_ = container.Close()
+		return nil, &connectionError{kind: ErrConnectionRejected, cause: err}
+	}
+	wrapped := &whatsmeowConnectionClient{
+		container: container,
+		client:    whatsmeow.NewClient(device, nil),
+		events:    make(chan protocolEvent, 1),
+	}
+	// A nil logger selects whatsmeow's no-op logger. This is mandatory during
+	// pairing because the upstream QR helper debug-logs the raw QR token.
+	wrapped.handlerID = wrapped.client.AddEventHandler(wrapped.handleEvent)
+	return wrapped, nil
+}
+
+func (client *whatsmeowConnectionClient) Linked() bool {
+	return client != nil && client.client != nil && client.client.Store != nil && client.client.Store.ID != nil
+}
+
+func (client *whatsmeowConnectionClient) GetQRChannel(ctx context.Context) (<-chan whatsmeow.QRChannelItem, error) {
+	if client == nil || client.client == nil {
+		return nil, ErrConnectionClosed
+	}
+	return client.client.GetQRChannel(ctx)
+}
+
+func (client *whatsmeowConnectionClient) Connect(ctx context.Context) error {
+	if client == nil || client.client == nil {
+		return ErrConnectionClosed
+	}
+	return client.client.ConnectContext(ctx)
+}
+
+func (client *whatsmeowConnectionClient) Events() <-chan protocolEvent {
+	if client == nil {
+		return nil
+	}
+	return client.events
+}
+
+func (client *whatsmeowConnectionClient) Disconnect() {
+	if client != nil && client.client != nil {
+		client.client.Disconnect()
+	}
+}
+
+func (client *whatsmeowConnectionClient) Close() error {
+	if client == nil {
+		return nil
+	}
+	client.closeOnce.Do(func() {
+		if client.client != nil {
+			client.client.RemoveEventHandler(client.handlerID)
+		}
+		client.eventMu.Lock()
+		close(client.events)
+		client.eventMu.Unlock()
+		if client.container != nil {
+			client.closeErr = client.container.Close()
+		}
+	})
+	return client.closeErr
+}
+
+func (client *whatsmeowConnectionClient) handleEvent(raw any) {
+	var event protocolEvent
+	switch raw.(type) {
+	case *events.Connected:
+		event.kind = protocolConnected
+	case *events.Disconnected:
+		event.kind = protocolDisconnected
+	case *events.ConnectFailure:
+		event = protocolEvent{kind: protocolFailed, cause: ErrConnectionFailed}
+	case *events.LoggedOut:
+		event = protocolEvent{kind: protocolLoggedOut, cause: ErrConnectionFailed}
+	default:
+		// Message, history, receipt, media, typing, and all other protocol events
+		// are deliberately not adapted during Milestone 3A.
+		return
+	}
+	client.eventMu.Lock()
+	defer client.eventMu.Unlock()
+	select {
+	case <-client.events:
+	default:
+	}
+	select {
+	case client.events <- event:
+	default:
+	}
+}
+
+func prepareSessionPath(path string) (string, error) {
+	if path == "" || !filepath.IsAbs(path) {
+		return "", ErrConnectionRejected
+	}
+	path = filepath.Clean(path)
+	directory := filepath.Dir(path)
+	if directory == path || filepath.Base(path) == "." {
+		return "", ErrConnectionRejected
+	}
+	if err := rejectSessionSymlinks(directory); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return "", err
+	}
+	if err := rejectSessionSymlinks(directory); err != nil {
+		return "", err
+	}
+	info, err := os.Lstat(directory)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || !ownedByCurrentUser(info) {
+		return "", ErrConnectionRejected
+	}
+	if err := os.Chmod(directory, 0o700); err != nil {
+		return "", err
+	}
+
+	info, err = os.Lstat(path)
+	if err == nil {
+		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || !ownedByCurrentUser(info) {
+			return "", ErrConnectionRejected
+		}
+		if err := os.Chmod(path, 0o600); err != nil {
+			return "", err
+		}
+		return path, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
+	if err != nil {
+		return "", err
+	}
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		return "", err
+	}
+	if err := file.Close(); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func rejectSessionSymlinks(path string) error {
+	volume := filepath.VolumeName(path)
+	remainder := strings.TrimPrefix(path, volume)
+	current := volume + string(os.PathSeparator)
+	for _, part := range strings.Split(strings.TrimPrefix(remainder, string(os.PathSeparator)), string(os.PathSeparator)) {
+		if part == "" {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return ErrConnectionRejected
+		}
+	}
+	return nil
+}
+
+func tightenSessionPath(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || !ownedByCurrentUser(info) {
+		return ErrConnectionRejected
+	}
+	return os.Chmod(path, 0o600)
+}
+
+func ownedByCurrentUser(info os.FileInfo) bool {
+	status, ok := info.Sys().(*syscall.Stat_t)
+	return ok && status.Uid == uint32(os.Geteuid())
+}

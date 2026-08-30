@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/antoinebaudrimont-beep/walite/internal/config"
@@ -20,6 +21,8 @@ type startupObservedScreen struct {
 	finiOnce    sync.Once
 	initErr     error
 	initialized bool
+	initCount   atomic.Int64
+	finiCount   atomic.Int64
 }
 
 func newStartupObservedScreen() *startupObservedScreen {
@@ -33,6 +36,7 @@ func (screen *startupObservedScreen) Init() error {
 	if screen.initErr != nil {
 		return screen.initErr
 	}
+	screen.initCount.Add(1)
 	if err := screen.SimulationScreen.Init(); err != nil {
 		return err
 	}
@@ -47,6 +51,7 @@ func (screen *startupObservedScreen) Show() {
 }
 
 func (screen *startupObservedScreen) Fini() {
+	screen.finiCount.Add(1)
 	screen.finiOnce.Do(screen.SimulationScreen.Fini)
 }
 
