@@ -73,7 +73,7 @@ func TestLiveMessageDelayedAndEqualTimestampOrdering(t *testing.T) {
 	}
 }
 
-func TestLiveMessageDuplicateBodylessUnknownAndCapacity(t *testing.T) {
+func TestLiveMessageDuplicateBodylessAndMessageCapacity(t *testing.T) {
 	model := liveTestView(t)
 	event := liveTestMessage("a", "bodyless", 31, 31, false, "must disappear", 9)
 	event.BodyRetained = false
@@ -89,12 +89,6 @@ func TestLiveMessageDuplicateBodylessUnknownAndCapacity(t *testing.T) {
 	if applyLiveMessage(&model, event) || *model.chats != before {
 		t.Fatal("identical duplicate changed presentation state")
 	}
-	unknown := liveTestMessage("unknown", "unknown-message", 50, 50, false, "ignored", 1)
-	selectedID := chat.id
-	if applyLiveMessage(&model, unknown) || model.chats.chatCount != 3 || model.chats.chats[model.chats.selected].id != selectedID {
-		t.Fatal("unknown chat event changed bounded working set")
-	}
-
 	full := InitialChat{ID: "full", Title: "Full", ActivityTime: liveTestBase.Add(40 * time.Minute), Messages: make([]InitialMessage, maxMessages)}
 	for index := range full.Messages {
 		full.Messages[index] = liveInitialMessage(fmt.Sprintf("m%02d", index), index, false, fmt.Sprintf("message %02d", index))
@@ -107,6 +101,210 @@ func TestLiveMessageDuplicateBodylessUnknownAndCapacity(t *testing.T) {
 	boundedChat, _ := bounded.chats.selectedChat()
 	if boundedChat.messageCount != maxMessages || boundedChat.messages[0].id != "m01" || boundedChat.messages[maxMessages-1].id != "newest" {
 		t.Fatalf("bounded messages first=%q last=%q count=%d", boundedChat.messages[0].id, boundedChat.messages[maxMessages-1].id, boundedChat.messageCount)
+	}
+}
+
+func TestFirstLiveMessageCreatesSelectedChatFromEmptyState(t *testing.T) {
+	tests := []struct {
+		name         string
+		text         string
+		bodyRetained bool
+		fromMe       bool
+	}{
+		{name: "retained Unicode", text: "Café 東京 ❤️ 👍🏽 👨‍👩‍👧‍👦", bodyRetained: true, fromMe: true},
+		{name: "bodyless", text: "must disappear", bodyRetained: false, fromMe: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			state, err := chatStateFromInitial(InitialState{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			model := viewModel{chats: state, options: DefaultOptions(), terminalWidth: 100, terminalHeight: 20}
+			event := liveTestMessage("first-chat", "first-message", 70, 80, test.fromMe, test.text, 9)
+			event.BodyRetained = test.bodyRetained
+			if !applyLiveMessage(&model, event) {
+				t.Fatal("first live message was not applied")
+			}
+			if model.chats.chatCount != 1 || len(model.chats.chats) != ChatWorkingSetCapacity || model.chats.selectedIndex() != 0 {
+				t.Fatalf("working set count=%d capacity=%d selected=%d", model.chats.chatCount, len(model.chats.chats), model.chats.selectedIndex())
+			}
+			chat, selected := model.chats.selectedChat()
+			if !selected || chat.id != event.ChatID || chat.title != event.ChatID || chat.unreadCount != event.UnreadCount ||
+				!chat.activityTime.Equal(event.ActivityTime) || chat.messageCount != 1 {
+				t.Fatalf("selected=%t chat=%+v", selected, chat)
+			}
+			message := chat.messages[0]
+			wantText := event.Text
+			if !event.BodyRetained {
+				wantText = ""
+			}
+			if message.id != messageID(event.MessageID) || !message.sentAt.Equal(event.SentAt) ||
+				message.text != wantText || message.bodyRetained != event.BodyRetained || message.fromMe != event.FromMe {
+				t.Fatalf("message=%+v", message)
+			}
+
+			screen := initializedSimulationScreen(t, 100, 20)
+			draw(screen, &model)
+			screen.Show()
+			rendered := screenText(screen)
+			if !strings.Contains(rendered, "> first-chat (9)") {
+				t.Fatalf("first chat not visible:\n%s", rendered)
+			}
+			if event.BodyRetained {
+				if !strings.Contains(rendered, "Café") || !strings.Contains(rendered, "東") || !strings.Contains(rendered, "❤") {
+					t.Fatalf("Unicode message not visible:\n%s", rendered)
+				}
+			} else if strings.Contains(rendered, event.Text) {
+				t.Fatalf("bodyless text leaked:\n%s", rendered)
+			}
+		})
+	}
+}
+
+func TestLiveMessageInsertsFifthChatWithExactPresentationData(t *testing.T) {
+	model := defaultDemoView()
+	selected, _ := model.chats.selectedChat()
+	selectedID := selected.id
+	event := liveTestMessage("new-contact", "new-unicode", 50, 60, true, "Café 東京 ❤️ 👍🏽 👨‍👩‍👧‍👦", 7)
+	if !applyLiveMessage(&model, event) {
+		t.Fatal("fifth chat event was not applied")
+	}
+	if model.chats.chatCount != 5 {
+		t.Fatalf("chat count=%d want=5", model.chats.chatCount)
+	}
+	chatIndex, found := model.chats.chatIndexByID("new-contact")
+	if !found {
+		t.Fatal("new chat missing")
+	}
+	chat := &model.chats.chats[chatIndex]
+	if chat.id != "new-contact" || chat.title != "new-contact" || chat.unreadCount != 7 ||
+		!chat.activityTime.Equal(event.ActivityTime) || chat.messageCount != 1 {
+		t.Fatalf("new chat=%+v", chat)
+	}
+	message := chat.messages[0]
+	if message.id != "new-unicode" || !message.sentAt.Equal(event.SentAt) || !message.fromMe ||
+		!message.bodyRetained || message.text != event.Text {
+		t.Fatalf("new message=%+v", message)
+	}
+	selected, _ = model.chats.selectedChat()
+	if selected.id != selectedID || model.chats.chats[0].id != "new-contact" {
+		t.Fatalf("selected=%q top=%q", selected.id, model.chats.chats[0].id)
+	}
+	before := *model.chats
+	if applyLiveMessage(&model, event) || *model.chats != before {
+		t.Fatal("duplicate new-chat event changed presentation state")
+	}
+
+	bodyless := liveTestMessage("bodyless-contact", "bodyless-new", 61, 61, true, "must disappear", 8)
+	bodyless.BodyRetained = false
+	if !applyLiveMessage(&model, bodyless) {
+		t.Fatal("bodyless new-chat event was not applied")
+	}
+	bodylessIndex, _ := model.chats.chatIndexByID(bodyless.ChatID)
+	bodylessMessage := model.chats.chats[bodylessIndex].messages[0]
+	if bodylessMessage.text != "" || bodylessMessage.bodyRetained || !bodylessMessage.fromMe {
+		t.Fatalf("bodyless new message=%+v", bodylessMessage)
+	}
+}
+
+func TestNewLiveChatsUseDeterministicActivityAndIDOrder(t *testing.T) {
+	model := liveTestView(t)
+	for _, event := range []LiveMessage{
+		liveTestMessage("new-z", "z-message", 40, 50, false, "z", 1),
+		liveTestMessage("new-a", "a-message", 41, 50, false, "a", 1),
+		liveTestMessage("new-newest", "newest-message", 60, 60, false, "newest", 1),
+	} {
+		if !applyLiveMessage(&model, event) {
+			t.Fatalf("event for %q was not applied", event.ChatID)
+		}
+	}
+	got := []string{
+		model.chats.chats[0].id,
+		model.chats.chats[1].id,
+		model.chats.chats[2].id,
+	}
+	if fmt.Sprint(got) != "[new-newest new-a new-z]" {
+		t.Fatalf("new chat order=%v", got)
+	}
+}
+
+func TestNewLiveChatPreservesTransientSelectedState(t *testing.T) {
+	model := liveTestView(t)
+	model.terminalHeight = 12
+	model.mode = modeCompose
+	if !model.composer.insertText("draft survives new chat") {
+		t.Fatal("draft setup failed")
+	}
+	model.composer.cursor = len("draft")
+	selected, _ := model.chats.selectedChat()
+	targetIndex := selected.messageCount - 3
+	targetID := selected.messages[targetIndex].id
+	model.replyTarget = replyTarget{valid: true, id: targetID}
+	model.replySelect = replySelectionState{valid: true, index: targetIndex, fromCompose: true}
+	model.chatView.scrollOffset = 2
+	model.emojiPicker.prepareOpen()
+	model.settingsOpen = true
+	wantComposer := model.composer
+	wantReplyTarget := model.replyTarget
+	wantReplySelect := model.replySelect
+	wantChatView := model.chatView
+	wantEmoji := model.emojiPicker
+	wantSettings := model.settingsOpen
+	wantSelected := selected.id
+
+	if !applyLiveMessage(&model, liveTestMessage("background-new", "background-message", 50, 60, false, "background", 3)) {
+		t.Fatal("background new chat was not inserted")
+	}
+	selected, _ = model.chats.selectedChat()
+	if selected.id != wantSelected || model.mode != modeCompose || model.composer != wantComposer ||
+		model.replyTarget != wantReplyTarget || model.replySelect != wantReplySelect ||
+		model.chatView != wantChatView || model.emojiPicker != wantEmoji || model.settingsOpen != wantSettings {
+		t.Fatalf("transient state changed: selected=%q mode=%d cursor=%d reply=%+v selection=%+v view=%+v popup=%t settings=%t",
+			selected.id, model.mode, model.composer.cursor, model.replyTarget, model.replySelect,
+			model.chatView, model.emojiPicker.open, model.settingsOpen)
+	}
+}
+
+func TestNewLiveChatWorkingSetEvictsLeastActiveNonSelectedDeterministically(t *testing.T) {
+	initial := InitialState{Chats: make([]InitialChat, ChatWorkingSetCapacity)}
+	for index := range initial.Chats {
+		initial.Chats[index] = InitialChat{
+			ID:           fmt.Sprintf("full-%02d", index),
+			Title:        fmt.Sprintf("Full %02d", index),
+			ActivityTime: liveTestBase.Add(time.Duration(ChatWorkingSetCapacity-index) * time.Minute),
+		}
+	}
+	state, err := chatStateFromInitial(initial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.selected = ChatWorkingSetCapacity - 1
+	model := viewModel{chats: state, options: DefaultOptions(), terminalWidth: 100, terminalHeight: 20}
+	selectedID := state.chats[state.selected].id
+
+	newest := liveTestMessage("capacity-new", "capacity-message", 100, 100, false, "bounded", 4)
+	if !applyLiveMessage(&model, newest) {
+		t.Fatal("qualifying new chat was not admitted")
+	}
+	if model.chats.chatCount != ChatWorkingSetCapacity {
+		t.Fatalf("chat count=%d bound=%d", model.chats.chatCount, ChatWorkingSetCapacity)
+	}
+	if _, found := model.chats.chatIndexByID("full-14"); found {
+		t.Fatal("least-active non-selected chat was not evicted")
+	}
+	if _, found := model.chats.chatIndexByID("capacity-new"); !found {
+		t.Fatal("new chat missing after bounded admission")
+	}
+	selected, _ := model.chats.selectedChat()
+	if selected.id != selectedID {
+		t.Fatalf("selected chat=%q want=%q", selected.id, selectedID)
+	}
+
+	before := *model.chats
+	stale := liveTestMessage("capacity-stale", "stale-message", -2, -1, false, "outside working set", 1)
+	if applyLiveMessage(&model, stale) || *model.chats != before {
+		t.Fatal("stale new chat displaced the bounded working set")
 	}
 }
 

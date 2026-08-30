@@ -16,8 +16,10 @@ func applyLiveMessage(model *viewModel, event LiveMessage) bool {
 	}
 	chatIndex, ok := model.chats.chatIndexByID(event.ChatID)
 	if !ok {
-		// Dynamic chat insertion belongs to 2.4B2.
-		return false
+		chatIndex, ok = model.chats.admitLiveChat(event)
+		if !ok {
+			return false
+		}
 	}
 	selectedChat, selected := model.chats.selectedChat()
 	selectedID := ""
@@ -62,6 +64,38 @@ func applyLiveMessage(model *viewModel, event LiveMessage) bool {
 		clampReplySelection(model, model.terminalWidth, model.terminalHeight)
 	}
 	return true
+}
+
+// admitLiveChat adds an unknown committed chat to the fixed presentation
+// working set. When full, only a more-recent chat may replace the least-active
+// non-selected chat; the selected chat is pinned. Live events do not carry a
+// display name, so the stable chat ID is the bounded presentation fallback.
+func (state *chatState) admitLiveChat(event LiveMessage) (int, bool) {
+	if state == nil || state.chatCount < 0 || state.chatCount > len(state.chats) {
+		return 0, false
+	}
+	incoming := chatView{id: event.ChatID, title: event.ChatID, activityTime: event.ActivityTime}
+	if state.chatCount < len(state.chats) {
+		index := state.chatCount
+		state.chats[index] = incoming
+		state.chatCount++
+		return index, true
+	}
+
+	eviction := -1
+	for index := 0; index < state.chatCount; index++ {
+		if index == state.selected {
+			continue
+		}
+		if eviction < 0 || chatBefore(state.chats[eviction], state.chats[index]) {
+			eviction = index
+		}
+	}
+	if eviction < 0 || !chatBefore(incoming, state.chats[eviction]) {
+		return 0, false
+	}
+	state.chats[eviction] = incoming
+	return eviction, true
 }
 
 func validLiveMessage(event LiveMessage) bool {

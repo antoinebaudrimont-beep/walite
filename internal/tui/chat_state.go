@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	maxChats    = MaxInitialChats
+	maxChats    = ChatWorkingSetCapacity
 	maxMessages = MaxInitialMessagesPerChat
 )
 

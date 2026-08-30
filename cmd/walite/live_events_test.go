@@ -197,6 +197,48 @@ func TestApplicationForwardsCommittedLiveEventIntoExistingChat(t *testing.T) {
 	}
 }
 
+func TestApplicationForwardsCommittedLiveEventIntoFifthChat(t *testing.T) {
+	isolateApplicationFiles(t)
+	base := time.Date(2100, 8, 9, 10, 0, 0, 0, time.UTC)
+	chats := []model.Chat{
+		mustSnapshotChat(t, "a", "Alpha", false, 0, base.Add(40*time.Minute)),
+		mustSnapshotChat(t, "b", "Bravo", false, 0, base.Add(30*time.Minute)),
+		mustSnapshotChat(t, "c", "Charlie", false, 0, base.Add(20*time.Minute)),
+		mustSnapshotChat(t, "d", "Delta", false, 0, base.Add(10*time.Minute)),
+	}
+	initial := mustSnapshotMessage(t, "a", "a-initial", base.Add(35*time.Minute), false, "Alpha remains selected")
+	application := newLiveApplicationService(chats, map[string][]model.Message{"a": {initial}})
+	screen := newStartupObservedScreen()
+	done := make(chan error, 1)
+	go func() {
+		done <- runStartedApplication(context.Background(), screen, tui.DefaultOptions(), application, tui.Run)
+	}()
+	<-screen.shown
+
+	message := mustSnapshotMessage(t, "new-chat", "new-chat-message", base.Add(50*time.Minute), true, "Café 東京 ❤️")
+	committed, err := model.NewLiveMessageCommitted(message, 5, base.Add(60*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	application.emit <- committed
+	<-screen.shown
+	if rendered := startupScreenText(screen); !strings.Contains(rendered, "new-chat (5)") ||
+		!strings.Contains(rendered, "> Alpha") || !strings.Contains(rendered, "Alpha remains selected") {
+		t.Fatalf("new-chat frame did not insert and preserve selection:\n%s", rendered)
+	}
+
+	screen.InjectKey(tcell.KeyRune, 'k', tcell.ModNone)
+	<-screen.shown
+	if rendered := startupScreenText(screen); !strings.Contains(rendered, "Café") ||
+		!strings.Contains(rendered, "東") || !strings.Contains(rendered, "❤") {
+		t.Fatalf("new chat did not display its committed message:\n%s", rendered)
+	}
+	screen.InjectKey(tcell.KeyCtrlC, 0, tcell.ModNone)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestApplicationDrainsCommittedEventsBeforeServiceLedShutdown(t *testing.T) {
 	base := time.Date(2100, 8, 9, 10, 0, 0, 0, time.UTC)
 	chat := mustSnapshotChat(t, "drain-chat", "Drain Chat", false, 0, base)

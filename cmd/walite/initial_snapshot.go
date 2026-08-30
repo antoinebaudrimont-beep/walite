@@ -45,11 +45,11 @@ func (application *offlineApplicationService) InitialMessages(ctx context.Contex
 }
 
 func buildInitialTUIState(ctx context.Context, source applicationService) (tui.InitialState, error) {
-	chats, err := source.InitialChats(ctx, tui.MaxInitialChats)
+	chats, err := source.InitialChats(ctx, tui.ChatWorkingSetCapacity)
 	if err != nil {
 		return tui.InitialState{}, err
 	}
-	if len(chats) > tui.MaxInitialChats {
+	if len(chats) > tui.ChatWorkingSetCapacity {
 		return tui.InitialState{}, errors.New("initial chat snapshot exceeded bound")
 	}
 	sort.Slice(chats, func(i, j int) bool {

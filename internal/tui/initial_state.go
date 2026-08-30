@@ -7,9 +7,11 @@ import (
 )
 
 // The initial snapshot is deliberately bounded to the TUI's fixed in-memory
-// working set. Loading older pages remains a later increment.
+// working set. The chat bound is a small presentation capacity, not the
+// application's global retained-chat limit. Loading older pages remains a
+// later increment.
 const (
-	MaxInitialChats           = 4
+	ChatWorkingSetCapacity    = 16
 	MaxInitialMessagesPerChat = 32
 )
 
@@ -59,7 +61,7 @@ type Input struct {
 }
 
 func chatStateFromInitial(initial InitialState) (*chatState, error) {
-	if len(initial.Chats) > MaxInitialChats {
+	if len(initial.Chats) > ChatWorkingSetCapacity {
 		return nil, errors.New("tui initial state rejected")
 	}
 	state := &chatState{chatCount: len(initial.Chats)}

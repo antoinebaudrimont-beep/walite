@@ -33,11 +33,12 @@ WhatsApp transport or authentication work.
 9. **2.4B0 — committed live-event contract (complete):** add
    a distinct bounded, lossless stream for newly committed realtime messages
    and their authoritative unread/activity metadata.
-10. **2.4B1 — live existing-chat TUI updates (current, ready for review):**
+10. **2.4B1 — live existing-chat TUI updates (complete):**
     consume committed live events for chats already present in the initial
     snapshot.
-11. **2.4B2 — dynamic new-chat insertion (pending):** add newly discovered
-    chats without evicting existing UI state implicitly.
+11. **2.4B2 — dynamic new-chat insertion (current, ready for review):** add
+    newly discovered chats to a small bounded presentation working set with a
+    deterministic selected-chat-preserving capacity policy.
 12. **2.4B3 — outgoing service path (pending):** route local sends through the
     application service and committed-event path.
 13. **2.5 — offline integration validation:** verify startup ordering,
@@ -53,8 +54,8 @@ WhatsApp transport or authentication work.
   composition root and reaches the TUI through the store/service application
   boundary.
 - Initial chat/message data is service-backed, and committed events update
-  chats already present in that bounded snapshot. Unknown-chat insertion
-  remains deferred to 2.4B2.
+  existing chats or admit sufficiently active new chats to the bounded TUI
+  working set.
 - Changed terminal events still trigger a measured full-screen redraw.
 
 ## Increment 2.2A foundation
@@ -310,8 +311,8 @@ WhatsApp transport or authentication work.
 - Startup order is configuration load, service construction and readiness,
   bounded initial snapshot loading, then TUI initialization. Later service
   updates continue to be drained; no live update loop is introduced here.
-- `cmd/walite` owns the adapter. It requests at most four chats and the newest
-  32 messages per chat, sorts chats by activity descending with chat ID as the
+- `cmd/walite` owns the adapter. It requests at most 16 chats and the newest 32
+  messages per chat, sorts chats by activity descending with chat ID as the
   deterministic tie-break, and converts store pages from newest-first to the
   TUI's oldest-first rendering order.
 - `internal/tui` accepts plain immutable-by-convention DTOs with stable string
@@ -366,8 +367,8 @@ WhatsApp transport or authentication work.
   consumer has stopped, closes the channel, and preserves events already
   accepted by the channel; callers must keep consuming through graceful
   shutdown when delivery of every committed event is required.
-- 2.4B1 consumes this contract only for chats already in the bounded TUI
-  snapshot. New-chat insertion, outgoing service commands, WhatsApp
+- 2.4B1 and 2.4B2 consume this contract for existing and newly active chats in
+  the bounded TUI working set. Outgoing service commands, WhatsApp
   transport/authentication, SQLite production composition, schema changes, and
   a generic event bus remain out of scope.
 
@@ -381,9 +382,9 @@ WhatsApp transport or authentication work.
   retained-body state, authoritative unread count, and authoritative activity.
   `internal/tui` continues to import no model, service, store, configuration,
   SQL, or SQLite package.
-- Existing chats are routed by stable chat ID. Unknown chat events are ignored
-  without insertion, eviction, buffering, selection changes, or redraw; 2.4B2
-  owns dynamic insertion.
+- Existing chats are routed by stable chat ID. B1 originally ignored unknown
+  chat events without mutation; B2 replaces that temporary behavior with the
+  bounded insertion policy below.
 - Messages remain bounded to 32 per chat and are displayed by `(sent_at ASC,
   message_id ASC)`, independent of commit arrival order. When full, the oldest
   displayed message is evicted so only the newest bounded working set remains.
@@ -404,7 +405,36 @@ WhatsApp transport or authentication work.
   service live channel closes before canceling the TUI. If the TUI exits first,
   cancellation stops a blocked adapter and invokes the B0 forced-cutoff path;
   there is no replay slice or per-event goroutine.
-- The temporary four-chat working set and 32-message per-chat bound remain
-  prototype presentation limits, not production chat capacity. 2.4B2 must
-  replace or extend the four-chat bound before new-chat insertion is complete.
-  Local compose/send remains TUI-only; the outgoing service path remains 2.4B3.
+- Messages remain bounded to 32 entries per presented chat. Local compose/send
+  remains TUI-only; the outgoing service path remains 2.4B3.
+
+## Increment 2.4B2 dynamic new-chat insertion
+
+- The TUI uses a fixed 16-chat presentation working set. This is deliberately
+  separate from the architecture's 10,000-chat retained-metadata limit and
+  caps the renderer at 512 message presentation slots with the unchanged
+  32-message per-chat bound. Initial snapshots request this same chat bound;
+  the four-chat offline fixture remains useful demo content, not capacity.
+- A valid committed event for an unknown chat creates a presentation chat
+  keyed by its stable chat ID, inserts the exact bounded message data, applies
+  authoritative unread/activity metadata, and participates in the existing
+  `(activity DESC, chat ID ASC)` ordering. Because the committed-message
+  contract has no display-name or group metadata, the stable chat ID is the
+  temporary title until a later metadata delta supplies one. B2 does not
+  reopen or expand the B0 committed-event contract for presentation metadata.
+- The selected chat is restored by stable ID. Background insertion does not
+  alter its draft, cursor, reply target/selection, message viewport, emoji
+  picker, or settings popup.
+- Below capacity, every valid unknown-chat event is admitted. At capacity, the
+  selected chat is pinned. The incoming chat replaces the least-active
+  non-selected chat only if it ranks ahead of that chat by the same activity/ID
+  order; otherwise it is outside the presentation working set and is ignored
+  without redraw. This bounded top-working-set policy has no overflow slice,
+  replay buffer, store query, or implicit global-chat cache.
+- Duplicate message IDs become ordinary existing-chat no-ops after insertion.
+  Existing-chat ordering, authoritative metadata, scrolling, redraw, adapter
+  backpressure, shutdown, and 32-message eviction behavior remain unchanged.
+- Deterministic TUI and application integration tests cover fifth-chat
+  insertion, activity and ID ordering, exact Unicode/bodyless/direction data,
+  idempotency, capacity and selected-chat-safe eviction, stale admission
+  rejection, transient-state preservation, and the existing B1 path.

@@ -63,7 +63,7 @@ func TestInitialSnapshotAdapterOrdersAndPreservesFidelity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stub.chatLimit != tui.MaxInitialChats || len(stub.messageLimits) != 3 {
+	if stub.chatLimit != tui.ChatWorkingSetCapacity || len(stub.messageLimits) != 3 {
 		t.Fatalf("bounds chats=%d messages=%v", stub.chatLimit, stub.messageLimits)
 	}
 	for _, limit := range stub.messageLimits {
@@ -107,6 +107,22 @@ func TestInitialSnapshotAdapterKeepsLargeHistoryBounded(t *testing.T) {
 	stub.ignoreMessageLimit = true
 	if _, err := buildInitialTUIState(context.Background(), stub); err == nil {
 		t.Fatal("oversized provider result accepted")
+	}
+}
+
+func TestInitialSnapshotAdapterUsesChatWorkingSetBound(t *testing.T) {
+	base := time.Date(2100, 2, 3, 4, 5, 0, 0, time.UTC)
+	chats := make([]model.Chat, tui.ChatWorkingSetCapacity+1)
+	for index := range chats {
+		chats[index] = mustSnapshotChat(t, fmt.Sprintf("working-%02d", index), "Working", false, 0, base.Add(time.Duration(index)*time.Minute))
+	}
+	stub := &snapshotStub{chats: chats}
+	initial, err := buildInitialTUIState(context.Background(), stub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stub.chatLimit != tui.ChatWorkingSetCapacity || len(initial.Chats) != tui.ChatWorkingSetCapacity {
+		t.Fatalf("requested=%d returned=%d bound=%d", stub.chatLimit, len(initial.Chats), tui.ChatWorkingSetCapacity)
 	}
 }
 

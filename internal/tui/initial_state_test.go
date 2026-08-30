@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -51,9 +52,8 @@ func TestInitialStateOwnsBoundedApplicationSnapshot(t *testing.T) {
 }
 
 func TestInitialStateSupportsEmptyOneAndMultipleChats(t *testing.T) {
-	for _, count := range []int{0, 1, MaxInitialChats} {
-		initial := testInitialState()
-		initial.Chats = initial.Chats[:count]
+	for _, count := range []int{0, 1, ChatWorkingSetCapacity} {
+		initial := initialStateWithChatCount(count)
 		state, err := chatStateFromInitial(initial)
 		if err != nil || state.count() != count {
 			t.Fatalf("count=%d state=%+v err=%v", count, state, err)
@@ -93,8 +93,7 @@ func TestInitialStateSupportsEmptyOneAndMultipleChats(t *testing.T) {
 }
 
 func TestInitialStateRejectsOverflowAndDuplicateIDs(t *testing.T) {
-	overflowChats := testInitialState()
-	overflowChats.Chats = append(overflowChats.Chats, InitialChat{ID: "extra"})
+	overflowChats := initialStateWithChatCount(ChatWorkingSetCapacity + 1)
 	if _, err := chatStateFromInitial(overflowChats); err == nil {
 		t.Fatal("chat overflow accepted")
 	}
@@ -113,6 +112,14 @@ func TestInitialStateRejectsOverflowAndDuplicateIDs(t *testing.T) {
 	if _, err := chatStateFromInitial(duplicate); err == nil {
 		t.Fatal("duplicate message ID accepted")
 	}
+}
+
+func initialStateWithChatCount(count int) InitialState {
+	initial := InitialState{Chats: make([]InitialChat, count)}
+	for index := range initial.Chats {
+		initial.Chats[index] = InitialChat{ID: fmt.Sprintf("bounded-chat-%02d", index)}
+	}
+	return initial
 }
 
 func TestInitialStableMessageIDRemainsReplyable(t *testing.T) {
