@@ -182,7 +182,10 @@ func startPersistenceTestTUI(t *testing.T, home string) (*observedScreen, <-chan
 	screen := newObservedScreen(100, 30)
 	result := make(chan error, 1)
 	go func() {
-		result <- Run(context.Background(), screen, Input{Options: DefaultOptions(), InitialState: testInitialState()})
+		result <- Run(context.Background(), screen, Input{
+			Options: DefaultOptions(), InitialState: testInitialState(),
+			Send: func(context.Context, SendRequest) error { return nil },
+		})
 	}()
 	<-screen.shown
 	return screen, result

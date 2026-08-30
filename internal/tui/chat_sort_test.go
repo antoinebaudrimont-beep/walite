@@ -17,12 +17,13 @@ func TestSyntheticChatsStartInNewestActivityOrder(t *testing.T) {
 
 func TestLocalSendMovesSelectedChatToTopWithOwnedState(t *testing.T) {
 	model := defaultDemoView()
+	installCommittedTestSender(&model)
 	model.chats.selected = 3
 	selectedTitle := model.chats.chats[3].title
 	selectedUnread := model.chats.chats[3].unreadCount
 	otherUnread := unreadByTitle(model)
 	model.mode = modeCompose
-	if !model.composer.insertText("newest local activity") || !submitLocalMessage(&model) {
+	if !model.composer.insertText("newest local activity") || !submitOutgoingMessage(&model) {
 		t.Fatal("local send failed")
 	}
 	if model.chats.selected != 0 || model.chats.chats[0].title != selectedTitle {
@@ -39,7 +40,7 @@ func TestLocalSendMovesSelectedChatToTopWithOwnedState(t *testing.T) {
 	}
 }
 
-func TestReplySendMovesChatToTopAndKeepsReplyIdentity(t *testing.T) {
+func TestDeferredReplySendPreservesState(t *testing.T) {
 	model := defaultDemoView()
 	model.chats.selected = 2
 	chat := &model.chats.chats[model.chats.selected]
@@ -48,18 +49,26 @@ func TestReplySendMovesChatToTopAndKeepsReplyIdentity(t *testing.T) {
 	if !chooseReplyTarget(&model) {
 		t.Fatal("reply target selection failed")
 	}
-	if !model.composer.insertText("activity reply") || !submitLocalMessage(&model) {
-		t.Fatal("reply send failed")
+	wantDraft := "activity reply"
+	wantCursor := 3
+	var request SendRequest
+	model.send = func(got SendRequest) error {
+		request = got
+		return errTestSendRejected
 	}
-	if model.chats.selected != 0 || model.chats.chats[0].title != "Family Demo" {
-		t.Fatalf("selected=%d top=%q", model.chats.selected, model.chats.chats[0].title)
+	if !model.composer.insertText(wantDraft) {
+		t.Fatal("draft setup failed")
 	}
-	reply := model.chats.chats[0].messages[model.chats.chats[0].messageCount-1]
-	if !reply.hasReply || reply.replyToID != targetID {
-		t.Fatalf("reply=%+v target=%q", reply, targetID)
+	model.composer.cursor = wantCursor
+	if submitOutgoingMessage(&model) {
+		t.Fatal("unsupported reply send accepted")
 	}
-	if original, ok := model.chats.findMessageByID(0, targetID); !ok || original.id != targetID {
-		t.Fatalf("reply original lost after reorder: %+v found=%t", original, ok)
+	if request.ChatID != chat.id || request.Text != wantDraft || request.ReplyToID != string(targetID) {
+		t.Fatalf("request=%+v", request)
+	}
+	if model.chats.selected != 2 || model.chats.chats[2].title != "Family Demo" ||
+		model.composer.text() != wantDraft || model.composer.cursor != wantCursor || !model.replyTarget.valid {
+		t.Fatalf("selected=%d draft=%q cursor=%d target=%+v", model.chats.selected, model.composer.text(), model.composer.cursor, model.replyTarget)
 	}
 }
 

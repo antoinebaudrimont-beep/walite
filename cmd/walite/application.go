@@ -14,6 +14,7 @@ import (
 )
 
 var errServiceStopped = errors.New("service stopped before application shutdown")
+var errReplySendUnsupported = errors.New("reply send is not supported by the current message model")
 
 const livePresentationCapacity = service.LiveEventCapacity
 
@@ -23,6 +24,10 @@ type applicationService interface {
 	LiveEvents() <-chan model.LiveEvent
 	InitialChats(context.Context, int) ([]model.Chat, error)
 	InitialMessages(context.Context, model.ChatID, int) ([]model.Message, error)
+}
+
+type applicationTextSender interface {
+	SendText(context.Context, service.SendTextRequest) error
 }
 
 type applicationDependencies struct {
@@ -124,7 +129,12 @@ func runStartedApplication(
 
 	tuiDone := make(chan error, 1)
 	go func() {
-		tuiDone <- runTUI(runCtx, screen, tui.Input{Options: options, InitialState: initialState, LiveEvents: liveMessages})
+		tuiDone <- runTUI(runCtx, screen, tui.Input{
+			Options: options, InitialState: initialState, LiveEvents: liveMessages,
+			Send: func(ctx context.Context, request tui.SendRequest) error {
+				return sendTextFromTUI(ctx, serviceCore, request)
+			},
+		})
 	}()
 
 	select {
@@ -147,6 +157,21 @@ func runStartedApplication(
 		<-updatesDone
 		return applicationResultAfterService(parent, serviceErr, tuiErr)
 	}
+}
+
+func sendTextFromTUI(ctx context.Context, application applicationService, request tui.SendRequest) error {
+	if request.ReplyToID != "" {
+		return errReplySendUnsupported
+	}
+	sender, ok := application.(applicationTextSender)
+	if !ok {
+		return errors.New("application send unavailable")
+	}
+	serviceRequest, err := service.NewSendTextRequest(request.ChatID, request.Text)
+	if err != nil {
+		return err
+	}
+	return sender.SendText(ctx, serviceRequest)
 }
 
 func forwardLiveMessages(ctx context.Context, source <-chan model.LiveEvent, destination chan<- tui.LiveMessage) {

@@ -9,6 +9,7 @@ import (
 
 func TestUnreadChatSelectionCapturesSeparatorBeforeClearingBadge(t *testing.T) {
 	model := defaultDemoView()
+	model.send = func(SendRequest) error { return nil }
 	chat := &model.chats.chats[1]
 	wantBoundaryID := chat.messages[chat.messageCount-int(chat.unreadCount)].id
 
@@ -33,8 +34,9 @@ func TestUnreadChatSelectionCapturesSeparatorBeforeClearingBadge(t *testing.T) {
 
 func TestLocalSendPreservesExistingSeparatorAndCreatesNoFakeOne(t *testing.T) {
 	model := defaultDemoView()
+	model.send = func(SendRequest) error { return nil }
 	model.mode = modeCompose
-	if !model.composer.insertText("read chat local send") || !submitLocalMessage(&model) {
+	if !model.composer.insertText("read chat local send") || !submitOutgoingMessage(&model) {
 		t.Fatal("read chat send failed")
 	}
 	if model.chatView.unreadBoundary.valid {
@@ -42,6 +44,7 @@ func TestLocalSendPreservesExistingSeparatorAndCreatesNoFakeOne(t *testing.T) {
 	}
 
 	model = defaultDemoView()
+	model.send = func(SendRequest) error { return nil }
 	if !moveChatSelection(&model, 1) {
 		t.Fatal("unread chat selection failed")
 	}
@@ -52,7 +55,7 @@ func TestLocalSendPreservesExistingSeparatorAndCreatesNoFakeOne(t *testing.T) {
 		t.Fatalf("End cleared boundary=%+v want=%+v", model.chatView.unreadBoundary, want)
 	}
 	model.mode = modeCompose
-	if !model.composer.insertText("local after unread") || !submitLocalMessage(&model) {
+	if !model.composer.insertText("local after unread") || !submitOutgoingMessage(&model) {
 		t.Fatal("unread chat send failed")
 	}
 	if model.chatView.unreadBoundary != want {

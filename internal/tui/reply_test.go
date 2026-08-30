@@ -105,7 +105,7 @@ func TestReplyTargetSurvivesEmojiInsertion(t *testing.T) {
 	}
 }
 
-func TestSubmitSyntheticReplyUsesStableTargetAndClearsState(t *testing.T) {
+func TestRejectedReplyUsesStableTargetAndPreservesState(t *testing.T) {
 	model := defaultDemoView()
 	if !focusNewestVisibleMessage(&model, 100, 20) || !chooseReplyTarget(&model) {
 		t.Fatal("reply target setup failed")
@@ -113,37 +113,39 @@ func TestSubmitSyntheticReplyUsesStableTargetAndClearsState(t *testing.T) {
 	targetID := model.replyTarget.id
 	chat := &model.chats.chats[0]
 	before := chat.messageCount
-	if !model.composer.insertText("Thanks, that makes sense") || !submitLocalMessage(&model) {
-		t.Fatal("reply send failed")
+	var request SendRequest
+	model.send = func(got SendRequest) error {
+		request = got
+		return errTestSendRejected
 	}
-	message := chat.messages[chat.messageCount-1]
-	if chat.messageCount != before+1 || !message.hasReply || message.replyToID != targetID || message.id == "" {
-		t.Fatalf("count=%d message=%+v target=%q", chat.messageCount, message, targetID)
+	if !model.composer.insertText("Thanks, that makes sense") || submitOutgoingMessage(&model) {
+		t.Fatal("rejected reply send accepted")
 	}
-	if model.replyTarget.valid || model.composer.length != 0 || model.chatView.scrollOffset != 0 || model.mode != modeCompose {
+	if request.ReplyToID != string(targetID) || chat.messageCount != before || !model.replyTarget.valid ||
+		model.composer.text() != "Thanks, that makes sense" || model.mode != modeCompose {
 		t.Fatalf("target=%+v draft=%q offset=%d mode=%d", model.replyTarget, model.composer.text(), model.chatView.scrollOffset, model.mode)
 	}
 }
 
-func TestReplyToEvictedOriginalRetainsIDWithoutPointer(t *testing.T) {
+func TestRejectedReplyToEvictedOriginalRetainsIDWithoutPointer(t *testing.T) {
 	model := defaultDemoView()
 	chat := &model.chats.chats[0]
 	chat.messageCount = maxMessages
 	for index := 0; index < maxMessages; index++ {
 		chat.messages[index] = messageView{id: testMessageID(100 + index), time: "old", text: "old-" + twoDigits(index)}
 	}
-	model.chats.nextLocalID = 1000
 	model.mode = modeCompose
 	model.replyTarget = replyTarget{valid: true, id: chat.messages[0].id}
-	if !model.composer.insertText("reply after eviction") || !submitLocalMessage(&model) {
-		t.Fatal("reply send failed")
+	var request SendRequest
+	model.send = func(got SendRequest) error {
+		request = got
+		return errTestSendRejected
 	}
-	reply := chat.messages[maxMessages-1]
-	if !reply.hasReply || reply.replyToID != testMessageID(100) {
-		t.Fatalf("reply=%+v", reply)
+	if !model.composer.insertText("reply after eviction") || submitOutgoingMessage(&model) {
+		t.Fatal("rejected reply send accepted")
 	}
-	if _, found := model.chats.findMessageByID(0, reply.replyToID); found {
-		t.Fatal("oldest original was not evicted")
+	if request.ReplyToID != "100" || model.replyTarget.id != testMessageID(100) || model.composer.text() != "reply after eviction" {
+		t.Fatalf("request=%+v target=%+v draft=%q", request, model.replyTarget, model.composer.text())
 	}
 }
 

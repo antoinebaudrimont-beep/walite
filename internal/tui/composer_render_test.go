@@ -42,15 +42,16 @@ func TestDrawComposeDraftAndCursor(t *testing.T) {
 func TestDrawSubmittedLocalMessage(t *testing.T) {
 	screen := initializedSimulationScreen(t, 100, 30)
 	model := defaultDemoView()
+	installCommittedTestSender(&model)
 	model.mode = modeCompose
 	insertComposerText(t, &model.composer, "hello rendered demo")
-	if !submitLocalMessage(&model) {
+	if !submitOutgoingMessage(&model) {
 		t.Fatal("send rejected")
 	}
 	draw(screen, &model)
 	screen.Show()
 	text := screenText(screen)
-	if !strings.Contains(text, "now") || !strings.Contains(text, "hello rendered demo") {
+	if !strings.Contains(text, "10:00") || !strings.Contains(text, "hello rendered demo") {
 		t.Fatalf("submitted message missing:\n%s", text)
 	}
 }
@@ -58,6 +59,7 @@ func TestDrawSubmittedLocalMessage(t *testing.T) {
 func TestDrawNarrowComposeAndSend(t *testing.T) {
 	screen := initializedSimulationScreen(t, 60, 20)
 	model := defaultDemoView()
+	installCommittedTestSender(&model)
 	model.mode = modeCompose
 	insertComposerText(t, &model.composer, "narrow draft")
 	draw(screen, &model)
@@ -65,12 +67,12 @@ func TestDrawNarrowComposeAndSend(t *testing.T) {
 	if text := screenText(screen); !strings.Contains(text, "narrow draft") || !strings.Contains(text, "Enter send") {
 		t.Fatalf("narrow draft missing:\n%s", text)
 	}
-	if !submitLocalMessage(&model) {
+	if !submitOutgoingMessage(&model) {
 		t.Fatal("narrow send rejected")
 	}
 	draw(screen, &model)
 	screen.Show()
-	if text := screenText(screen); !strings.Contains(text, "narrow draft") || !strings.Contains(text, "now") {
+	if text := screenText(screen); !strings.Contains(text, "narrow draft") || !strings.Contains(text, "10:00") {
 		t.Fatalf("narrow sent message missing:\n%s", text)
 	}
 }

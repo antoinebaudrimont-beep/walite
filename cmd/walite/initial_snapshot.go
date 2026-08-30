@@ -29,6 +29,10 @@ func (application *offlineApplicationService) LiveEvents() <-chan model.LiveEven
 	return application.core.LiveEvents()
 }
 
+func (application *offlineApplicationService) SendText(ctx context.Context, request service.SendTextRequest) error {
+	return application.core.SendText(ctx, request)
+}
+
 func (application *offlineApplicationService) InitialChats(ctx context.Context, limit int) ([]model.Chat, error) {
 	if ctx == nil || ctx.Err() != nil || limit <= 0 {
 		return nil, errors.New("initial chats rejected")

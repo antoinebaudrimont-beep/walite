@@ -28,6 +28,7 @@ type viewModel struct {
 	terminalWidth   int
 	terminalHeight  int
 	preferencesPath string
+	send            func(SendRequest) error
 }
 
 func draw(screen tcell.Screen, model *viewModel) {

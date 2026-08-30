@@ -106,6 +106,57 @@ func TestBoundedQueueReservationOwnership(t *testing.T) {
 	}
 }
 
+func TestBoundedQueueCapacityReservationSurvivesCloseAndOwnsEntry(t *testing.T) {
+	budget := mustBudget(t, 8)
+	queue := mustQueue(t, 1, budget)
+	reserved, err := queue.tryReserveCapacity(8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats := queue.Stats(); stats.Entries != 0 || stats.Reservations != 1 || stats.UsedBytes != 8 {
+		t.Fatalf("reserved stats=%+v", stats)
+	}
+	if err := queue.TryPut(1); !errors.Is(err, errQueueFull) {
+		t.Fatalf("reserved entry did not exclude TryPut: %v", err)
+	}
+	queue.Close()
+	if queueEnded(queue) {
+		t.Fatal("closed queue ended while a reservation was outstanding")
+	}
+	if err := reserved.commit(2); err != nil {
+		t.Fatalf("commit after Close=%v", err)
+	}
+	if stats := queue.Stats(); stats.Entries != 1 || stats.Reservations != 0 || stats.UsedBytes != 2 || !stats.Stopped {
+		t.Fatalf("committed stats=%+v", stats)
+	}
+	owned, ok := queue.TryTake()
+	if !ok || owned.Value() != 2 {
+		t.Fatalf("committed value=%v open=%t", owned.Value(), ok)
+	}
+	if err := owned.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if !queueEnded(queue) || budget.usedBytes() != 0 {
+		t.Fatalf("ended=%t used=%d", queueEnded(queue), budget.usedBytes())
+	}
+}
+
+func TestBoundedQueueCapacityReservationReleaseEndsClosedQueue(t *testing.T) {
+	budget := mustBudget(t, 8)
+	queue := mustQueue(t, 1, budget)
+	reserved, err := queue.tryReserveCapacity(8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue.Close()
+	if err := reserved.release(); err != nil {
+		t.Fatal(err)
+	}
+	if !queueEnded(queue) || budget.usedBytes() != 0 {
+		t.Fatalf("ended=%t stats=%+v", queueEnded(queue), queue.Stats())
+	}
+}
+
 func TestBoundedQueuePutWaitsForEntryAndCancellationReleases(t *testing.T) {
 	budget := mustBudget(t, 10)
 	queue := mustQueue(t, 1, budget)

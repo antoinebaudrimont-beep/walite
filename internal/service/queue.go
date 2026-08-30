@@ -19,6 +19,7 @@ type boundedQueue[T any] struct {
 	head           int
 	tail           int
 	count          int
+	reservations   int
 	stopped        bool
 	entryWaiters   int
 	byteWaiters    int
@@ -34,6 +35,7 @@ type boundedQueue[T any] struct {
 
 type queueStats struct {
 	Entries      int
+	Reservations int
 	UsedBytes    int64
 	EntryWaiters int
 	ByteWaiters  int
@@ -43,6 +45,15 @@ type queueStats struct {
 type lease[T any] struct {
 	value  T
 	permit *permit
+}
+
+// queueReservation owns one fixed queue entry and a byte-budget permit before
+// the eventual value exists. It is internal to the one bounded queue; callers
+// must either commit one value or release it exactly once.
+type queueReservation[T any] struct {
+	queue  *boundedQueue[T]
+	permit *permit
+	active bool
 }
 
 func newBoundedQueue[T any](entries int, budget *byteBudget, weigh weighFunc[T]) (*boundedQueue[T], error) {
@@ -89,6 +100,27 @@ func (queue *boundedQueue[T]) tryReserve(value T) (*permit, error) {
 	return queue.budget.tryAcquire(weight)
 }
 
+func (queue *boundedQueue[T]) tryReserveCapacity(weight int64) (*queueReservation[T], error) {
+	if queue == nil || queue.budget == nil || weight <= 0 {
+		return nil, errInvalidWeight
+	}
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	if queue.stopped {
+		return nil, errQueueStopped
+	}
+	if queue.count+queue.reservations == len(queue.storage) {
+		return nil, errQueueFull
+	}
+	owned, err := queue.budget.tryAcquire(weight)
+	if err != nil {
+		return nil, err
+	}
+	queue.reservations++
+	signal(queue.stateWake)
+	return &queueReservation[T]{queue: queue, permit: owned, active: true}, nil
+}
+
 func (queue *boundedQueue[T]) putReserved(value T, owned *permit) error {
 	if queue == nil || owned == nil || owned.budget != queue.budget || owned.released.Load() {
 		return errInvalidWeight
@@ -102,7 +134,7 @@ func (queue *boundedQueue[T]) putReserved(value T, owned *permit) error {
 	if queue.stopped {
 		return errQueueStopped
 	}
-	if queue.count == len(queue.storage) {
+	if queue.count+queue.reservations == len(queue.storage) {
 		return errQueueFull
 	}
 	wasEmpty := queue.count == 0
@@ -274,7 +306,7 @@ func (queue *boundedQueue[T]) drainAndRelease() int {
 
 func (queue *boundedQueue[T]) Stats() queueStats {
 	queue.mu.Lock()
-	stats := queueStats{Entries: queue.count, EntryWaiters: queue.entryWaiters, ByteWaiters: queue.byteWaiters, Stopped: queue.stopped}
+	stats := queueStats{Entries: queue.count, Reservations: queue.reservations, EntryWaiters: queue.entryWaiters, ByteWaiters: queue.byteWaiters, Stopped: queue.stopped}
 	queue.mu.Unlock()
 	stats.UsedBytes = queue.budget.usedBytes()
 	return stats
@@ -291,6 +323,59 @@ func (owned *lease[T]) Release() error {
 		return errPermitReleased
 	}
 	return owned.permit.Release()
+}
+
+func (reservation *queueReservation[T]) commit(value T) error {
+	if reservation == nil || reservation.queue == nil || reservation.permit == nil || !reservation.active {
+		return errPermitReleased
+	}
+	queue := reservation.queue
+	weight, err := queue.weigh(value)
+	if err != nil || weight <= 0 {
+		return errInvalidWeight
+	}
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	if !reservation.active || reservation.queue != queue || queue.reservations <= 0 || queue.count >= len(queue.storage) {
+		return errQueueInvariant
+	}
+	replacement, err := queue.budget.replace(reservation.permit, weight)
+	if err != nil {
+		return err
+	}
+	wasEmpty := queue.count == 0
+	queue.storage[queue.tail] = envelope[T]{value: value, permit: replacement}
+	queue.tail = (queue.tail + 1) % len(queue.storage)
+	queue.count++
+	queue.reservations--
+	reservation.permit = nil
+	reservation.active = false
+	if wasEmpty {
+		signal(queue.notEmptyWake)
+	}
+	signal(queue.stateWake)
+	return nil
+}
+
+func (reservation *queueReservation[T]) release() error {
+	if reservation == nil || reservation.queue == nil || reservation.permit == nil || !reservation.active {
+		return errPermitReleased
+	}
+	queue := reservation.queue
+	queue.mu.Lock()
+	if !reservation.active || reservation.queue != queue || queue.reservations <= 0 {
+		queue.mu.Unlock()
+		return errQueueInvariant
+	}
+	owned := reservation.permit
+	queue.reservations--
+	reservation.permit = nil
+	reservation.active = false
+	signal(queue.spaceWake)
+	signal(queue.notEmptyWake)
+	signal(queue.stateWake)
+	queue.mu.Unlock()
+	return owned.Release()
 }
 
 func (queue *boundedQueue[T]) registerPutWaiter(entry bool) bool {

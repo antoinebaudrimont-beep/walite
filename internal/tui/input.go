@@ -103,7 +103,7 @@ func handleComposeKey(model *viewModel, event *tcell.EventKey, width, height int
 		model.mode = modeNavigate
 		return true
 	case tcell.KeyEnter:
-		return submitLocalMessage(model)
+		return submitOutgoingMessage(model)
 	case tcell.KeyCtrlE:
 		model.emojiPicker.prepareOpen()
 		return true
@@ -193,25 +193,26 @@ func handleEmojiKey(model *viewModel, event *tcell.EventKey, width, height int) 
 	return false
 }
 
-func submitLocalMessage(model *viewModel) bool {
+func submitOutgoingMessage(model *viewModel) bool {
 	model.composer.normalize()
-	if model.composer.length == 0 {
+	if model.composer.length == 0 || model.send == nil {
 		return false
 	}
-	selectedIndex := model.chats.selectedIndex()
-	message := messageView{time: "now", text: model.composer.text(), fromMe: true, bodyRetained: true}
-	if model.replyTarget.valid {
-		message.replyToID = model.replyTarget.id
-		message.hasReply = true
+	selected, ok := model.chats.selectedChat()
+	if !ok {
+		return false
 	}
-	if !model.chats.appendMessage(selectedIndex, message) {
+	request := SendRequest{ChatID: selected.id, Text: model.composer.text()}
+	if model.replyTarget.valid {
+		request.ReplyToID = string(model.replyTarget.id)
+	}
+	if err := model.send(request); err != nil {
 		return false
 	}
 	model.composer.clear()
 	model.replyTarget = replyTarget{}
 	model.replySelect = replySelectionState{}
 	model.chatView.resetScroll()
-	model.chats.promoteChatActivity(selectedIndex)
 	return true
 }
 

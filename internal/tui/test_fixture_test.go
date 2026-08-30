@@ -2,6 +2,8 @@ package tui
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -13,7 +15,31 @@ func defaultDemoView() viewModel {
 }
 
 func runWithPreferences(ctx context.Context, screen tcell.Screen, preferencesPath string) error {
-	return runWithDependencies(ctx, screen, Input{Options: DefaultOptions(), InitialState: testInitialState()}, preferencesPath)
+	return runWithDependencies(ctx, screen, Input{
+		Options: DefaultOptions(), InitialState: testInitialState(),
+		Send: func(context.Context, SendRequest) error { return nil },
+	}, preferencesPath)
+}
+
+func installCommittedTestSender(model *viewModel) {
+	nextID := 0
+	model.send = func(request SendRequest) error {
+		nextID++
+		chatIndex, ok := model.chats.chatIndexByID(request.ChatID)
+		if !ok {
+			return errors.New("test send chat missing")
+		}
+		chat, _ := model.chats.chatAt(chatIndex)
+		sentAt := time.Date(2200, 1, 2, 10, 0, nextID, 0, time.UTC)
+		if !applyLiveMessage(model, LiveMessage{
+			ChatID: request.ChatID, MessageID: fmt.Sprintf("committed-test-%d", nextID),
+			SentAt: sentAt, FromMe: true, Text: request.Text, BodyRetained: true,
+			UnreadCount: chat.unreadCount, ActivityTime: sentAt,
+		}) {
+			return errors.New("test committed event rejected")
+		}
+		return nil
+	}
 }
 
 func newDemoChatState() *chatState {

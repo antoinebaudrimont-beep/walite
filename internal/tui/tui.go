@@ -49,6 +49,9 @@ func runWithDependencies(
 
 	screen.HideCursor()
 	model := viewModel{chats: chats, options: input.Options}
+	if input.Send != nil {
+		model.send = func(request SendRequest) error { return input.Send(ctx, request) }
+	}
 	if selectedChat, ok := model.chats.selectedChat(); ok {
 		model.chatView.unreadBoundary = unreadBoundaryForChat(selectedChat)
 		selectedChat.unreadCount = 0

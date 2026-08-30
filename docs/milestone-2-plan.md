@@ -36,11 +36,11 @@ WhatsApp transport or authentication work.
 10. **2.4B1 — live existing-chat TUI updates (complete):**
     consume committed live events for chats already present in the initial
     snapshot.
-11. **2.4B2 — dynamic new-chat insertion (current, ready for review):** add
+11. **2.4B2 — dynamic new-chat insertion (complete):** add
     newly discovered chats to a small bounded presentation working set with a
     deterministic selected-chat-preserving capacity policy.
-12. **2.4B3 — outgoing service path (pending):** route local sends through the
-    application service and committed-event path.
+12. **2.4B3 — outgoing service path (current, ready for review):** route plain
+    text sends through the application service and committed-event path.
 13. **2.5 — offline integration validation:** verify startup ordering,
    cancellation, store failures, retention, pagination, race safety, and target
    performance with only offline fakes.
@@ -56,6 +56,8 @@ WhatsApp transport or authentication work.
 - Initial chat/message data is service-backed, and committed events update
   existing chats or admit sufficiently active new chats to the bounded TUI
   working set.
+- Plain outgoing text is admitted through the service and becomes visible only
+  after the existing committed live-event path returns it to the TUI.
 - Changed terminal events still trigger a measured full-screen redraw.
 
 ## Increment 2.2A foundation
@@ -368,9 +370,9 @@ WhatsApp transport or authentication work.
   accepted by the channel; callers must keep consuming through graceful
   shutdown when delivery of every committed event is required.
 - 2.4B1 and 2.4B2 consume this contract for existing and newly active chats in
-  the bounded TUI working set. Outgoing service commands, WhatsApp
-  transport/authentication, SQLite production composition, schema changes, and
-  a generic event bus remain out of scope.
+  the bounded TUI working set. B3 also reuses it for committed outgoing plain
+  text. WhatsApp transport/authentication, SQLite production composition,
+  schema changes, and a generic event bus remain out of scope.
 
 ## Increment 2.4B1 live updates for existing chats
 
@@ -405,8 +407,9 @@ WhatsApp transport or authentication work.
   service live channel closes before canceling the TUI. If the TUI exits first,
   cancellation stops a blocked adapter and invokes the B0 forced-cutoff path;
   there is no replay slice or per-event goroutine.
-- Messages remain bounded to 32 entries per presented chat. Local compose/send
-  remains TUI-only; the outgoing service path remains 2.4B3.
+- Messages remain bounded to 32 entries per presented chat. B3 removes direct
+  TUI insertion for outgoing plain text and routes it back through this same
+  committed-event path.
 
 ## Increment 2.4B2 dynamic new-chat insertion
 
@@ -438,3 +441,49 @@ WhatsApp transport or authentication work.
   insertion, activity and ID ordering, exact Unicode/bodyless/direction data,
   idempotency, capacity and selected-chat-safe eviction, stale admission
   rejection, transient-state preservation, and the existing B1 path.
+
+## Increment 2.4B3 outgoing service path
+
+- `tui.SendRequest` carries a stable chat ID, bounded exact text, and an
+  optional stable reply ID to one application-owned synchronous callback. The
+  TUI imports no service/model/store package, allocates no persisted message
+  ID or timestamp, and never appends or promotes a chat at send time.
+- `cmd/walite` validates and adapts plain requests into the explicit
+  `service.SendTextRequest` contract. Reply transport is deliberately deferred:
+  the current domain message and store schema have no reply relationship, so a
+  reply request is rejected before service admission with draft, cursor, and
+  target preserved rather than creating parallel reply storage.
+- `service.Core.SendText` permits one in-flight transport call and rejects a
+  concurrent call as busy. It is context-cancellable before admission and
+  while the offline transport is running. Before calling transport it reserves
+  one entry and the worst-case event-byte charge directly in the existing
+  bounded realtime queue; a full/stopped decision therefore cannot follow an
+  irreversible successful send. Transport failure releases the reservation,
+  while a valid successful result fills that exact reservation even if the
+  queue closed during the call. No goroutine-per-send, overflow slice, retry
+  queue, or generic command bus was added.
+- The offline `wa.OfflineTextSender` deterministically owns final IDs and
+  injected timestamps, preserves exact Unicode text, and returns `from_me=true`
+  without network activity. The production offline fixture starts this clock
+  after seeded activity so committed sends exercise normal activity ordering.
+- Successful callback return means the concrete transport event was accepted
+  by the bounded realtime queue; it does not claim persistence. The TUI then
+  clears its draft/reply target and waits. The existing coordinator, serialized
+  `WriteRealtime`, store-authoritative unread/activity result, and
+  `Core.LiveEvents` are the only route by which the outgoing message becomes
+  visible. Persistence failure publishes no live event.
+- Cancellation observed before the transport call, or reported by transport
+  without a successful result, releases the reservation and preserves the
+  draft. Once transport returns a valid success, later context cancellation
+  does not revoke its reserved admission or turn it into an ordinary Busy
+  response; the event continues through the existing realtime pipeline.
+- Immediate validation, busy, cancellation, or transport rejection preserves
+  draft, cursor, reply target, compose mode, viewport, and chat data. A store
+  failure after successful queue admission is the documented ambiguity of this
+  narrow acceptance boundary: the draft has already cleared, no retry is
+  attempted, and the service terminates in a controlled degraded/failure state.
+  There is no pending bubble, acknowledgement UI, or resend persistence.
+- B3 remains offline. It adds no networking, authentication/QR, real WhatsApp
+  transport, media, receipts, typing, reactions, schema migration, or SQLite
+  production composition. The next work is 2.5/2.6 offline validation and
+  transport-readiness review before real WhatsApp transport/authentication.

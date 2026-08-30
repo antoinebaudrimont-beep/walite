@@ -29,7 +29,7 @@ func TestDrawReplySelectionHighlightsLogicalMessage(t *testing.T) {
 	}
 }
 
-func TestDrawComposeReplyPreviewAndSentReference(t *testing.T) {
+func TestDrawComposeReplyPreviewSurvivesRejectedSend(t *testing.T) {
 	screen := initializedSimulationScreen(t, 100, 30)
 	model := defaultDemoView()
 	if !focusNewestVisibleMessage(&model, 100, 30) || !chooseReplyTarget(&model) {
@@ -44,14 +44,15 @@ func TestDrawComposeReplyPreviewAndSentReference(t *testing.T) {
 	if !strings.Contains(text, "Replying to:") || !strings.Contains(text, "Demo synthetic message 18") || !strings.Contains(text, "> Thanks") {
 		t.Fatalf("reply composer preview incomplete:\n%s", text)
 	}
-	if !submitLocalMessage(&model) {
-		t.Fatal("reply send failed")
+	model.send = func(SendRequest) error { return errTestSendRejected }
+	if submitOutgoingMessage(&model) {
+		t.Fatal("unsupported reply accepted")
 	}
 	draw(screen, &model)
 	screen.Show()
 	text = screenText(screen)
-	if !strings.Contains(text, "↪ 10:17 Demo synthetic message 18") || !strings.Contains(text, "Thanks") {
-		t.Fatalf("sent reply reference missing:\n%s", text)
+	if !strings.Contains(text, "Replying to:") || !strings.Contains(text, "Demo synthetic message 18") || !strings.Contains(text, "Thanks") {
+		t.Fatalf("rejected reply state missing:\n%s", text)
 	}
 }
 
@@ -63,11 +64,10 @@ func TestDrawReplyToEvictedOriginalUsesFallback(t *testing.T) {
 	for index := 0; index < maxMessages; index++ {
 		chat.messages[index] = messageView{id: testMessageID(100 + index), time: "old", text: "old-" + twoDigits(index)}
 	}
-	model.chats.nextLocalID = 1000
 	model.mode = modeCompose
-	model.replyTarget = replyTarget{valid: true, id: testMessageID(100)}
-	if !model.composer.insertText("reply after eviction") || !submitLocalMessage(&model) {
-		t.Fatal("reply send failed")
+	model.replyTarget = replyTarget{valid: true, id: testMessageID(999)}
+	if !model.composer.insertText("reply after eviction") {
+		t.Fatal("draft setup failed")
 	}
 	draw(screen, &model)
 	screen.Show()

@@ -258,7 +258,7 @@ func (writer *liveFirstWriter) finishShutdown(ctx context.Context, pending *leas
 
 func queueEnded[T any](queue *boundedQueue[T]) bool {
 	stats := queue.Stats()
-	return stats.Stopped && stats.Entries == 0
+	return stats.Stopped && stats.Entries == 0 && stats.Reservations == 0
 }
 
 func (writer *liveFirstWriter) writeLive(ctx context.Context, first lease[model.Message]) error {

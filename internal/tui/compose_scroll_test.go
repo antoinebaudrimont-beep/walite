@@ -141,6 +141,7 @@ func TestComposeHistoryIndicatorClearsAtNewest(t *testing.T) {
 
 func TestComposeTypingAfterScrollAndSendReturnsToNewest(t *testing.T) {
 	model := defaultDemoView()
+	installCommittedTestSender(&model)
 	model.mode = modeCompose
 	selected := model.chats.selectedIndex()
 	width, height := 100, 12

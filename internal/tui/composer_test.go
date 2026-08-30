@@ -190,6 +190,7 @@ func TestComposeRunesDoNotNavigate(t *testing.T) {
 
 func TestSubmitLocalMessageAndEmptySend(t *testing.T) {
 	model := defaultDemoView()
+	model.send = func(SendRequest) error { return nil }
 	model.mode = modeCompose
 	chat := &model.chats.chats[model.chats.selected]
 	before := chat.messageCount
@@ -201,14 +202,14 @@ func TestSubmitLocalMessageAndEmptySend(t *testing.T) {
 	if changed, exit := handleKey(&model, tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone), 100, 30); !changed || exit {
 		t.Fatalf("send changed=%t exit=%t", changed, exit)
 	}
-	last := chat.messages[chat.messageCount-1]
-	if chat.messageCount != before+1 || last.text != "hello demo" || last.time != "now" || model.composer.length != 0 || model.chatView.scrollOffset != 0 || model.mode != modeCompose {
-		t.Fatalf("count=%d last=%+v draft=%q offset=%d mode=%d", chat.messageCount, last, model.composer.text(), model.chatView.scrollOffset, model.mode)
+	if chat.messageCount != before || model.composer.length != 0 || model.chatView.scrollOffset != 0 || model.mode != modeCompose {
+		t.Fatalf("count=%d draft=%q offset=%d mode=%d", chat.messageCount, model.composer.text(), model.chatView.scrollOffset, model.mode)
 	}
 }
 
-func TestSubmitFullChatDropsOldest(t *testing.T) {
+func TestAcceptedSendDoesNotMutateFullChat(t *testing.T) {
 	model := defaultDemoView()
+	model.send = func(SendRequest) error { return nil }
 	model.mode = modeCompose
 	chat := &model.chats.chats[0]
 	chat.messageCount = maxMessages
@@ -216,20 +217,21 @@ func TestSubmitFullChatDropsOldest(t *testing.T) {
 		chat.messages[index] = messageView{time: "old", text: "old-" + twoDigits(index)}
 	}
 	insertComposerText(t, &model.composer, "new local")
-	if !submitLocalMessage(&model) {
+	if !submitOutgoingMessage(&model) {
 		t.Fatal("full-chat send rejected")
 	}
-	if chat.messageCount != maxMessages || chat.messages[0].text != "old-01" || chat.messages[maxMessages-1].text != "new local" {
+	if chat.messageCount != maxMessages || chat.messages[0].text != "old-00" || chat.messages[maxMessages-1].text != "old-31" {
 		t.Fatalf("count=%d first=%q last=%q", chat.messageCount, chat.messages[0].text, chat.messages[maxMessages-1].text)
 	}
 }
 
 func TestSyntheticSendIsIsolatedToSelectedChat(t *testing.T) {
 	model := defaultDemoView()
+	model.send = func(SendRequest) error { return nil }
 	model.mode = modeCompose
 	otherCount := model.chats.chats[1].messageCount
 	insertComposerText(t, &model.composer, "chat zero only")
-	if !submitLocalMessage(&model) {
+	if !submitOutgoingMessage(&model) {
 		t.Fatal("send rejected")
 	}
 	if model.chats.chats[1].messageCount != otherCount || strings.Contains(model.chats.chats[1].messages[otherCount-1].text, "chat zero only") {

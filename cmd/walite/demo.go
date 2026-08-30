@@ -157,7 +157,20 @@ func newDemoScenario(values config.Values) (demoScenario, error) {
 		LiveWriteBusy:          values.Queues.LiveWriteBusy,
 		ShutdownGrace:          demoShutdownGrace,
 	}
-	core, err := service.New(options, source, gated, policy, service.NewSystemClock())
+	clock := service.NewSystemClock()
+	// The offline transport owns deterministic final message time independently
+	// of service scheduling. Offline state is rebuilt for each process, so the
+	// sequence starts after all seeded demo activity on every launch.
+	nextOutgoingAt := demoStart.Add(2 * time.Hour)
+	sender, err := wa.NewOfflineTextSender(func() time.Time {
+		sentAt := nextOutgoingAt
+		nextOutgoingAt = nextOutgoingAt.Add(time.Second)
+		return sentAt
+	})
+	if err != nil {
+		return demoScenario{}, err
+	}
+	core, err := service.NewWithTextSender(options, source, gated, policy, clock, sender)
 	if err != nil {
 		return demoScenario{}, err
 	}

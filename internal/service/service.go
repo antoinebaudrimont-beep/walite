@@ -49,6 +49,7 @@ const (
 	CoreOperationStartup
 	CoreOperationShutdown
 	CoreOperationPublish
+	CoreOperationSend
 )
 
 type CoreError struct {
@@ -111,6 +112,8 @@ type Core struct {
 	updateMailbox             *fixedMailbox[viewSlot, model.Update]
 	updates                   chan model.Update
 	liveEvents                chan model.LiveEvent
+	sender                    TextSender
+	sendSlot                  chan struct{}
 	localDrops                *saturatingCounter
 	localDropWake             chan struct{}
 	publisherPendingHook      func()
@@ -118,6 +121,7 @@ type Core struct {
 	publisherCommittedHook    func()
 	startupAbortedHook        func()
 	run                       atomic.Bool
+	acceptingSends            atomic.Bool
 }
 
 type startupState uint32
@@ -138,6 +142,19 @@ func updateSlot(kind model.UpdateKind) (viewSlot, bool) {
 }
 
 func New(options Options, source EventSource, store MessageStore, policy RetentionPolicy, clock Clock) (*Core, error) {
+	return newCore(options, source, store, policy, clock, nil)
+}
+
+// NewWithTextSender constructs Core with the narrow offline outgoing-text
+// capability. New remains available for receive-only compositions.
+func NewWithTextSender(options Options, source EventSource, store MessageStore, policy RetentionPolicy, clock Clock, sender TextSender) (*Core, error) {
+	if sender == nil {
+		return nil, &CoreError{Kind: CoreMalformed, Operation: CoreOperationNew}
+	}
+	return newCore(options, source, store, policy, clock, sender)
+}
+
+func newCore(options Options, source EventSource, store MessageStore, policy RetentionPolicy, clock Clock, sender TextSender) (*Core, error) {
 	if err := validateOptions(options, source, store, policy, clock); err != nil {
 		return nil, err
 	}
@@ -158,7 +175,7 @@ func New(options Options, source EventSource, store MessageStore, policy Retenti
 	}
 	mailbox, _ := newFixedMailbox(keys, updateBudget, weighUpdate)
 	drops := &saturatingCounter{}
-	return &Core{options: options, source: source, store: store, policy: policy, clock: clock, realtimeQ: realtimeQ, historyQ: historyQ, liveWriteQ: liveQ, historyWriteQ: historyWriteQ, resultQ: resultQ, updateMailbox: mailbox, updates: make(chan model.Update, 1), liveEvents: make(chan model.LiveEvent, LiveEventCapacity), localDrops: drops, localDropWake: make(chan struct{}, 1)}, nil
+	return &Core{options: options, source: source, store: store, policy: policy, clock: clock, realtimeQ: realtimeQ, historyQ: historyQ, liveWriteQ: liveQ, historyWriteQ: historyWriteQ, resultQ: resultQ, updateMailbox: mailbox, updates: make(chan model.Update, 1), liveEvents: make(chan model.LiveEvent, LiveEventCapacity), sender: sender, sendSlot: make(chan struct{}, 1), localDrops: drops, localDropWake: make(chan struct{}, 1)}, nil
 }
 
 func validateOptions(o Options, source EventSource, store MessageStore, policy RetentionPolicy, clock Clock) error {
@@ -194,6 +211,7 @@ func (core *Core) Run(parent context.Context) error {
 	if !core.run.CompareAndSwap(false, true) {
 		return &CoreError{Kind: CoreClosed, Operation: CoreOperationRun}
 	}
+	defer core.acceptingSends.Store(false)
 	base := context.WithoutCancel(parent)
 	sourceCtx, sourceCancel := context.WithCancelCause(base)
 	ingressCtx, ingressCancel := context.WithCancelCause(base)
@@ -307,6 +325,7 @@ func (core *Core) Run(parent context.Context) error {
 	fatalShutdown := false
 	select {
 	case <-done:
+		core.acceptingSends.Store(false)
 		if err := recorder.load(); err != nil {
 			cause = err
 			fatalShutdown = true
@@ -316,6 +335,7 @@ func (core *Core) Run(parent context.Context) error {
 			core.publishSimple(model.UpdateStopping)
 		}
 	case <-parent.Done():
+		core.acceptingSends.Store(false)
 		if err := recorder.load(); err != nil {
 			cause = err
 			fatalShutdown = true
@@ -365,6 +385,7 @@ func (core *Core) Run(parent context.Context) error {
 			grace.Stop()
 		}
 	case err := <-recorder.channel:
+		core.acceptingSends.Store(false)
 		cause = err
 		fatalShutdown = true
 		core.publishSimple(model.UpdateFatal)
@@ -501,6 +522,10 @@ func (core *Core) runPublisher(ctx context.Context, readyPublished chan<- struct
 					if core.publisherCommittedHook != nil {
 						core.publisherCommittedHook()
 					}
+					// Send admission must be observable before UpdateReady. A request
+					// admitted in this narrow window remains bounded in realtimeQ until
+					// the component start gate opens after Ready publication.
+					core.acceptingSends.Store(true)
 				} else {
 					_ = pending.Release()
 					hasPending = false

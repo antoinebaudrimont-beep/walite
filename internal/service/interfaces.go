@@ -27,6 +27,15 @@ type EventSource interface {
 	ReleaseHistory(model.HistoryJob)
 }
 
+// TextSender owns final outgoing message identity and time. Implementations
+// return one normalized event but do not persist or publish it. Once a remote
+// transport has irreversibly accepted a message, the implementation must
+// return that successful event even if the context was concurrently cancelled;
+// an error means no successful transport result exists for Core to admit.
+type TextSender interface {
+	SendText(context.Context, model.ChatID, string) (model.Event, error)
+}
+
 // MessageStore is the persistence contract consumed by coordination.
 type MessageStore interface {
 	EnsureChat(context.Context, model.Chat) error

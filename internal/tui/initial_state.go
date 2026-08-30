@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"time"
 	"unicode/utf8"
@@ -53,11 +54,20 @@ type LiveMessage struct {
 	ActivityTime time.Time
 }
 
+// SendRequest is an immutable-by-convention outgoing presentation request.
+// Stable IDs, never presentation indexes, cross the application boundary.
+type SendRequest struct {
+	ChatID    string
+	Text      string
+	ReplyToID string
+}
+
 // Input supplies configuration and application-owned initial/live data to Run.
 type Input struct {
 	Options      Options
 	InitialState InitialState
 	LiveEvents   <-chan LiveMessage
+	Send         func(context.Context, SendRequest) error
 }
 
 func chatStateFromInitial(initial InitialState) (*chatState, error) {

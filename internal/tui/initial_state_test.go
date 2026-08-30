@@ -64,10 +64,11 @@ func TestInitialStateSupportsEmptyOneAndMultipleChats(t *testing.T) {
 		t.Fatal(err)
 	}
 	model := viewModel{chats: one, options: DefaultOptions()}
+	installCommittedTestSender(&model)
 	if changed, exit := handleKey(&model, tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone), 100, 30); !changed || exit || model.mode != modeCompose {
 		t.Fatalf("one-chat compose changed=%t exit=%t mode=%d", changed, exit, model.mode)
 	}
-	if !model.composer.insertText("one chat local send") || !submitLocalMessage(&model) || one.chats[0].messages[one.chats[0].messageCount-1].text != "one chat local send" {
+	if !model.composer.insertText("one chat local send") || !submitOutgoingMessage(&model) || one.chats[0].messages[one.chats[0].messageCount-1].text != "one chat local send" {
 		t.Fatal("one-chat compose/send failed")
 	}
 
@@ -122,7 +123,7 @@ func initialStateWithChatCount(count int) InitialState {
 	return initial
 }
 
-func TestInitialStableMessageIDRemainsReplyable(t *testing.T) {
+func TestInitialStableMessageIDCrossesDeferredReplyBoundary(t *testing.T) {
 	state, err := chatStateFromInitial(testInitialState())
 	if err != nil {
 		t.Fatal(err)
@@ -132,12 +133,19 @@ func TestInitialStableMessageIDRemainsReplyable(t *testing.T) {
 	if !focusNewestVisibleMessage(&model, 100, 30) || !chooseReplyTarget(&model) {
 		t.Fatal("could not select initial message")
 	}
-	if model.replyTarget.id != targetID || !model.composer.insertText("local reply") || !submitLocalMessage(&model) {
+	var request SendRequest
+	model.send = func(got SendRequest) error {
+		request = got
+		return errTestSendRejected
+	}
+	if model.replyTarget.id != targetID || !model.composer.insertText("local reply") || submitOutgoingMessage(&model) {
 		t.Fatalf("reply target=%q want=%q", model.replyTarget.id, targetID)
 	}
-	latest := state.chats[0].messages[state.chats[0].messageCount-1]
-	if !latest.hasReply || latest.replyToID != targetID || latest.id == "" || latest.id == targetID {
-		t.Fatalf("local reply identity=%+v", latest)
+	if request.ReplyToID != string(targetID) || request.ChatID != state.chats[0].id || request.Text != "local reply" {
+		t.Fatalf("request=%+v", request)
+	}
+	if model.replyTarget.id != targetID || model.composer.text() != "local reply" {
+		t.Fatalf("rejected reply state target=%+v draft=%q", model.replyTarget, model.composer.text())
 	}
 	if original, ok := state.findMessageByID(0, targetID); !ok || original.id != targetID {
 		t.Fatalf("initial reply target lost: %+v found=%t", original, ok)
