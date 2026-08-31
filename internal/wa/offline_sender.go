@@ -27,7 +27,10 @@ func NewOfflineTextSender(now func() time.Time) (*OfflineTextSender, error) {
 }
 
 // SendText returns one outgoing normalized event with transport-owned ID/time.
-func (sender *OfflineTextSender) SendText(ctx context.Context, chatID model.ChatID, text string) (model.Event, error) {
+func (sender *OfflineTextSender) SendText(ctx context.Context, chatID model.ChatID, text string, quotes ...model.TextQuote) (model.Event, error) {
+	if len(quotes) != 0 {
+		return model.Event{}, errors.New("offline quoted replies unavailable")
+	}
 	if sender == nil || ctx == nil {
 		return model.Event{}, errors.New("offline text send rejected")
 	}

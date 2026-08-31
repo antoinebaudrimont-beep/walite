@@ -34,32 +34,40 @@ type InitialChat struct {
 
 // InitialMessage is ordered oldest-first within InitialChat.Messages.
 type InitialMessage struct {
-	ID           string
-	SentAt       time.Time
-	FromMe       bool
-	Text         string
-	BodyRetained bool
+	ID            string
+	SentAt        time.Time
+	FromMe        bool
+	Text          string
+	BodyRetained  bool
+	ReplyToID     string
+	ReplyToText   string
+	ReplyToFromMe bool
 }
 
 // LiveMessage is an immutable-by-convention committed message presentation
 // event. It deliberately contains no service or storage types.
 type LiveMessage struct {
-	ChatID       string
-	MessageID    string
-	SentAt       time.Time
-	FromMe       bool
-	Text         string
-	BodyRetained bool
-	UnreadCount  uint32
-	ActivityTime time.Time
+	ChatID        string
+	MessageID     string
+	SentAt        time.Time
+	FromMe        bool
+	Text          string
+	BodyRetained  bool
+	ReplyToID     string
+	ReplyToText   string
+	ReplyToFromMe bool
+	UnreadCount   uint32
+	ActivityTime  time.Time
 }
 
 // SendRequest is an immutable-by-convention outgoing presentation request.
 // Stable IDs, never presentation indexes, cross the application boundary.
 type SendRequest struct {
-	ChatID    string
-	Text      string
-	ReplyToID string
+	ChatID        string
+	Text          string
+	ReplyToID     string
+	ReplyToText   string
+	ReplyToFromMe bool
 }
 
 // Input supplies configuration and application-owned initial/live data to Run.
@@ -68,6 +76,9 @@ type Input struct {
 	InitialState InitialState
 	LiveEvents   <-chan LiveMessage
 	Send         func(context.Context, SendRequest) error
+	// When non-nil, Send performs bounded admission only; completion arrives
+	// here and the draft remains protected until that result is processed.
+	SendResults <-chan SendResult
 }
 
 func chatStateFromInitial(initial InitialState) (*chatState, error) {
@@ -93,6 +104,9 @@ func chatStateFromInitial(initial InitialState) (*chatState, error) {
 		chat.messageCount = len(sourceChat.Messages)
 		seenMessages := make(map[string]struct{}, len(sourceChat.Messages))
 		for messageIndex, sourceMessage := range sourceChat.Messages {
+			if !validReplyMetadata(sourceMessage.ReplyToID, sourceMessage.ReplyToText, sourceMessage.ReplyToFromMe) {
+				return nil, errors.New("tui initial state rejected")
+			}
 			if sourceMessage.ID == "" || !utf8.ValidString(sourceMessage.ID) || !utf8.ValidString(sourceMessage.Text) {
 				return nil, errors.New("tui initial state rejected")
 			}
@@ -111,6 +125,10 @@ func chatStateFromInitial(initial InitialState) (*chatState, error) {
 				text:         text,
 				fromMe:       sourceMessage.FromMe,
 				bodyRetained: sourceMessage.BodyRetained,
+				replyText:    sourceMessage.ReplyToText,
+				replyFromMe:  sourceMessage.ReplyToFromMe,
+				replyToID:    messageID(sourceMessage.ReplyToID),
+				hasReply:     sourceMessage.ReplyToID != "",
 			}
 		}
 	}

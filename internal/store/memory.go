@@ -171,6 +171,11 @@ func (memory *Memory) writeBatch(ctx context.Context, batch model.WriteBatch, em
 			if prior.BodyRetained() && !message.BodyRetained() {
 				message = prior
 			}
+			// A duplicate echo may omit quote metadata. It must not downgrade a
+			// committed reply or replace its authoritative same-chat reference.
+			if prior.Quote() != (model.TextQuote{}) {
+				message = message.WithQuote(prior.Quote())
+			}
 		} else {
 			inserted[i] = true
 			if newIDs[chatKey] == nil {

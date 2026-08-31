@@ -11,6 +11,11 @@ import (
 
 const RealtimeSourceCapacity = 64
 
+type realtimeEntry struct {
+	event     model.Event
+	alternate model.ChatID
+}
+
 var errRealtimeHistoryUnavailable = errors.New("WhatsApp realtime source has no history")
 
 // RealtimeSource is the single bounded bridge from the long-lived WhatsApp
@@ -19,7 +24,7 @@ var errRealtimeHistoryUnavailable = errors.New("WhatsApp realtime source has no 
 type RealtimeSource struct {
 	mu sync.Mutex
 
-	events  [RealtimeSourceCapacity]model.Event
+	events  [RealtimeSourceCapacity]realtimeEntry
 	head    int
 	tail    int
 	count   int
@@ -36,6 +41,8 @@ type RealtimeSource struct {
 
 	started   atomic.Bool
 	closeOnce sync.Once
+	aliases   *chatAliases
+	lookup    alternateJIDLookup
 }
 
 func newRealtimeSource() *RealtimeSource {
@@ -44,6 +51,7 @@ func newRealtimeSource() *RealtimeSource {
 	close(history)
 	close(status)
 	return &RealtimeSource{
+		aliases:  &chatAliases{},
 		notEmpty: make(chan struct{}, 1),
 		space:    make(chan struct{}, 1),
 		state:    make(chan struct{}, 1),
@@ -55,6 +63,10 @@ func newRealtimeSource() *RealtimeSource {
 }
 
 func (source *RealtimeSource) admit(event model.Event) bool {
+	return source.admitWithAlternate(event, model.ChatID{})
+}
+
+func (source *RealtimeSource) admitWithAlternate(event model.Event, alternate model.ChatID) bool {
 	if source == nil {
 		return false
 	}
@@ -77,7 +89,7 @@ func (source *RealtimeSource) admit(event model.Event) bool {
 			if waiting {
 				source.waiters--
 			}
-			source.events[source.tail] = normalized
+			source.events[source.tail] = realtimeEntry{event: normalized, alternate: alternate}
 			source.tail = (source.tail + 1) % len(source.events)
 			source.count++
 			signalRealtimeSource(source.notEmpty)
@@ -107,12 +119,16 @@ func (source *RealtimeSource) Run(ctx context.Context) error {
 	defer close(source.realtime)
 	defer source.closeAdmission()
 	for {
-		event, ok, err := source.take(ctx)
+		entry, ok, err := source.take(ctx)
 		if err != nil {
 			return err
 		}
 		if !ok {
 			return nil
+		}
+		event, err := source.resolveEntry(ctx, entry)
+		if err != nil {
+			return err
 		}
 		select {
 		case source.realtime <- event:
@@ -124,12 +140,12 @@ func (source *RealtimeSource) Run(ctx context.Context) error {
 	}
 }
 
-func (source *RealtimeSource) take(ctx context.Context) (model.Event, bool, error) {
+func (source *RealtimeSource) take(ctx context.Context) (realtimeEntry, bool, error) {
 	for {
 		source.mu.Lock()
 		if source.count > 0 {
 			event := source.events[source.head]
-			source.events[source.head] = model.Event{}
+			source.events[source.head] = realtimeEntry{}
 			source.head = (source.head + 1) % len(source.events)
 			source.count--
 			signalRealtimeSource(source.space)
@@ -140,15 +156,35 @@ func (source *RealtimeSource) take(ctx context.Context) (model.Event, bool, erro
 		closed := source.closed
 		source.mu.Unlock()
 		if closed {
-			return model.Event{}, false, nil
+			return realtimeEntry{}, false, nil
 		}
 		select {
 		case <-ctx.Done():
-			return model.Event{}, false, ctx.Err()
+			return realtimeEntry{}, false, ctx.Err()
 		case <-source.notEmpty:
 		case <-source.stopped:
 		}
 	}
+}
+
+func (source *RealtimeSource) resolveEntry(ctx context.Context, entry realtimeEntry) (model.Event, error) {
+	message := entry.event.Message()
+	alternate, err := lookupAlternate(ctx, message.ChatID(), entry.alternate, source.lookup)
+	if err != nil {
+		return model.Event{}, err
+	}
+	id, err := source.aliases.resolve(message.ChatID(), alternate)
+	if err != nil {
+		return model.Event{}, err
+	}
+	if id == message.ChatID() {
+		return entry.event, nil
+	}
+	message, err = message.WithChatID(id)
+	if err != nil {
+		return model.Event{}, err
+	}
+	return model.NewEvent(message, entry.event.ReceivedAt())
 }
 
 func (source *RealtimeSource) closeAdmission() {

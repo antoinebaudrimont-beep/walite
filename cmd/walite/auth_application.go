@@ -104,18 +104,30 @@ func runAuthenticatedApplication(
 		return errors.New("construct service: no service")
 	}
 
+	viewExitedNormally := false
 	applicationErr := runStartedApplication(
 		runCtx,
 		screen,
 		optionsFromConfig(settings),
 		serviceCore,
-		dependencies.runTUI,
+		func(ctx context.Context, screen tcell.Screen, input tui.Input) error {
+			// Cancel the connection owner as soon as the view exits, before
+			// joining its send worker. Disconnect releases upstream response
+			// waiters even if a send is waiting behind an internal peer send.
+			defer cancel()
+			err := dependencies.runTUI(ctx, screen, input)
+			viewExitedNormally = err == nil
+			return err
+		},
 	)
 	cancel()
 	connectionErr := <-connectionDone
 	<-presentationDone
 	if connectionErr != nil && !errors.Is(connectionErr, context.Canceled) {
 		return fmt.Errorf("WhatsApp connection stopped: %w", connectionErr)
+	}
+	if viewExitedNormally && parent.Err() == nil && applicationErr == context.Canceled {
+		return nil // cancellation above is the normal user-quit shutdown signal
 	}
 	return applicationErr
 }

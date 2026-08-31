@@ -16,7 +16,7 @@ const (
 
 	writeBatchRecordBytes = 32
 	maxWriteBatchBytes    = MaxWriteBatchMessages *
-		(2*MaxIdentifierBytes + MaxRetainedTextBytes + writeBatchRecordBytes)
+		(3*MaxIdentifierBytes + MaxRetainedTextBytes + MaxQuoteTextBytes + writeBatchRecordBytes)
 )
 
 // ContactInput is the unvalidated input accepted by NewContact.
@@ -229,16 +229,18 @@ func validateIngestSeq(sequence uint64) *ValidationError {
 	return nil
 }
 
-// WithoutBody returns a copy of the message with its text removed. Identity,
-// timestamp, direction, and the source truncation marker are preserved.
+// WithoutBody returns a copy with its text and quoted excerpt/reference removed.
+// Identity, timestamp, direction, and the source truncation marker are preserved.
 func (message Message) WithoutBody() Message {
 	withoutBody := message
 	withoutBody.text = ""
+	withoutBody.quote = TextQuote{}
 	withoutBody.bodyRetained = false
 	byteSize, ok := messageByteSize(
 		withoutBody.chatID.value,
 		withoutBody.messageID.value,
 		withoutBody.text,
+		withoutBody.quote,
 	)
 	if !ok {
 		// Valid Messages cannot reach this branch because both identifiers are
@@ -457,12 +459,17 @@ func cloneNormalizedMessage(message Message) (Message, int, error) {
 	if err != nil {
 		return Message{}, 0, err
 	}
+	quote, err := cloneTextQuote(message.quote)
+	if err != nil {
+		return Message{}, 0, err
+	}
 	return Message{
 		chatID:        chatID,
 		messageID:     messageID,
 		sentAt:        message.sentAt,
 		fromMe:        message.fromMe,
 		text:          strings.Clone(message.text),
+		quote:         quote,
 		bodyTruncated: message.bodyTruncated,
 		bodyRetained:  message.bodyRetained,
 		byteSize:      byteSize,

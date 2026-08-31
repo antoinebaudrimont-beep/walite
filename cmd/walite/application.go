@@ -16,7 +16,6 @@ import (
 )
 
 var errServiceStopped = errors.New("service stopped before application shutdown")
-var errReplySendUnsupported = errors.New("reply send is not supported by the current message model")
 
 const livePresentationCapacity = service.LiveEventCapacity
 
@@ -60,6 +59,7 @@ func run(ctx context.Context, screen tcell.Screen) error {
 		},
 		runLinked: func(ctx context.Context, screen tcell.Screen) error {
 			var realtimeSource *wa.RealtimeSource
+			var textSender wa.TextSender
 			return runAuthenticatedApplication(ctx, screen, authenticatedApplicationDependencies{
 				configuration: configurationStore,
 				newConnection: func(ctx context.Context) (applicationConnection, error) {
@@ -72,6 +72,7 @@ func run(ctx context.Context, screen tcell.Screen) error {
 						return nil, errPairingSessionUnlinked
 					}
 					realtimeSource = connection.RealtimeSource()
+					textSender = connection.TextSender()
 					if realtimeSource == nil {
 						_ = connection.Close()
 						return nil, errors.New("WhatsApp realtime source unavailable")
@@ -79,7 +80,7 @@ func run(ctx context.Context, screen tcell.Screen) error {
 					return connection, nil
 				},
 				newService: func() (applicationService, error) {
-					return newConnectedApplicationService(realtimeSource)
+					return newConnectedApplicationService(realtimeSource, textSender)
 				},
 				runConnection: tui.RunConnectionInitialized,
 				runTUI:        tui.RunInitialized,
@@ -167,18 +168,19 @@ func runStartedApplication(
 		forwardLiveMessages(runCtx, serviceLiveEvents, liveMessages)
 	}()
 
+	sender := newSendWorker(runCtx, serviceCore)
+	defer sender.stop()
 	tuiDone := make(chan error, 1)
 	go func() {
 		tuiDone <- runTUI(runCtx, screen, tui.Input{
 			Options: options, InitialState: initialState, LiveEvents: liveMessages,
-			Send: func(ctx context.Context, request tui.SendRequest) error {
-				return sendTextFromTUI(ctx, serviceCore, request)
-			},
+			Send: sender.admit, SendResults: sender.results,
 		})
 	}()
 
 	select {
 	case tuiErr := <-tuiDone:
+		sender.stop()
 		cancel()
 		serviceErr := <-serviceDone
 		<-liveDone
@@ -200,18 +202,26 @@ func runStartedApplication(
 }
 
 func sendTextFromTUI(ctx context.Context, application applicationService, request tui.SendRequest) error {
-	if request.ReplyToID != "" {
-		return errReplySendUnsupported
-	}
 	sender, ok := application.(applicationTextSender)
 	if !ok {
 		return errors.New("application send unavailable")
 	}
-	serviceRequest, err := service.NewSendTextRequest(request.ChatID, request.Text)
+	serviceRequest, err := sendRequestFromTUI(request)
 	if err != nil {
 		return err
 	}
 	return sender.SendText(ctx, serviceRequest)
+}
+
+func sendRequestFromTUI(request tui.SendRequest) (service.SendTextRequest, error) {
+	if request.ReplyToID == "" {
+		return service.NewSendTextRequest(request.ChatID, request.Text)
+	}
+	quote, err := model.NewTextQuote(request.ReplyToID, request.ReplyToText, request.ReplyToFromMe)
+	if err != nil {
+		return service.SendTextRequest{}, err
+	}
+	return service.NewSendTextRequest(request.ChatID, request.Text, quote)
 }
 
 func forwardLiveMessages(ctx context.Context, source <-chan model.LiveEvent, destination chan<- tui.LiveMessage) {
@@ -257,6 +267,7 @@ func adaptLiveMessage(event model.LiveEvent) (tui.LiveMessage, bool) {
 	return tui.LiveMessage{
 		ChatID: chatID, MessageID: messageID, SentAt: message.SentAt(), FromMe: message.FromMe(),
 		Text: text, BodyRetained: message.BodyRetained(), UnreadCount: event.UnreadCount(), ActivityTime: event.ActivityTime(),
+		ReplyToID: message.Quote().MessageID().String(), ReplyToText: message.Quote().Text(), ReplyToFromMe: message.Quote().FromMe(),
 	}, true
 }
 

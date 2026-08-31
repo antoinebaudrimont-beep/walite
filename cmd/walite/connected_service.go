@@ -10,19 +10,21 @@ import (
 	"github.com/antoinebaudrimont-beep/walite/internal/service"
 	"github.com/antoinebaudrimont-beep/walite/internal/store"
 	"github.com/antoinebaudrimont-beep/walite/internal/syncpolicy"
+	"github.com/antoinebaudrimont-beep/walite/internal/wa"
 )
 
 const connectedShutdownGrace = 2 * time.Second
 
-// connectedApplicationService is receive-only in Milestone 4A. In particular,
-// it deliberately does not implement applicationTextSender.
+// connectedApplicationService uses capabilities of the one connection-owned
+// client. Chat data still passes through Memory, the writer and LiveEvents.
 type connectedApplicationService struct {
-	core  *service.Core
-	store *store.Memory
+	core   *service.Core
+	store  *store.Memory
+	sender wa.TextSender
 }
 
-func newConnectedApplicationService(source service.EventSource) (applicationService, error) {
-	if source == nil {
+func newConnectedApplicationService(source service.EventSource, sender wa.TextSender) (applicationService, error) {
+	if source == nil || sender == nil {
 		return nil, errors.New("connected event source rejected")
 	}
 	values := config.DefaultValues()
@@ -37,7 +39,7 @@ func newConnectedApplicationService(source service.EventSource) (applicationServ
 	if err != nil {
 		return nil, err
 	}
-	core, err := service.New(service.Options{
+	core, err := service.NewWithTextSender(service.Options{
 		Realtime:               service.QueueOptions{Entries: values.Queues.Realtime.Entries, Bytes: values.Queues.Realtime.Bytes},
 		History:                service.QueueOptions{Entries: values.Queues.History.Entries, Bytes: values.Queues.History.Bytes},
 		LiveWrites:             service.QueueOptions{Entries: values.Queues.LiveWrites.Entries, Bytes: values.Queues.LiveWrites.Bytes},
@@ -50,11 +52,22 @@ func newConnectedApplicationService(source service.EventSource) (applicationServ
 		BatchWait:              values.Batch.MaxWait,
 		LiveWriteBusy:          values.Queues.LiveWriteBusy,
 		ShutdownGrace:          connectedShutdownGrace,
-	}, source, memory, policy, service.NewSystemClock())
+	}, source, memory, policy, service.NewSystemClock(), sender)
 	if err != nil {
 		return nil, err
 	}
-	return &connectedApplicationService{core: core, store: memory}, nil
+	return &connectedApplicationService{core: core, store: memory, sender: sender}, nil
+}
+
+func (application *connectedApplicationService) ValidateText(request service.SendTextRequest) error {
+	if quote := request.Reply(); quote.MessageID().String() != "" {
+		return application.sender.ValidateText(request.ChatID(), request.Text(), quote)
+	}
+	return application.sender.ValidateText(request.ChatID(), request.Text())
+}
+
+func (application *connectedApplicationService) SendText(ctx context.Context, request service.SendTextRequest) error {
+	return application.core.SendText(ctx, request)
 }
 
 func (application *connectedApplicationService) Run(ctx context.Context) error {

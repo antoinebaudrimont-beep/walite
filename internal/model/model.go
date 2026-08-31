@@ -38,6 +38,7 @@ type MessageInput struct {
 	SentAt            time.Time
 	FromMe            bool
 	Text              string
+	Quote             TextQuote
 }
 
 // Message is an immutable normalized message value.
@@ -47,6 +48,7 @@ type Message struct {
 	sentAt        time.Time
 	fromMe        bool
 	text          string
+	quote         TextQuote
 	bodyTruncated bool
 	bodyRetained  bool
 	byteSize      int
@@ -55,6 +57,22 @@ type Message struct {
 // ChatID returns the message's chat identifier.
 func (message Message) ChatID() ChatID {
 	return message.chatID
+}
+
+// WithChatID returns a validated immutable copy addressed to an opaque chat
+// identity established by the caller. Message identity is still chat-scoped;
+// no alias or transport-specific semantics live in model.
+func (message Message) WithChatID(id ChatID) (Message, error) {
+	ownedID, err := NewChatID(id.String())
+	if err != nil {
+		return Message{}, err
+	}
+	if _, err := validateMessage(message); err != nil {
+		return Message{}, err
+	}
+	message.chatID = ownedID
+	message.byteSize, _ = messageByteSize(id.String(), message.messageID.String(), message.text, message.quote)
+	return message, nil
 }
 
 // MessageID returns the message's identifier.
@@ -75,6 +93,18 @@ func (message Message) FromMe() bool {
 // Text returns the normalized retained text.
 func (message Message) Text() string {
 	return message.text
+}
+
+// Quote returns the bounded same-chat reply reference, or zero for plain text.
+func (message Message) Quote() TextQuote { return message.quote }
+
+// WithQuote returns an immutable copy with a constructor-owned quote. Like
+// WithoutBody, it leaves identity, timestamps and direction unchanged. Event
+// and batch constructors still validate and charge the complete message.
+func (message Message) WithQuote(quote TextQuote) Message {
+	message.quote = quote
+	message.byteSize, _ = messageByteSize(message.chatID.value, message.messageID.value, message.text, quote)
+	return message
 }
 
 // BodyTruncated reports whether normalization omitted input text.

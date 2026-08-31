@@ -95,6 +95,7 @@ func runInitialized(
 ) error {
 	screen.HideCursor()
 	model := viewModel{chats: chats, options: input.Options}
+	model.asyncSend = input.SendResults != nil
 	if input.Send != nil {
 		model.send = func(request SendRequest) error { return input.Send(ctx, request) }
 	}
@@ -121,11 +122,21 @@ func runInitialized(
 		<-eventsDone
 	}()
 	liveEvents := input.LiveEvents
+	sendResults := input.SendResults
 
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case result, ok := <-sendResults:
+			if !ok {
+				sendResults = nil
+				continue
+			}
+			if applySendResult(&model, result) {
+				draw(screen, &model)
+				screen.Show()
+			}
 		case event, ok := <-liveEvents:
 			if !ok {
 				liveEvents = nil

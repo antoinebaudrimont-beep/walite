@@ -95,7 +95,11 @@ func NewMessage(input MessageInput) (Message, error) {
 	}
 
 	text, truncated := NormalizeText(input.Text)
-	byteSize, ok := messageByteSize(chatID.value, messageID.value, text)
+	quote, err := cloneTextQuote(input.Quote)
+	if err != nil {
+		return Message{}, err
+	}
+	byteSize, ok := messageByteSize(chatID.value, messageID.value, text, quote)
 	if !ok {
 		return Message{}, newValidationError(
 			SizeExceeded,
@@ -110,6 +114,7 @@ func NewMessage(input MessageInput) (Message, error) {
 		sentAt:        input.SentAt,
 		fromMe:        input.FromMe,
 		text:          text,
+		quote:         quote,
 		bodyTruncated: truncated,
 		bodyRetained:  true,
 		byteSize:      byteSize,
@@ -214,11 +219,15 @@ func validateMessage(message Message) (int, error) {
 	if !utf8.ValidString(message.text) {
 		return 0, newValidationError(InvalidUTF8, "text", MaxRetainedTextBytes)
 	}
+	if _, err := cloneTextQuote(message.quote); err != nil {
+		return 0, err
+	}
 
 	byteSize, ok := messageByteSize(
 		message.chatID.value,
 		message.messageID.value,
 		message.text,
+		message.quote,
 	)
 	if !ok {
 		return 0, newValidationError(
@@ -230,8 +239,8 @@ func validateMessage(message Message) (int, error) {
 	return byteSize, nil
 }
 
-func messageByteSize(chatID, messageID, text string) (int, bool) {
-	return checkedByteSum(len(chatID), len(messageID), len(text))
+func messageByteSize(chatID, messageID, text string, quote TextQuote) (int, bool) {
+	return checkedByteSum(len(chatID), len(messageID), len(text), len(quote.id.value), len(quote.text))
 }
 
 func normalizedEventByteSize(messageBytes int) (int, error) {

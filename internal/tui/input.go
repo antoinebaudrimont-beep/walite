@@ -1,6 +1,9 @@
 package tui
 
-import "github.com/gdamore/tcell/v2"
+import (
+	"errors"
+	"github.com/gdamore/tcell/v2"
+)
 
 func handleKey(model *viewModel, event *tcell.EventKey, width, height int) (changed, exit bool) {
 	if event.Key() == tcell.KeyCtrlC {
@@ -16,6 +19,30 @@ func handleKey(model *viewModel, event *tcell.EventKey, width, height int) (chan
 	if event.Key() == tcell.KeyCtrlP {
 		model.settingsOpen = true
 		return true, false
+	}
+	// Protect the admitted draft against edits, cancellation, and key-repeat
+	// resends. Reading, settings, resize and Ctrl-C remain responsive.
+	if model.sendPending || model.sendUncertain {
+		switch event.Key() {
+		case tcell.KeyUp:
+			return scrollMessages(model, width, height, true), false
+		case tcell.KeyDown:
+			return scrollMessages(model, width, height, false), false
+		case tcell.KeyPgUp:
+			return scrollPage(model, width, height, true), false
+		case tcell.KeyPgDn:
+			return scrollPage(model, width, height, false), false
+		case tcell.KeyEnd:
+			return jumpMessageViewport(model, width, height, false), false
+		case tcell.KeyEscape:
+			if model.sendUncertain {
+				model.sendUncertain, model.sendStatus = false, ""
+				model.composer.clear()
+				model.mode = modeNavigate
+				return true, false
+			}
+		}
+		return false, false
 	}
 	if model.emojiPicker.open {
 		return handleEmojiKey(model, event, width, height), false
@@ -98,6 +125,7 @@ func handleReplySelectionKey(model *viewModel, event *tcell.EventKey, width, hei
 func handleComposeKey(model *viewModel, event *tcell.EventKey, width, height int) bool {
 	switch event.Key() {
 	case tcell.KeyEscape:
+		model.sendStatus = ""
 		model.composer.clear()
 		model.replyTarget = replyTarget{}
 		model.mode = modeNavigate
@@ -194,6 +222,9 @@ func handleEmojiKey(model *viewModel, event *tcell.EventKey, width, height int) 
 }
 
 func submitOutgoingMessage(model *viewModel) bool {
+	if model.sendPending || model.sendUncertain {
+		return false
+	}
 	model.composer.normalize()
 	if model.composer.length == 0 || model.send == nil {
 		return false
@@ -205,14 +236,26 @@ func submitOutgoingMessage(model *viewModel) bool {
 	request := SendRequest{ChatID: selected.id, Text: model.composer.text()}
 	if model.replyTarget.valid {
 		request.ReplyToID = string(model.replyTarget.id)
+		if target, found := model.chats.findMessageByID(model.chats.selectedIndex(), model.replyTarget.id); found && target.bodyRetained {
+			request.ReplyToText, request.ReplyToFromMe = target.text, target.fromMe
+		}
 	}
 	if err := model.send(request); err != nil {
+		if model.asyncSend {
+			model.sendStatus = "Send unavailable or rejected; draft kept"
+			if errors.Is(err, ErrGroupReplyUnavailable) {
+				model.sendStatus = "Group replies not available yet; draft kept"
+			}
+			return true
+		}
 		return false
 	}
-	model.composer.clear()
-	model.replyTarget = replyTarget{}
-	model.replySelect = replySelectionState{}
-	model.chatView.resetScroll()
+	if model.asyncSend {
+		model.sendPending = true
+		model.sendStatus = "Sending… draft protected"
+		return true
+	}
+	clearSentDraft(model)
 	return true
 }
 

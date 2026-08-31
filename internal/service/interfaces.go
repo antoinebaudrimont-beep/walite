@@ -33,7 +33,8 @@ type EventSource interface {
 // return that successful event even if the context was concurrently cancelled;
 // an error means no successful transport result exists for Core to admit.
 type TextSender interface {
-	SendText(context.Context, model.ChatID, string) (model.Event, error)
+	// At most one same-chat quote is allowed, on the same acceptance path.
+	SendText(context.Context, model.ChatID, string, ...model.TextQuote) (model.Event, error)
 }
 
 // MessageStore is the persistence contract consumed by coordination.

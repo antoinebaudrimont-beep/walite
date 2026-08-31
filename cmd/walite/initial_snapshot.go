@@ -88,11 +88,14 @@ func buildInitialTUIState(ctx context.Context, source applicationService) (tui.I
 		}
 		for messageIndex, message := range messages {
 			initialChat.Messages[messageIndex] = tui.InitialMessage{
-				ID:           message.MessageID().String(),
-				SentAt:       message.SentAt(),
-				FromMe:       message.FromMe(),
-				Text:         message.Text(),
-				BodyRetained: message.BodyRetained(),
+				ID:            message.MessageID().String(),
+				SentAt:        message.SentAt(),
+				FromMe:        message.FromMe(),
+				Text:          message.Text(),
+				BodyRetained:  message.BodyRetained(),
+				ReplyToID:     message.Quote().MessageID().String(),
+				ReplyToText:   message.Quote().Text(),
+				ReplyToFromMe: message.Quote().FromMe(),
 			}
 		}
 		result.Chats[index] = initialChat

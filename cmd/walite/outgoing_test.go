@@ -20,21 +20,13 @@ type capturingSendApplication struct {
 	failure error
 }
 
-func TestConnectedApplicationRejectsSendAndTUIKeepsDraft(t *testing.T) {
+func TestUnavailableApplicationSendKeepsTUIDraft(t *testing.T) {
 	source, err := wa.NewFakeSource(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	application, err := newConnectedApplicationService(source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := application.(applicationTextSender); ok {
-		t.Fatal("connected application unexpectedly implements outgoing sends")
-	}
-	request := tui.SendRequest{ChatID: "real-chat@s.whatsapp.net", Text: "preserve this draft"}
-	if err := sendTextFromTUI(context.Background(), application, request); err == nil || !strings.Contains(err.Error(), "send unavailable") {
-		t.Fatalf("sendTextFromTUI=%v", err)
+	if _, err := newConnectedApplicationService(source, nil); err == nil {
+		t.Fatal("connected application accepted missing real sender")
 	}
 
 	base := time.Date(2026, 8, 30, 10, 0, 0, 0, time.UTC)
@@ -56,6 +48,7 @@ func TestConnectedApplicationRejectsSendAndTUIKeepsDraft(t *testing.T) {
 		<-screen.shown
 	}
 	screen.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
+	<-screen.shown // controlled rejection status
 	screen.InjectKey(tcell.KeyLeft, 0, tcell.ModNone)
 	<-screen.shown
 	if rendered := startupScreenText(screen); !strings.Contains(rendered, "draft") || !strings.Contains(rendered, "incoming text") {
@@ -96,7 +89,7 @@ func (application *capturingSendApplication) SendText(_ context.Context, request
 	return application.failure
 }
 
-func TestSendTextFromTUIAdaptsPlainTextAndDefersReply(t *testing.T) {
+func TestSendTextFromTUIAdaptsPlainTextAndReply(t *testing.T) {
 	application := &capturingSendApplication{}
 	request := tui.SendRequest{ChatID: "stable-chat", Text: "Café 東京 ❤️ 👍🏽 👨‍👩‍👧‍👦"}
 	if err := sendTextFromTUI(context.Background(), application, request); err != nil {
@@ -106,11 +99,13 @@ func TestSendTextFromTUIAdaptsPlainTextAndDefersReply(t *testing.T) {
 		t.Fatalf("calls=%d request chat=%q text=%q", application.calls, application.request.ChatID(), application.request.Text())
 	}
 	request.ReplyToID = "stable-reply-id"
-	if err := sendTextFromTUI(context.Background(), application, request); !errors.Is(err, errReplySendUnsupported) {
+	request.ReplyToText = "quoted é 日本語 🐧"
+	request.ReplyToFromMe = true
+	if err := sendTextFromTUI(context.Background(), application, request); err != nil {
 		t.Fatalf("reply=%v", err)
 	}
-	if application.calls != 1 {
-		t.Fatalf("reply reached service calls=%d", application.calls)
+	if application.calls != 2 || application.request.Reply().MessageID().String() != request.ReplyToID || application.request.Reply().Text() != request.ReplyToText || !application.request.Reply().FromMe() {
+		t.Fatalf("reply metadata lost: calls=%d request=%+v", application.calls, application.request)
 	}
 }
 

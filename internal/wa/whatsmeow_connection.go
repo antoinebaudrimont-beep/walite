@@ -9,12 +9,14 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/antoinebaudrimont-beep/walite/internal/model"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store/sqlstore"
+	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	_ "modernc.org/sqlite"
 )
@@ -29,6 +31,7 @@ type whatsmeowConnectionClient struct {
 	handlerID uint32
 	closeOnce sync.Once
 	closeErr  error
+	textReady atomic.Bool
 }
 
 func newWhatsmeowConnectionClient(ctx context.Context, sessionPath string) (*whatsmeowConnectionClient, error) {
@@ -82,6 +85,14 @@ func newWhatsmeowConnectionClient(ctx context.Context, sessionPath string) (*wha
 		realtime:  newRealtimeSource(),
 		now:       time.Now,
 	}
+	wrapped.realtime.lookup = func(ctx context.Context, jid types.JID) (types.JID, error) {
+		// Fresh unlinked devices have no initialized sub-stores. Pairing owns
+		// initialization; this lookup only reads mappings already available.
+		if device.LIDs == nil {
+			return types.EmptyJID, nil
+		}
+		return device.GetAltJID(ctx, jid)
+	}
 	// A nil logger selects whatsmeow's no-op logger. This is mandatory during
 	// pairing because the upstream QR helper debug-logs the raw QR token.
 	wrapped.handlerID = wrapped.client.AddEventHandler(wrapped.handleEvent)
@@ -122,6 +133,7 @@ func (client *whatsmeowConnectionClient) RealtimeSource() *RealtimeSource {
 
 func (client *whatsmeowConnectionClient) Disconnect() {
 	if client != nil && client.client != nil {
+		client.textReady.Store(false)
 		client.client.Disconnect()
 	}
 }
@@ -154,19 +166,23 @@ func (client *whatsmeowConnectionClient) handleEvent(raw any) {
 			now = client.now
 		}
 		if event, recognized := adaptTextMessage(message, now().UTC()); recognized && client.realtime != nil {
-			client.realtime.admit(event)
+			client.realtime.admitWithAlternate(event, messageChatAlternate(message.Info))
 		}
 		return
 	}
 	var event protocolEvent
 	switch raw.(type) {
 	case *events.Connected:
+		client.textReady.Store(true)
 		event.kind = protocolConnected
 	case *events.Disconnected:
+		client.textReady.Store(false)
 		event.kind = protocolDisconnected
 	case *events.ConnectFailure:
+		client.textReady.Store(false)
 		event = protocolEvent{kind: protocolFailed, cause: ErrConnectionFailed}
 	case *events.LoggedOut:
+		client.textReady.Store(false)
 		event = protocolEvent{kind: protocolLoggedOut, cause: ErrConnectionFailed}
 	default:
 		// History, receipt, media, typing, and all other protocol events are not
@@ -183,6 +199,23 @@ func (client *whatsmeowConnectionClient) handleEvent(raw any) {
 	case client.events <- event:
 	default:
 	}
+}
+
+func messageChatAlternate(info types.MessageInfo) model.ChatID {
+	if info.IsGroup {
+		return model.ChatID{}
+	}
+	primary, err := model.NewChatID(info.Chat.String())
+	if err != nil {
+		return model.ChatID{}
+	}
+	if info.IsFromMe {
+		return authoritativeAlternate(primary, info.RecipientAlt)
+	}
+	if info.Sender.ToNonAD() == info.Chat.ToNonAD() {
+		return authoritativeAlternate(primary, info.SenderAlt)
+	}
+	return model.ChatID{}
 }
 
 func adaptTextMessage(incoming *events.Message, receivedAt time.Time) (model.Event, bool) {

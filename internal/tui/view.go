@@ -29,6 +29,10 @@ type viewModel struct {
 	terminalHeight  int
 	preferencesPath string
 	send            func(SendRequest) error
+	asyncSend       bool
+	sendPending     bool
+	sendUncertain   bool
+	sendStatus      string
 }
 
 func draw(screen tcell.Screen, model *viewModel) {
@@ -42,6 +46,16 @@ func draw(screen tcell.Screen, model *viewModel) {
 	}
 	clearMessagePane(screen, width, height)
 	drawBase(screen, model, width, height)
+	if model.sendStatus != "" {
+		y := height - 1
+		if height < shortHeight || width >= narrowWidth {
+			y = height - 2
+		}
+		if y >= 0 {
+			fillMessageRow(screen, 0, y, width, tcell.StyleDefault)
+			putText(screen, 0, y, width, model.sendStatus, tcell.StyleDefault)
+		}
+	}
 	if model.emojiPicker.open {
 		drawEmojiPicker(screen, model, width, height)
 	}
@@ -344,14 +358,19 @@ func drawMessage(screen tcell.Screen, model *viewModel, chatIndex int, message m
 		if showTimestamp {
 			putText(screen, x, y+rows, x+timestampTextWidth, timestampText(message.time), style)
 		}
-		reference := "↪ original message unavailable"
+		reference := "original message unavailable"
+		if message.replyText != "" {
+			reference = message.replyText
+		}
 		if original, ok := model.chats.findMessageByID(chatIndex, message.replyToID); ok {
-			reference = "↪ " + original.text
+			if message.replyText == "" {
+				reference = original.text
+			}
 			if model.options.ShowTimestamps {
-				reference = "↪ " + timestampText(original.time) + " " + original.text
+				reference = timestampText(original.time) + " " + reference
 			}
 		}
-		putText(screen, bodyX, y+rows, limit, truncateDisplayWidth(reference, limit-bodyX), style)
+		putText(screen, bodyX, y+rows, limit, truncateDisplayWidth("↪ "+reference, limit-bodyX), style)
 		rows++
 	}
 	remaining := message.text

@@ -101,6 +101,7 @@ func (state *chatState) admitLiveChat(event LiveMessage) (int, bool) {
 func validLiveMessage(event LiveMessage) bool {
 	return event.ChatID != "" && event.MessageID != "" &&
 		utf8.ValidString(event.ChatID) && utf8.ValidString(event.MessageID) && utf8.ValidString(event.Text) &&
+		validReplyMetadata(event.ReplyToID, event.ReplyToText, event.ReplyToFromMe) &&
 		!event.SentAt.IsZero() && !event.ActivityTime.IsZero() && !event.ActivityTime.Before(event.SentAt)
 }
 
@@ -133,6 +134,10 @@ func (state *chatState) applyLiveMessage(chatIndex int, event LiveMessage) liveM
 		text:         text,
 		fromMe:       event.FromMe,
 		bodyRetained: event.BodyRetained,
+		replyText:    event.ReplyToText,
+		replyFromMe:  event.ReplyToFromMe,
+		replyToID:    messageID(event.ReplyToID),
+		hasReply:     event.ReplyToID != "",
 	}
 	inserted, insertionIndex := insertBoundedMessage(chat, message)
 	return liveMessageMutation{changed: changed || inserted, inserted: inserted, insertionIndex: insertionIndex}

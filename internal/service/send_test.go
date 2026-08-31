@@ -14,7 +14,10 @@ import (
 
 type textSenderFunc func(context.Context, model.ChatID, string) (model.Event, error)
 
-func (function textSenderFunc) SendText(ctx context.Context, chatID model.ChatID, text string) (model.Event, error) {
+func (function textSenderFunc) SendText(ctx context.Context, chatID model.ChatID, text string, quotes ...model.TextQuote) (model.Event, error) {
+	if len(quotes) != 0 {
+		return model.Event{}, errors.New("plain-only fixture received a quote")
+	}
 	return function(ctx, chatID, text)
 }
 
@@ -180,6 +183,56 @@ func TestSendTextAdmitsOneTransportOwnedEvent(t *testing.T) {
 	}
 	if stats := core.realtimeQ.Stats(); stats.Reservations != 0 {
 		t.Fatalf("successful send retained reservation: %+v", stats)
+	}
+}
+
+func TestSendTextReservationPrecedesTransportAndSurvivesFullQueueCancellation(t *testing.T) {
+	var core *Core
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	options := validCoreOptions()
+	options.Realtime.Bytes = int64(options.Realtime.Entries) * model.MaxNormalizedEventBytes
+	sender := textSenderFunc(func(_ context.Context, chatID model.ChatID, text string) (model.Event, error) {
+		stats := core.realtimeQ.Stats()
+		if stats.Reservations != 1 || stats.UsedBytes != model.MaxNormalizedEventBytes {
+			t.Fatalf("transport started before reservation: %+v", stats)
+		}
+		for index := 0; index < options.Realtime.Entries-1; index++ {
+			event := outgoingTestEvent(t, chatID, fmt.Sprintf("occupied-%d", index), writerTestTime, "occupied")
+			if err := core.realtimeQ.TryPut(event); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := core.realtimeQ.TryPut(outgoingTestEvent(t, chatID, "overflow", writerTestTime, "occupied")); !errors.Is(err, errQueueFull) {
+			t.Fatalf("reserved slot stolen: %v", err)
+		}
+		cancel()
+		core.realtimeQ.Close() // shutdown admission closes before handoff
+		return outgoingTestEvent(t, chatID, "successful", writerTestTime, text), nil
+	})
+	var err error
+	core, err = NewWithTextSender(options, newCoreTestSource(), defaultHistoryStore(t), &historyPolicy{}, newManualClock(writerTestTime), sender)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core.acceptingSends.Store(true)
+	request, _ := NewSendTextRequest("chat", "sent")
+	if err := core.SendText(ctx, request); err != nil {
+		t.Fatalf("remote success changed to rejection: %v", err)
+	}
+	found := 0
+	for {
+		owned, ok := core.realtimeQ.TryTake()
+		if !ok {
+			break
+		}
+		if owned.Value().Message().MessageID().String() == "successful" {
+			found++
+		}
+		_ = owned.Release()
+	}
+	if stats := core.realtimeQ.Stats(); found != 1 || stats.Reservations != 0 || stats.UsedBytes != 0 {
+		t.Fatalf("found=%d stats=%+v", found, stats)
 	}
 }
 

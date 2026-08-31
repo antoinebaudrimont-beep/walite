@@ -192,7 +192,9 @@ func validateOptions(o Options, source EventSource, store MessageStore, policy R
 	if o.Realtime.Entries > 128 || o.History.Entries > 4 || o.LiveWrites.Entries > 128 || o.HistoryWrites.Entries > 256 || o.ViewUpdates.Entries != 64 || o.HistoryChunkRecords <= 0 || o.HistoryChunkRecords > model.MaxHistoryChunkRecords || o.HistoryChunkBytes <= 0 || o.HistoryChunkBytes > model.MaxHistoryChunkBytes || o.HistoryChunkBytes > o.History.Bytes || o.BatchMaxOperations <= 0 || o.BatchMaxOperations > model.MaxWriteBatchMessages || o.BatchMaxOperations > o.LiveWrites.Entries || o.BatchMaxOperations > o.HistoryWrites.Entries || o.RetentionSnapshotLimit <= 0 || o.RetentionSnapshotLimit > model.MaxRetentionSnapshotSummaries || o.BatchWait <= 0 || o.LiveWriteBusy <= 0 || o.ShutdownGrace <= 0 {
 		return malformed()
 	}
-	if o.Realtime.Bytes < model.MaxNormalizedEventBytes || o.History.Bytes < model.MaxHistoryChunkBytes || o.LiveWrites.Bytes < int64(2*model.MaxIdentifierBytes+model.MaxRetainedTextBytes) || o.HistoryWrites.Bytes < int64(2*model.MaxIdentifierBytes+model.MaxRetainedTextBytes) || o.ViewUpdates.Bytes < model.MaxNormalizedUpdateBytes {
+	// A writer queue must fit a maximum body plus its bounded same-chat quote.
+	const maxMessageBytes = int64(3*model.MaxIdentifierBytes + model.MaxRetainedTextBytes + model.MaxQuoteTextBytes)
+	if o.Realtime.Bytes < model.MaxNormalizedEventBytes || o.History.Bytes < model.MaxHistoryChunkBytes || o.LiveWrites.Bytes < maxMessageBytes || o.HistoryWrites.Bytes < maxMessageBytes || o.ViewUpdates.Bytes < model.MaxNormalizedUpdateBytes {
 		return malformed()
 	}
 	return nil

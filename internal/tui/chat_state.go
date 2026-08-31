@@ -7,8 +7,10 @@ import (
 )
 
 const (
-	maxChats    = ChatWorkingSetCapacity
-	maxMessages = MaxInitialMessagesPerChat
+	maxChats          = ChatWorkingSetCapacity
+	maxMessages       = MaxInitialMessagesPerChat
+	maxReplyIDBytes   = 512
+	maxReplyTextBytes = 1024
 )
 
 type messageID string
@@ -22,6 +24,17 @@ type messageView struct {
 	bodyRetained bool
 	replyToID    messageID
 	hasReply     bool
+	replyText    string
+	replyFromMe  bool
+}
+
+// Presentation mirrors the application's bounded quote fields without an
+// application-model dependency. The adapter tests check fidelity at this seam.
+func validReplyMetadata(id, text string, fromMe bool) bool {
+	if id == "" {
+		return text == "" && !fromMe
+	}
+	return len(id) <= maxReplyIDBytes && utf8.ValidString(id) && text != "" && len(text) <= maxReplyTextBytes && utf8.ValidString(text)
 }
 
 type chatView struct {

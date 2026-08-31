@@ -45,7 +45,7 @@ func TestWhatsmeowDependencyStaysInsideInternalWA(t *testing.T) {
 	}
 }
 
-func TestMilestone4AProductionCompositionUsesRealReceiveOnlySource(t *testing.T) {
+func TestMilestone4BProductionCompositionUsesConnectionOwnedSourceAndSender(t *testing.T) {
 	application, err := os.ReadFile("application.go")
 	if err != nil {
 		t.Fatal(err)
@@ -59,7 +59,8 @@ func TestMilestone4AProductionCompositionUsesRealReceiveOnlySource(t *testing.T)
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(application), "connection.RealtimeSource()") ||
-		!strings.Contains(string(application), "newConnectedApplicationService(realtimeSource)") {
+		!strings.Contains(string(application), "connection.TextSender()") ||
+		!strings.Contains(string(application), "newConnectedApplicationService(realtimeSource, textSender)") {
 		t.Fatal("production authentication does not compose the connection-owned realtime source")
 	}
 	if !strings.Contains(string(demo), "wa.NewOfflineTextSender") {
@@ -68,7 +69,7 @@ func TestMilestone4AProductionCompositionUsesRealReceiveOnlySource(t *testing.T)
 	if strings.Contains(string(application), "newService:    newOfflineApplicationService") ||
 		strings.Contains(string(connected), "FakeSource") ||
 		strings.Contains(string(connected), "OfflineTextSender") ||
-		strings.Contains(string(connected), "NewWithTextSender") {
+		!strings.Contains(string(connected), "NewWithTextSender") {
 		t.Fatal("connected production composition still contains synthetic incoming or outgoing traffic")
 	}
 }
