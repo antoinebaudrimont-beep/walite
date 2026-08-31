@@ -347,15 +347,18 @@ func drawMessage(screen tcell.Screen, model *viewModel, chatIndex int, message m
 		return 0
 	}
 	style := tcell.StyleDefault.Reverse(selected)
-	width := limit - x
-	bodyX := x
-	showTimestamp := model.options.ShowTimestamps && width > prefixWidth
-	if showTimestamp {
-		bodyX += prefixWidth
+	paneLeft := x
+	bodyWidth, timestampPrefix := messageWrapWidth(message, limit-x, model.options.ShowTimestamps)
+	showTimestamp := timestampPrefix > 0
+	quoteLine := ""
+	if message.hasReply {
+		quoteLine = messageQuoteLine(model, chatIndex, message, bodyWidth)
 	}
+	x = messageBlockLeft(message, x, limit, bodyWidth, timestampPrefix, quoteLine)
+	bodyX := x + timestampPrefix
 	rows := 0
 	if message.isGroup && !message.fromMe {
-		fillMessageRow(screen, x, y, limit, style)
+		fillMessageRow(screen, paneLeft, y, limit, style)
 		if showTimestamp {
 			putText(screen, x, y, x+timestampTextWidth, timestampText(message.time), style)
 		}
@@ -363,33 +366,23 @@ func drawMessage(screen tcell.Screen, model *viewModel, chatIndex int, message m
 		rows++
 	}
 	if message.hasReply && y+rows < bottom {
-		fillMessageRow(screen, x, y+rows, limit, style)
+		fillMessageRow(screen, paneLeft, y+rows, limit, style)
 		if showTimestamp && rows == 0 {
 			putText(screen, x, y+rows, x+timestampTextWidth, timestampText(message.time), style)
 		}
-		reference := "original message unavailable"
-		if message.replyText != "" {
-			reference = message.replyText
-		}
-		if original, ok := model.chats.findMessageByID(chatIndex, message.replyToID); ok {
-			if message.replyText == "" {
-				reference = original.text
-			}
-			if model.options.ShowTimestamps {
-				reference = timestampText(original.time) + " " + reference
-			}
-		}
-		putText(screen, bodyX, y+rows, limit, truncateDisplayWidth("↪ "+reference, limit-bodyX), style)
+		putText(screen, bodyX, y+rows, limit, quoteLine, style)
 		rows++
 	}
 	remaining := message.text
 	for remaining != "" && y+rows < bottom {
-		fillMessageRow(screen, x, y+rows, limit, style)
+		fillMessageRow(screen, paneLeft, y+rows, limit, style)
 		if rows == 0 && showTimestamp {
 			putText(screen, x, y+rows, x+timestampTextWidth, timestampText(message.time), style)
 		}
-		line, rest := nextWrappedLine(remaining, limit-bodyX)
-		putText(screen, bodyX, y+rows, limit, line, style)
+		line, rest := nextWrappedLine(remaining, bodyWidth)
+		// A whole two-cell grapheme cannot fit in a one-cell fallback pane.
+		// Use the existing ellipsis fallback instead of overwriting the border.
+		putText(screen, bodyX, y+rows, limit, truncateDisplayWidth(line, limit-bodyX), style)
 		remaining = rest
 		rows++
 	}
@@ -397,6 +390,27 @@ func drawMessage(screen tcell.Screen, model *viewModel, chatIndex int, message m
 		return 1
 	}
 	return rows
+}
+
+func messageQuoteLine(model *viewModel, chatIndex int, message messageView, width int) string {
+	reference := "original message unavailable"
+	if message.replyText != "" {
+		reference = message.replyText
+	}
+	if original, ok := model.chats.findMessageByID(chatIndex, message.replyToID); ok {
+		if message.replyText == "" {
+			reference = original.text
+		}
+		if model.options.ShowTimestamps {
+			reference = timestampText(original.time) + " " + reference
+		}
+	}
+	// Quotes remain one-row excerpts; line separators are presentation spaces,
+	// not terminal control characters. The stored quote itself is unchanged.
+	reference = strings.ReplaceAll(reference, "\r\n", " ")
+	reference = strings.ReplaceAll(reference, "\n", " ")
+	reference = strings.ReplaceAll(reference, "\r", " ")
+	return truncateDisplayWidth("↪ "+reference, width)
 }
 
 func timestampText(value string) string {
@@ -502,10 +516,7 @@ func wrappedMessageLines(message messageView, width int, showTimestamps bool) in
 	if width <= 0 {
 		return 0
 	}
-	bodyWidth := width
-	if showTimestamps && width > prefixWidth {
-		bodyWidth -= prefixWidth
-	}
+	bodyWidth, _ := messageWrapWidth(message, width, showTimestamps)
 	if bodyWidth <= 0 {
 		bodyWidth = 1
 	}
@@ -535,13 +546,19 @@ func nextWrappedLine(value string, width int) (string, string) {
 	if value == "" || width <= 0 {
 		return "", ""
 	}
-	if uniseg.StringWidth(value) <= width {
-		return value, ""
+	// Wrap one explicit line at a time. Keep indentation after a newline;
+	// trimming spaces is only for a soft wrap within the same line.
+	line, following := value, ""
+	if newline := strings.IndexByte(value, '\n'); newline >= 0 {
+		line, following = strings.TrimSuffix(value[:newline], "\r"), value[newline+1:]
+	}
+	if uniseg.StringWidth(line) <= width {
+		return line, following
 	}
 	cut := 0
 	lastSpace := -1
 	used := 0
-	graphemes := uniseg.NewGraphemes(value)
+	graphemes := uniseg.NewGraphemes(line)
 	for graphemes.Next() {
 		from, to := graphemes.Positions()
 		if used+graphemes.Width() > width {
@@ -556,8 +573,8 @@ func nextWrappedLine(value string, width int) (string, string) {
 			lastSpace = from
 		}
 	}
-	if cut >= len(value) {
-		return value, ""
+	if cut >= len(line) {
+		return line, following
 	}
 	if lastSpace > 0 && lastSpace < cut {
 		cut = lastSpace

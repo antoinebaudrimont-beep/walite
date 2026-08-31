@@ -237,7 +237,9 @@ func testRealTextSendEchoCommitOnce(t *testing.T, lidEcho bool, withReply ...boo
 		if sentPayload.GetExtendedTextMessage().GetContextInfo().GetStanzaID() != "quoted-original" {
 			t.Fatal("reply lost before transport")
 		}
-		upstreamEcho.Message = sentPayload
+		// Deliberately quote-less: this regression protects the authoritative
+		// outgoing quote even when an incoming echo omits ContextInfo.
+		upstreamEcho.Message = &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: &text}}
 	}
 	if lidEcho {
 		upstreamEcho.Info.Chat = types.NewJID("987654", types.HiddenUserServer)

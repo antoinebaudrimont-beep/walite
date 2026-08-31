@@ -583,3 +583,86 @@ previously documented SQLite queue-saturation timing assertion (13 rather than
 14 writes in its second transaction); its isolated race rerun and the subsequent
 complete race suite passed. No SQLite source/tests were modified and no data
 race was reported. No real connection, message send or commit was performed.
+
+## Milestone 4C.1 incoming text-reply presentation correction
+
+The incoming drop point was `internal/wa/whatsmeow_connection.go`:
+`adaptTextMessage` extracted the extended-text body but never read its
+`ContextInfo`. Outgoing/offline messages already retained `model.TextQuote`
+through the store, committed LiveEvents, cmd adapters and generic TUI renderer.
+Only the incoming adapter needs a production change; the in-progress
+directional-layout implementation is preserved without modification.
+
+### Confirmed upstream fields and narrow mapping
+
+Verified against pinned whatsmeow
+`v0.0.0-20260828224850-0fadda796019` and the read-only
+`../references/whatsmeow` checkout (`662ad1dc6900ffe1b1a2a6bc0fca01cba488d747`):
+
+- Repository: `go.mau.fi/whatsmeow`; licence: MPL-2.0.
+- `proto/waE2E/WAWebProtobufsE2E.pb.go`: `Message.Conversation`,
+  `Message.ExtendedTextMessage`, `ExtendedTextMessage.Text/ContextInfo`,
+  `ContextInfo.StanzaID/Participant/QuotedMessage` and their getters.
+- `store/store.go`: `Device.GetJID` and `Device.GetLID` return the linked
+  account's existing PN/LID identities without a lookup.
+- Adaptation: read these existing public fields/getters into walite's generic
+  value. No upstream implementation or protobuf object is copied/retained.
+
+The outer extended-text `ContextInfo.StanzaID` becomes the quoted message ID.
+`QuotedMessage.Conversation` or `QuotedMessage.ExtendedTextMessage.Text` becomes
+the excerpt. `model.NewTextQuote` remains the sole quote validator/owner:
+valid UTF-8, existing input validation, at most 1 KiB retained on a rune boundary.
+The parent message body, timestamp, direction, chat/sender IDs and group flag
+are unchanged. Ordinary Conversation messages have no such quote context.
+
+`Participant` is matched exactly against the linked account's non-device PN
+and LID. Either match sets quoted `FromMe=true`, independently of the parent
+message's direction. Known peer PN/LID, absent/invalid participant, unknown
+participant or unavailable account identity use the existing neutral `false`;
+valid quote ID/text still survives. No name-based inference, callback database
+lookup, new alias entry or change to PN/LID routing is introduced.
+
+Unsupported/media, absent text, missing/invalid stanza ID or otherwise invalid
+quotes use the existing no-quote fallback: retain the incoming text message,
+without an invented media label. No full quoted message snapshot is persisted.
+
+### Shared presentation, duplicates and limitations
+
+The path is `events.Message -> model.Event.Message.Quote -> WriteRealtime ->
+Memory -> LiveEvent.Message.Quote -> cmd ReplyToID/ReplyToText/ReplyToFromMe ->
+TUI -> existing ↪ renderer`. Incoming blocks remain left-aligned and outgoing
+blocks right-aligned. The original quote timestamp is shown only when that
+original message is already in the TUI working set; ContextInfo supplies no
+quoted timestamp for this mapping, so none is invented.
+
+Incoming group text quotes use the same generic excerpt. The current model
+has only quoted ID/text/FromMe, not a quoted participant ID or display name;
+group quoted-author names therefore remain unavailable. Existing current-
+message sender labels/name resolution are unchanged. Group reply sending,
+history reconstruction, read receipts and transport/service changes are excluded.
+
+Existing Memory semantics retain an established quote against poorer duplicate
+echoes and can enrich an initially quote-less stored message. Such duplicates
+publish no second insert/LiveEvent and do not increment unread. A late quote
+enrichment is available to a later snapshot, but does not retroactively refresh
+an already-rendered quote-less message: no new refresh/dedup contract is added.
+
+Deterministic coverage includes both quoted text forms, exact Unicode and 1 KiB
+truncation, linked PN/LID authorship, neutral missing identity, group quotes,
+unsupported/malformed fallback, the real incoming callback through Core/Memory/
+LiveEvents, PN/LID duplicate retention/enrichment, and actual application/TUI
+simulation frames. Screen assertions use full grapheme cells and verify a
+single visible incoming reply with its quote directly above it on the left,
+outgoing on the right, plain incoming unchanged, groups and timestamps on/off.
+No live connection, sending or sleep-based synchronization is used.
+
+Manual gate: receive a real direct text reply to an earlier own message and
+check the visible quote/body association, left alignment and one local message;
+also recheck an outgoing reply remains right-aligned. Do not commit before the
+manual retest is approved.
+
+Automated validation passed: gofmt on changed Go files, `go mod tidy`,
+`go mod tidy -diff`, `go vet ./...`, `go test ./...`, `go test -race ./...`,
+and `git diff --check`. Module files are unchanged. All four pre-existing
+directional-layout files retain their pre-fix SHA-256 hashes. No manual WhatsApp
+test or commit was performed. **Incoming replies are ready for manual test.**

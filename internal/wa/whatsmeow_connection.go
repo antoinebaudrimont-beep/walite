@@ -15,6 +15,7 @@ import (
 
 	"github.com/antoinebaudrimont-beep/walite/internal/model"
 	"go.mau.fi/whatsmeow"
+	waE2E "go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -184,7 +185,13 @@ func (client *whatsmeowConnectionClient) handleEvent(raw any) {
 		if client != nil && client.now != nil {
 			now = client.now
 		}
-		if event, recognized := adaptTextMessage(message, now().UTC()); recognized && client.realtime != nil {
+		var ownPN, ownLID types.JID
+		if client != nil && client.client != nil {
+			// Read only the linked device identities; never perform an alias/DB
+			// lookup or infer authorship from a contact name in the callback.
+			ownPN, ownLID = client.client.Store.GetJID(), client.client.Store.GetLID()
+		}
+		if event, recognized := adaptTextMessage(message, now().UTC(), ownPN, ownLID); recognized && client.realtime != nil {
 			client.realtime.display.observeMessage(message.Info)
 			client.realtime.admitWithAlternate(event, messageChatAlternate(message.Info))
 		}
@@ -238,7 +245,7 @@ func messageChatAlternate(info types.MessageInfo) model.ChatID {
 	return model.ChatID{}
 }
 
-func adaptTextMessage(incoming *events.Message, receivedAt time.Time) (model.Event, bool) {
+func adaptTextMessage(incoming *events.Message, receivedAt time.Time, ownIDs ...types.JID) (model.Event, bool) {
 	if incoming == nil || incoming.Message == nil || incoming.SourceWebMsg != nil ||
 		incoming.IsEphemeral || incoming.IsViewOnce || incoming.IsViewOnceV2 ||
 		incoming.IsViewOnceV2Extension || incoming.IsDocumentWithCaption ||
@@ -248,10 +255,12 @@ func adaptTextMessage(incoming *events.Message, receivedAt time.Time) (model.Eve
 	}
 
 	text := ""
+	var quote model.TextQuote
 	if incoming.Message.Conversation != nil {
 		text = incoming.Message.GetConversation()
 	} else if extended := incoming.Message.GetExtendedTextMessage(); extended != nil && extended.Text != nil {
 		text = extended.GetText()
+		quote = incomingTextQuote(extended.GetContextInfo(), ownIDs)
 	} else {
 		return model.Event{}, false
 	}
@@ -269,6 +278,7 @@ func adaptTextMessage(incoming *events.Message, receivedAt time.Time) (model.Eve
 		SentAt:    incoming.Info.Timestamp,
 		FromMe:    incoming.Info.IsFromMe,
 		Text:      text,
+		Quote:     quote,
 		SenderID:  senderID,
 		IsGroup:   group,
 	})
@@ -280,6 +290,37 @@ func adaptTextMessage(incoming *events.Message, receivedAt time.Time) (model.Eve
 		return model.Event{}, false
 	}
 	return event, true
+}
+
+// incomingTextQuote maps only supported text excerpts into the existing bounded
+// transport-neutral reply value. Unsupported/malformed quotes leave the parent
+// text intact, using the existing no-quote fallback (not invented media labels).
+func incomingTextQuote(info *waE2E.ContextInfo, ownIDs []types.JID) model.TextQuote {
+	if info == nil {
+		return model.TextQuote{}
+	}
+	quoted := info.GetQuotedMessage()
+	text := quoted.GetConversation()
+	if quoted != nil && quoted.Conversation == nil {
+		text = quoted.GetExtendedTextMessage().GetText()
+	}
+	fromMe := false
+	participantID, _ := model.NewChatID(info.GetParticipant())
+	if participant, err := textRecipient(participantID); err == nil {
+		for _, ownID := range ownIDs {
+			if !ownID.IsEmpty() && participant == ownID.ToNonAD() {
+				fromMe = true
+				break
+			}
+		}
+	}
+	// Unknown/absent participant uses the existing neutral false value; it must
+	// not discard otherwise valid ID/text or guess that a non-peer is ours.
+	quote, err := model.NewTextQuote(info.GetStanzaID(), text, fromMe)
+	if err != nil {
+		return model.TextQuote{}
+	}
+	return quote
 }
 
 func prepareSessionPath(path string) (string, error) {

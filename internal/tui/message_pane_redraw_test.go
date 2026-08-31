@@ -47,13 +47,20 @@ func assertMessagePaneMatchesFresh(t *testing.T, screen tcell.SimulationScreen, 
 	want, _, _ := fresh.GetContents()
 	left, top, right, bottom := ghostingTestRectangle(width, height)
 	for y := top; y < bottom; y++ {
-		for x := left; x < right; x++ {
+		for x := left; x < right; {
 			index := y*width + x
 			if string(got[index].Runes) != string(want[index].Runes) || got[index].Style != want[index].Style ||
 				string(got[index].Bytes) != string(want[index].Bytes) {
 				t.Fatalf("displayed pane cell (%d,%d): got %q/%v, want %q/%v", x, y,
 					string(got[index].Runes), got[index].Style, string(want[index].Runes), want[index].Style)
 			}
+			// tcell v2.13.10 simulation.go simscreen.draw/drawCell (Apache-2.0)
+			// advances by glyph width: the front-buffer continuation slots are
+			// not painted and can contain old data covered by the wide glyph.
+			// Compare every visible leading cell (and all uncovered blanks),
+			// not those undefined slots. Only the API semantics are used here.
+			_, _, _, cells := fresh.GetContent(x, y)
+			x += max(1, cells)
 		}
 	}
 }
