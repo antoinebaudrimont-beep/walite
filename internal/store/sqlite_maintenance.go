@@ -55,6 +55,9 @@ func (store *SQLiteStore) CacheDegradation() CacheDegradation {
 	if store == nil {
 		return CacheWriteUnavailable
 	}
+	if store.permissionFailed.Load() {
+		return CacheWriteUnavailable
+	}
 	state := CacheDegradation(store.degradation.Load())
 	if state == 0 {
 		return CacheNormal
@@ -95,9 +98,7 @@ func (store *SQLiteStore) Prune(ctx context.Context, now time.Time) (SQLitePrune
 		store.observeSQLiteFailure(err)
 		return result, err
 	}
-	if err := tightenSQLiteFiles(store.path, operatingSystemFS); err != nil {
-		return result, newSQLiteError(ErrUnsafeCachePath, err)
-	}
+	_ = store.checkWriteFiles()
 	return result, nil
 }
 
@@ -155,16 +156,15 @@ func (store *SQLiteStore) EnforceCacheBudget(ctx context.Context, now time.Time)
 	if err != nil {
 		err = normalizeSQLiteMaintenanceError(err)
 		store.observeSQLiteFailure(err)
-		if errors.Is(err, ErrDiskFull) {
-			result.Degradation = CacheWriteUnavailable
-		}
+		result.Degradation = store.CacheDegradation()
 		return result, err
 	}
 	if sizeErr != nil {
 		return result, sizeErr
 	}
-	if err := tightenSQLiteFiles(store.path, operatingSystemFS); err != nil {
-		return result, newSQLiteError(ErrUnsafeCachePath, err)
+	_ = store.checkWriteFiles()
+	if store.permissionFailed.Load() {
+		result.Degradation = CacheWriteUnavailable
 	}
 	if result.Degradation == CachePressure {
 		return result, newSQLiteError(ErrCachePressure, nil)
@@ -174,6 +174,9 @@ func (store *SQLiteStore) EnforceCacheBudget(ctx context.Context, now time.Time)
 
 func (store *SQLiteStore) pruneLocked(ctx context.Context, now time.Time) (SQLitePruneResult, error) {
 	if err := sqliteContextError(ctx); err != nil {
+		return SQLitePruneResult{}, err
+	}
+	if err := store.checkWriteFiles(); err != nil {
 		return SQLitePruneResult{}, err
 	}
 	transaction, err := store.db.BeginTx(ctx, nil)
@@ -232,6 +235,9 @@ func (store *SQLiteStore) pruneLocked(ctx context.Context, now time.Time) (SQLit
 		hook()
 	}
 	if err := sqliteContextError(ctx); err != nil {
+		return SQLitePruneResult{}, err
+	}
+	if err := store.checkWriteFiles(); err != nil {
 		return SQLitePruneResult{}, err
 	}
 	if err := transaction.Commit(); err != nil {
@@ -324,7 +330,7 @@ WITH ranked AS (
            ) AS body_rank
     FROM messages
 ), eligible AS (
-    SELECT message.body_bytes
+    SELECT message.body_bytes + length(CAST(message.quote_text AS BLOB)) + length(CAST(message.quote_id AS BLOB)) AS body_bytes
     FROM messages AS message
     JOIN ranked
       ON ranked.chat_id = message.chat_id
@@ -361,6 +367,9 @@ WITH ranked AS (
 UPDATE messages
 SET body = NULL,
     body_bytes = 0,
+    quote_id = '',
+    quote_text = '',
+    quote_from_me = 0,
     retained_body = 0
 WHERE EXISTS (
     SELECT 1

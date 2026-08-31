@@ -59,13 +59,13 @@ func rawSQLite(t *testing.T, path string) *sql.DB {
 	return database
 }
 
-func TestOpenSQLiteCreatesSchemaVersionOne(t *testing.T) {
+func TestOpenSQLiteCreatesCurrentSchema(t *testing.T) {
 	store, path := openTestSQLite(t)
 
 	if got := pragmaInt(t, store.db, "user_version"); got != currentSQLiteSchemaVersion {
 		t.Fatalf("user_version=%d", got)
 	}
-	wantTables := []string{"app_meta", "attachments", "chats", "contacts", "messages", "sync_checkpoints"}
+	wantTables := []string{"app_meta", "attachments", "chats", "contacts", "display_metadata", "messages", "sync_checkpoints"}
 	if got := schemaNames(t, store.db, "table"); !equalStrings(got, wantTables) {
 		t.Fatalf("tables=%v want=%v", got, wantTables)
 	}
@@ -255,7 +255,7 @@ func TestOpenSQLiteRejectsFutureSchemaWithoutChangingIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	database := rawSQLite(t, path)
-	if _, err := database.ExecContext(context.Background(), "PRAGMA user_version = 2"); err != nil {
+	if _, err := database.ExecContext(context.Background(), fmt.Sprintf("PRAGMA user_version = %d", currentSQLiteSchemaVersion+1)); err != nil {
 		t.Fatal(err)
 	}
 	if err := database.Close(); err != nil {
@@ -266,7 +266,7 @@ func TestOpenSQLiteRejectsFutureSchemaWithoutChangingIt(t *testing.T) {
 		t.Fatalf("Open error=%v", err)
 	}
 	verify := rawSQLite(t, path)
-	if got := pragmaInt(t, verify, "user_version"); got != 2 {
+	if got := pragmaInt(t, verify, "user_version"); got != currentSQLiteSchemaVersion+1 {
 		t.Fatalf("user_version=%d", got)
 	}
 }
@@ -315,7 +315,7 @@ func TestOpenSQLiteInitializesMissingAndZeroLengthFiles(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer store.Close()
-			if got := pragmaInt(t, store.db, "user_version"); got != 1 {
+			if got := pragmaInt(t, store.db, "user_version"); got != currentSQLiteSchemaVersion {
 				t.Fatalf("user_version=%d", got)
 			}
 		})

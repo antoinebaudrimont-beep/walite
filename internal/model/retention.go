@@ -20,6 +20,23 @@ type MessageSummary struct {
 	bodyBytes    int
 }
 
+// MessageSummaryInput allows persistent stores to construct policy input from
+// metadata columns without loading message bodies.
+type MessageSummaryInput struct {
+	ChatID       ChatID
+	MessageID    MessageID
+	SentAt       time.Time
+	FromMe       bool
+	BodyRetained bool
+	BodyBytes    int
+}
+
+// NewMessageSummaryFromMetadata validates the same bounds as a snapshot.
+func NewMessageSummaryFromMetadata(input MessageSummaryInput) (MessageSummary, error) {
+	return cloneMessageSummary(MessageSummary{chatID: input.ChatID, messageID: input.MessageID,
+		sentAt: input.SentAt, fromMe: input.FromMe, bodyRetained: input.BodyRetained, bodyBytes: input.BodyBytes})
+}
+
 // NewMessageSummary derives a body-free summary from an immutable Message.
 // An invalid zero Message yields the zero summary and is rejected by bounded
 // snapshot construction before policy use.

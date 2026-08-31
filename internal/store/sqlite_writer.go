@@ -20,14 +20,26 @@ const (
 	pendingMessageWrite pendingWriteKind = iota + 1
 	pendingContactWrite
 	pendingChatWrite
+	pendingDisplayWrite
 )
+
+// A single mailbox carries only this request's definitive transaction outcome.
+// Live results are allocated only for realtime callers, never queued history.
+type sqliteWriteResult struct {
+	committed *model.LiveEventBatch
+	display   model.DisplayMetadata
+	err       error
+}
 
 type pendingWrite struct {
 	kind     pendingWriteKind
 	contact  model.Contact
 	chat     model.Chat
 	messages model.WriteBatch
-	ack      chan error
+	display  model.DisplayMetadata
+	emitLive bool
+	result   sqliteWriteResult
+	ack      chan sqliteWriteResult
 	queuedAt time.Time
 }
 
@@ -44,7 +56,7 @@ func newPendingChat(chat model.Chat) pendingWrite {
 }
 
 func (pending pendingWrite) logicalWrites() int {
-	if pending.kind == pendingContactWrite || pending.kind == pendingChatWrite {
+	if pending.kind != pendingMessageWrite {
 		return 1
 	}
 	return pending.messages.Len()
@@ -83,6 +95,9 @@ func (timer *realSQLiteBatchTimer) Stop() bool {
 type sqliteWriterHooks struct {
 	beforeRun          func()
 	beforePendingWrite func(pendingWriteKind) error
+	beforeCommit       func() error
+	afterCommit        func()
+	checkFiles         func() error
 	afterEnqueue       func()
 	beforeQueueWait    func()
 	afterBatchAdd      func(logicalWrites int)
@@ -139,17 +154,21 @@ func newSQLiteBatchWriter(store *SQLiteStore, options sqliteWriterOptions) *sqli
 }
 
 func (writer *sqliteBatchWriter) submit(ctx context.Context, pending pendingWrite) error {
+	return writer.submitResult(ctx, pending).err
+}
+
+func (writer *sqliteBatchWriter) submitResult(ctx context.Context, pending pendingWrite) sqliteWriteResult {
 	if err := sqliteContextError(ctx); err != nil {
-		return err
+		return sqliteWriteResult{err: err}
 	}
 	logicalWrites := pending.logicalWrites()
 	if logicalWrites <= 0 || logicalWrites > sqliteMaxBatchWrites {
-		return newSQLiteError(ErrStoreRejected, nil)
+		return sqliteWriteResult{err: newSQLiteError(ErrStoreRejected, nil)}
 	}
 	if !writer.beginEnqueue() {
-		return newSQLiteError(ErrStoreClosed, nil)
+		return sqliteWriteResult{err: newSQLiteError(ErrStoreClosed, nil)}
 	}
-	pending.ack = make(chan error, 1)
+	pending.ack = make(chan sqliteWriteResult, 1)
 	pending.queuedAt = writer.now()
 	enqueued := false
 	select {
@@ -169,19 +188,16 @@ func (writer *sqliteBatchWriter) submit(ctx context.Context, pending pendingWrit
 	writer.enqueueWG.Done()
 	if !enqueued {
 		if err := ctx.Err(); err != nil {
-			return err
+			return sqliteWriteResult{err: err}
 		}
-		return newSQLiteError(ErrStoreClosed, nil)
+		return sqliteWriteResult{err: newSQLiteError(ErrStoreClosed, nil)}
 	}
 	if writer.hooks.afterEnqueue != nil {
 		writer.hooks.afterEnqueue()
 	}
-	select {
-	case err := <-pending.ack:
-		return err
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	// Queue admission transfers ownership. Cancellation can no longer describe
+	// accepted work as failed while it commits later. Close drains this mailbox.
+	return <-pending.ack
 }
 
 func (writer *sqliteBatchWriter) beginEnqueue() bool {
@@ -250,7 +266,11 @@ func (writer *sqliteBatchWriter) run() {
 			writer.hooks.afterTransaction(logicalWrites, duration, err)
 		}
 		for index := 0; index < requestCount; index++ {
-			batch[index].ack <- err
+			result := batch[index].result
+			if err != nil {
+				result = sqliteWriteResult{err: err}
+			}
+			batch[index].ack <- result
 			batch[index] = pendingWrite{}
 		}
 		requestCount = 0

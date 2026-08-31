@@ -124,7 +124,7 @@ func NewMessage(input MessageInput) (Message, error) {
 		quote:         quote,
 		senderID:      senderID,
 		isGroup:       input.IsGroup,
-		bodyTruncated: truncated,
+		bodyTruncated: truncated || input.BodyTruncated,
 		bodyRetained:  true,
 		byteSize:      byteSize,
 	}, nil

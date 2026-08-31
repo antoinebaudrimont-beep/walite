@@ -19,7 +19,7 @@ import (
 
 // All application-cache timestamp columns use signed Unix milliseconds.
 const (
-	currentSQLiteSchemaVersion = 1
+	currentSQLiteSchemaVersion = 2
 	defaultSQLiteBusyTimeout   = time.Second
 	defaultSQLiteCacheKiB      = 2048
 	messageKindUnknown         = 0
@@ -63,12 +63,13 @@ type SQLiteStore struct {
 	closeErr error
 	writer   *sqliteBatchWriter
 
-	maintenance chan struct{}
-	cacheBudget int64
-	cacheStat   func(string) (os.FileInfo, error)
-	checkpoint  sqliteCheckpointFunc
-	pruneHooks  sqlitePruneHooks
-	degradation atomic.Uint32
+	maintenance      chan struct{}
+	cacheBudget      int64
+	cacheStat        func(string) (os.FileInfo, error)
+	checkpoint       sqliteCheckpointFunc
+	pruneHooks       sqlitePruneHooks
+	degradation      atomic.Uint32
+	permissionFailed atomic.Bool
 }
 
 type sqliteError struct {
@@ -110,7 +111,7 @@ var operatingSystemFS = sqliteFilesystem{
 
 type migrationHook func(*sql.Tx) error
 
-// OpenSQLite securely opens or creates a schema-v1 application cache.
+// OpenSQLite securely opens or additively upgrades an application cache.
 func OpenSQLite(ctx context.Context, options SQLiteOptions) (*SQLiteStore, error) {
 	return openSQLite(ctx, options, operatingSystemFS, nil)
 }
@@ -375,7 +376,7 @@ func migrateSQLite(ctx context.Context, database *sql.DB, version int, hook migr
 	if version == currentSQLiteSchemaVersion {
 		return nil
 	}
-	if version != 0 {
+	if version < 0 || version > currentSQLiteSchemaVersion {
 		return ErrUnsupportedSchema
 	}
 	transaction, err := database.BeginTx(ctx, nil)
@@ -388,7 +389,11 @@ func migrateSQLite(ctx context.Context, database *sql.DB, version int, hook migr
 			_ = transaction.Rollback()
 		}
 	}()
-	for _, statement := range sqliteSchemaV1 {
+	statements := sqliteSchemaV2
+	if version == 0 {
+		statements = append(append([]string(nil), sqliteSchemaV1...), sqliteSchemaV2...)
+	}
+	for _, statement := range statements {
 		if _, err := transaction.ExecContext(ctx, statement); err != nil {
 			return err
 		}
@@ -398,7 +403,7 @@ func migrateSQLite(ctx context.Context, database *sql.DB, version int, hook migr
 			return err
 		}
 	}
-	if _, err := transaction.ExecContext(ctx, "PRAGMA user_version = 1"); err != nil {
+	if _, err := transaction.ExecContext(ctx, "PRAGMA user_version = 2"); err != nil {
 		return err
 	}
 	if err := transaction.Commit(); err != nil {
@@ -510,8 +515,8 @@ func (store *SQLiteStore) PutMessage(ctx context.Context, message model.Message)
 }
 
 // SubmitMessage submits one message to the bounded writer and waits for its
-// transaction to commit. Once enqueued, caller cancellation stops only the
-// acknowledgement wait; the accepted write remains owned by the writer.
+// transaction to commit. Once enqueued, the writer owns the operation and the
+// caller waits for its definitive result, even if its context is canceled.
 func (store *SQLiteStore) SubmitMessage(ctx context.Context, message model.Message) error {
 	if err := store.checkOpen(ctx); err != nil {
 		return err
@@ -552,7 +557,7 @@ func (store *SQLiteStore) commitPendingWrites(requests *[sqliteMaxBatchWrites]pe
 	defer func() {
 		if resultErr != nil {
 			store.observeSQLiteFailure(resultErr)
-		} else {
+		} else if !store.permissionFailed.Load() {
 			store.observeSQLiteWriteSuccess()
 		}
 	}()
@@ -560,6 +565,9 @@ func (store *SQLiteStore) commitPendingWrites(requests *[sqliteMaxBatchWrites]pe
 		return time.Since(started), err
 	}
 	defer store.releaseMaintenance()
+	if err := store.checkWriteFiles(); err != nil {
+		return time.Since(started), err
+	}
 	transaction, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return time.Since(started), sqliteOperationError(err)
@@ -589,26 +597,39 @@ func (store *SQLiteStore) commitPendingWrites(requests *[sqliteMaxBatchWrites]pe
 				return time.Since(started), err
 			}
 			continue
+		case pendingDisplayWrite:
+			metadata, err := writeSQLiteDisplay(ctx, transaction, request.display)
+			if err != nil {
+				return time.Since(started), err
+			}
+			request.result.display = metadata
+			continue
 		case pendingMessageWrite:
 		default:
 			return time.Since(started), newSQLiteError(ErrStoreRejected, nil)
 		}
-		for messageIndex := 0; messageIndex < request.messages.Len(); messageIndex++ {
-			message, _ := request.messages.At(messageIndex)
-			countUnread := request.messages.Origin() == model.WriteRealtime
-			if err := writeSQLiteMessage(ctx, transaction, message, now, countUnread); err != nil {
-				return time.Since(started), err
-			}
+		if err := writeSQLiteRequest(ctx, transaction, request, now); err != nil {
+			return time.Since(started), err
 		}
+	}
+	if hook := store.writer.hooks.beforeCommit; hook != nil {
+		if err := hook(); err != nil {
+			return time.Since(started), sqliteOperationError(err)
+		}
+	}
+	if err := store.checkWriteFiles(); err != nil {
+		return time.Since(started), err
 	}
 	if err := transaction.Commit(); err != nil {
 		return time.Since(started), sqliteOperationError(err)
 	}
 	committed = true
 	duration = time.Since(started)
-	if err := tightenSQLiteFiles(store.path, operatingSystemFS); err != nil {
-		return duration, newSQLiteError(ErrUnsafeCachePath, err)
+	if hook := store.writer.hooks.afterCommit; hook != nil {
+		hook()
 	}
+	// A later permission failure degrades future writes, never this commit.
+	_ = store.checkWriteFiles()
 	return duration, nil
 }
 
@@ -661,10 +682,10 @@ func writeSQLiteChat(ctx context.Context, transaction *sql.Tx, chat model.Chat) 
 	); err != nil {
 		return fmt.Errorf("upsert chat: %w", sqliteOperationError(err))
 	}
-	return nil
+	return applySQLiteCachedDisplay(ctx, transaction, chat.ID())
 }
 
-func writeSQLiteMessage(ctx context.Context, transaction *sql.Tx, message model.Message, now int64, countUnread bool) error {
+func writeSQLiteMessage(ctx context.Context, transaction *sql.Tx, message model.Message, now int64, countUnread bool, newInsert *bool) error {
 	if _, err := transaction.ExecContext(ctx, ensurePlaceholderChatSQL,
 		message.ChatID().String(), message.SentAt().UnixMilli(), now,
 	); err != nil {
@@ -690,6 +711,8 @@ func writeSQLiteMessage(ctx context.Context, transaction *sql.Tx, message model.
 		message.ChatID().String(), message.MessageID().String(),
 		message.SentAt().UnixMilli(), fromMe, messageKindUnknown, body,
 		bodyBytes, bodyTruncated, retainedBody,
+		message.SenderID().String(), sqliteBool(message.IsGroup()),
+		message.Quote().MessageID().String(), message.Quote().Text(), sqliteBool(message.Quote().FromMe()),
 	)
 	if err != nil {
 		return fmt.Errorf("ingest message: %w", sqliteOperationError(err))
@@ -704,6 +727,8 @@ func writeSQLiteMessage(ctx context.Context, transaction *sql.Tx, message model.
 			retainedBody, bodyBytes,
 			retainedBody, bodyTruncated,
 			retainedBody,
+			retainedBody, message.SenderID().String(), retainedBody, sqliteBool(message.IsGroup()),
+			message.Quote().MessageID().String(), message.Quote().Text(), sqliteBool(message.Quote().FromMe()),
 			message.ChatID().String(), message.MessageID().String(),
 			message.SentAt().UnixMilli(), fromMe,
 		)
@@ -720,17 +745,21 @@ func writeSQLiteMessage(ctx context.Context, transaction *sql.Tx, message model.
 	} else if inserted != 1 {
 		return fmt.Errorf("ingest message: %w", newSQLiteError(ErrStoreRejected, nil))
 	}
+	*newInsert = inserted == 1
+	if inserted == 0 {
+		return nil
+	}
 	unreadIncrement := 0
 	if inserted == 1 && countUnread && !message.FromMe() {
 		unreadIncrement = 1
 	}
 	if _, err := transaction.ExecContext(ctx, updateChatActivitySQL,
 		message.SentAt().UnixMilli(), unreadIncrement, int64(maxSQLiteUnreadCount),
-		now, message.ChatID().String(),
+		now, sqliteBool(message.IsGroup()), message.ChatID().String(),
 	); err != nil {
 		return fmt.Errorf("ingest message: %w", sqliteOperationError(err))
 	}
-	return nil
+	return applySQLiteCachedDisplay(ctx, transaction, message.ChatID())
 }
 
 func sqliteBool(value bool) int {
@@ -762,6 +791,7 @@ func (store *SQLiteStore) Message(ctx context.Context, chatID model.ChatID, mess
 		&values.body,
 		&values.bodyTruncated,
 		&values.retainedBody,
+		&values.senderID, &values.isGroup, &values.quoteID, &values.quoteText, &values.quoteFromMe,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.Message{}, newSQLiteError(ErrMessageNotFound, nil)
@@ -777,32 +807,46 @@ type sqliteScanner interface {
 }
 
 type sqliteMessageValues struct {
-	sentAt        int64
-	fromMe        int
-	body          sql.NullString
-	bodyTruncated int
-	retainedBody  int
+	sentAt             int64
+	fromMe             int
+	body               sql.NullString
+	bodyTruncated      int
+	retainedBody       int
+	senderID           string
+	isGroup            int
+	quoteID, quoteText string
+	quoteFromMe        int
 }
 
 func sqliteMessageFromValues(chatID, messageID string, values sqliteMessageValues) (model.Message, error) {
 	if values.fromMe < 0 || values.fromMe > 1 ||
 		values.bodyTruncated < 0 || values.bodyTruncated > 1 ||
 		values.retainedBody < 0 || values.retainedBody > 1 ||
+		!sqliteBoolean(values.isGroup) || !sqliteBoolean(values.quoteFromMe) ||
 		(values.retainedBody == 1 && !values.body.Valid) {
 		return model.Message{}, newSQLiteError(ErrCorruptCache, nil)
 	}
 	message, err := model.NewMessage(model.MessageInput{
-		ChatID:    chatID,
-		MessageID: messageID,
-		SentAt:    time.UnixMilli(values.sentAt).UTC(),
-		FromMe:    values.fromMe == 1,
-		Text:      values.body.String,
+		ChatID:        chatID,
+		MessageID:     messageID,
+		SentAt:        time.UnixMilli(values.sentAt).UTC(),
+		FromMe:        values.fromMe == 1,
+		Text:          values.body.String,
+		SenderID:      values.senderID,
+		IsGroup:       values.isGroup == 1,
+		BodyTruncated: values.bodyTruncated == 1,
 	})
 	if err != nil {
 		return model.Message{}, newSQLiteError(ErrCorruptCache, err)
 	}
 	if values.retainedBody == 0 {
 		message = message.WithoutBody()
+	} else if values.quoteID != "" {
+		quote, err := model.NewTextQuote(values.quoteID, values.quoteText, values.quoteFromMe == 1)
+		if err != nil || len(values.quoteText) > model.MaxQuoteTextBytes {
+			return model.Message{}, newSQLiteError(ErrCorruptCache, err)
+		}
+		message = message.WithQuote(quote)
 	}
 	return message, nil
 }
@@ -854,9 +898,10 @@ ON CONFLICT(chat_id) DO UPDATE SET
 	END,
     display_name = CASE
 		WHEN excluded.display_name = '' THEN chats.display_name
+		WHEN chats.display_quality > 0 THEN chats.display_name
 		ELSE excluded.display_name
     END,
-	is_group = excluded.is_group,
+	is_group = MAX(chats.is_group, excluded.is_group),
 	last_message_at = MAX(chats.last_message_at, excluded.last_message_at),
 	unread_count = MAX(chats.unread_count, excluded.unread_count),
 	muted = excluded.muted,
@@ -877,16 +922,15 @@ WHERE excluded.placeholder = 0
 const ensurePlaceholderChatSQL = `
 INSERT INTO chats(chat_id, placeholder, last_message_at, updated_at, ingest_seq)
 VALUES (?, 1, ?, ?, 0)
-ON CONFLICT(chat_id) DO UPDATE SET
-    last_message_at = MAX(chats.last_message_at, excluded.last_message_at),
-    updated_at = excluded.updated_at`
+ON CONFLICT(chat_id) DO NOTHING`
 
 const insertMessageSQL = `
 INSERT INTO messages(
     chat_id, message_id, sent_at, from_me, kind, body, body_bytes,
-    body_truncated, local_revision, ingest_seq, retained_body
+    body_truncated, local_revision, ingest_seq, retained_body,
+    sender_id, is_group, quote_id, quote_text, quote_from_me
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(chat_id, message_id) DO NOTHING`
 
 const updateMessageSQL = `
@@ -903,7 +947,12 @@ UPDATE messages SET
 		WHEN retained_body = 1 AND ? = 0 THEN body_truncated
 		ELSE ?
     END,
-	retained_body = MAX(retained_body, ?)
+	retained_body = MAX(retained_body, ?),
+	sender_id = CASE WHEN (retained_body = 1 AND ? = 0) OR sender_id != '' THEN sender_id ELSE ? END,
+	is_group = CASE WHEN retained_body = 1 AND ? = 0 THEN is_group ELSE MAX(is_group, ?) END,
+	quote_id = CASE WHEN quote_id != '' THEN quote_id ELSE ? END,
+	quote_text = CASE WHEN quote_id != '' THEN quote_text ELSE ? END,
+	quote_from_me = CASE WHEN quote_id != '' THEN quote_from_me ELSE ? END
 WHERE chat_id = ? AND message_id = ? AND sent_at = ? AND from_me = ?`
 
 const updateChatActivitySQL = `
@@ -913,10 +962,11 @@ UPDATE chats SET
         WHEN ? = 1 AND unread_count < ? THEN unread_count + 1
         ELSE unread_count
     END,
-    updated_at = ?
+    updated_at = ?,
+    is_group = MAX(is_group, ?)
 WHERE chat_id = ?`
 
 const selectMessageSQL = `
-SELECT sent_at, from_me, body, body_truncated, retained_body
+SELECT ` + sqliteMessageValueColumns + `
 FROM messages
 WHERE chat_id = ? AND message_id = ?`

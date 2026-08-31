@@ -426,6 +426,9 @@ func TestSQLiteWriterCancellationSemantics(t *testing.T) {
 	if err := store.SubmitMessage(canceled, message); !errors.Is(err, context.Canceled) {
 		t.Fatalf("pre-enqueue cancellation=%v", err)
 	}
+	if count := queryCount(t, store.db, "SELECT COUNT(*) FROM messages"); count != 0 {
+		t.Fatal("pre-admission cancellation committed")
+	}
 
 	waiting, cancelWaiting := context.WithCancel(context.Background())
 	result := asyncSQLiteCall(func() error { return store.SubmitMessage(waiting, message) })
@@ -433,8 +436,10 @@ func TestSQLiteWriterCancellationSemantics(t *testing.T) {
 	waitSQLiteBatchLogical(t, signals.batchAdds, 1)
 	timer.waitReset(t)
 	cancelWaiting()
-	if err := receiveSQLiteTest(t, result); !errors.Is(err, context.Canceled) {
-		t.Fatalf("acknowledgement cancellation=%v", err)
+	select {
+	case err := <-result:
+		t.Fatalf("accepted request returned before commit: %v", err)
+	default:
 	}
 	if !timer.Fire() {
 		t.Fatal("timer was not active")
@@ -442,6 +447,9 @@ func TestSQLiteWriterCancellationSemantics(t *testing.T) {
 	observation := receiveSQLiteTest(t, signals.transactions)
 	if observation.err != nil {
 		t.Fatal(observation.err)
+	}
+	if err := receiveSQLiteTest(t, result); err != nil {
+		t.Fatalf("accepted cancellation lost commit: %v", err)
 	}
 	if count := queryCount(t, store.db, "SELECT COUNT(*) FROM messages"); count != 1 {
 		t.Fatalf("accepted canceled write count=%d", count)

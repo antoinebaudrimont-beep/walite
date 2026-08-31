@@ -666,3 +666,93 @@ Automated validation passed: gofmt on changed Go files, `go mod tidy`,
 and `git diff --check`. Module files are unchanged. All four pre-existing
 directional-layout files retain their pre-fix SHA-256 hashes. No manual WhatsApp
 test or commit was performed. **Incoming replies are ready for manual test.**
+
+## Milestone 4D.0 — SQLite committed-result compatibility
+
+Approved prerequisite only: SQLite previously discarded insert results,
+allowed an admitted caller to return cancellation before a later commit, and
+could report a permission error after COMMIT. Those semantics could not replace
+Memory under Core's existing B0 contract. Production still uses Memory; 4D
+history/chat-list/bootstrap work has not started and 4D is not complete.
+
+`SQLiteStore.WriteRealtime` now returns `model.LiveEventBatch`. The existing
+64-request queue, one writer goroutine, 50-logical-write transaction limit and
+25 ms oldest-request flush policy are unchanged. Each accepted request owns
+one capacity-1 result mailbox; there are no result workers or retained commit
+history. The writing transaction records INSERT outcomes and per-insert
+unread/activity, then reads same-request enrichment **inside that transaction**.
+Results are validated before COMMIT and released only on successful COMMIT.
+Rollback discards every result in the shared transaction. No write-then-query
+inference, direct LiveEvent publication or Core contract change is used.
+
+Only new inserts publish, in request order. Incoming inserts saturating-increment
+unread; outgoing/history writes do not increment it; activity is the maximum
+message time. Duplicates do not re-publish or change unread/activity. They can
+improve body/quote/sender fields under Memory's rules, without downgrading an
+established quote. Late duplicate enrichment is available to later reads, not a
+new live refresh event. SQLite's existing Unix-millisecond timestamp convention
+is unchanged.
+
+Cancellation before queue ownership can reject without writing. Once admitted,
+all writer APIs wait for a definitive transaction success or rollback, including
+when canceled while queued, during execution or after COMMIT. Close stops
+admission and drains accepted mailboxes before joining the writer. Permission
+checks run before writing and before commit; post-commit failure reports
+`CacheWriteUnavailable` without changing that commit's success. Subsequent
+writes must pass the same security check before proceeding. Native pruning
+also separates committed work from post-commit permission degradation.
+
+Schema version **2** is an additive transaction from v1: message group and
+bounded quote fields, chat display quality, and a 128-slot advisory display-name
+FIFO (matching Memory, with its next slot in app_meta). The existing sender_id
+column is now used. Generic `ApplyDisplayMetadata` runs through the same writer
+and `model.DisplayMetadata.Merge`; it never inserts a chat or changes activity.
+Chat names/source quality, group senders, quotes and truncation markers survive
+restart. Quotes retain the existing 1 KiB bound; native body pruning also clears
+and accounts for quote bytes. No history, credential or session fields are added.
+
+Core's `RetentionSnapshot`, `ApplyPrune` and `Usage` are adapters under the
+existing maintenance gate. Snapshots read only metadata, in indexed descending
+time/ID order, with a hard 551-summary limit and explicit overflow rejection
+(never silently truncated policy input); Core's smaller configured limit still
+applies. `ApplyPrune` executes the policy's bounded row-deletion/anchor plan,
+atomically and idempotently, using existing checkpoint storage. Native Prune's
+500-body cycle and retention rules are unchanged. Usage reuses physical
+DB+WAL+SHM accounting, not Memory's logical byte estimate. Cache pressure,
+checkpointing and disk-full handling remain the existing subsystem.
+
+Deterministic tests cover Memory result/metadata parity, same-request enrichment,
+shared-transaction mailbox isolation/rollback, all cancellation phases, Close,
+post-commit permission degradation and the next write's rejection, v1 upgrade
+and rollback, display quality/FIFO across restart, body-free snapshots, Core
+pruning/anchors, usage, overflow rejection and maintenance serialization. A
+fake-source Core-to-SQLite integration test proves committed-only publication;
+its one-slot fake input is gated by observed commits, with no source drops.
+No network or production composition is involved.
+
+Initial focused benchmark comparison on the target Core 2 Duo T9900, linux/amd64
+(`-benchtime=3x -count=1`, ms/op; short/noisy samples):
+
+| Existing benchmark | Before | After |
+| --- | ---: | ---: |
+| Batch 1 / 10 / 50 | 26.49 / 38.04 / 28.26 | 40.45 / 32.80 / 20.52 |
+| Single-message upsert | 26.74 | 28.50 |
+| Page 100 first / middle / old | 1.14 / 2.42 / 2.83 | 1.38 / 2.27 / 3.32 |
+
+The added fresh-insert committed-result benchmark measured 27.15 / 33.25 /
+24.20 ms for 1 / 10 / 50 messages. A final-code repeat (`-benchtime=3x -count=3`)
+had median existing batch times 27.41 / 30.39 / 17.47 ms, single upsert 27.08 ms,
+and fresh committed-result times 26.19 / 32.25 / 31.73 ms. Page medians were
+1.29 / 6.68 / 3.01 ms: middle-page samples varied to 5.22–7.97 ms in that repeat,
+so these short runs are not a precise latency-regression estimate. Richer page
+fields increase allocations from about 58 to 74 KiB per 100-row page; a fresh
+50-message result uses about 259 KiB/op. The existing indexed page queries,
+25 ms age policy, and fixed queue/batch bounds remain unchanged.
+
+Validation passed: gofmt, `go mod tidy`, `go mod tidy -diff`, `go vet ./...`,
+`go test ./...`, `go test -race ./...`, uncached focused SQLite/store/service
+compatibility tests, and `git diff --check`. The integration fixture passed 20
+consecutive focused race runs. An existing queue-saturation timer assertion
+flaked once in an initial normal run; five unchanged focused reruns and the
+final full suites passed. No timing threshold was changed. Module files are
+unchanged. **4D.0 is ready for review, uncommitted; 4D remains future work.**

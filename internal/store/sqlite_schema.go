@@ -1,5 +1,22 @@
 package store
 
+// V2 adds only fields used by today's transport-neutral live messages/names.
+// The advisory display cache has the same 128-slot FIFO bound as Memory.
+var sqliteSchemaV2 = []string{
+	`ALTER TABLE messages ADD COLUMN is_group INTEGER NOT NULL DEFAULT 0 CHECK (is_group IN (0,1))`,
+	`ALTER TABLE messages ADD COLUMN quote_id TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE messages ADD COLUMN quote_text TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE messages ADD COLUMN quote_from_me INTEGER NOT NULL DEFAULT 0 CHECK (quote_from_me IN (0,1))`,
+	`ALTER TABLE chats ADD COLUMN display_quality INTEGER NOT NULL DEFAULT 0 CHECK (display_quality BETWEEN 0 AND 5)`,
+	`CREATE TABLE display_metadata (
+		slot INTEGER PRIMARY KEY CHECK (slot >= 0 AND slot < 128),
+		entity_id TEXT NOT NULL UNIQUE,
+		name TEXT NOT NULL,
+		quality INTEGER NOT NULL CHECK (quality BETWEEN 0 AND 5),
+		is_group INTEGER NOT NULL CHECK (is_group IN (0,1))
+	)`,
+}
+
 var sqliteSchemaV1 = []string{
 	`CREATE TABLE app_meta (
         key TEXT PRIMARY KEY,

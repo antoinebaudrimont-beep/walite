@@ -41,6 +41,9 @@ type MessageInput struct {
 	Quote             TextQuote
 	SenderID          string
 	IsGroup           bool
+	// BodyTruncated preserves an existing normalization marker when restoring
+	// retained text from a store; it cannot disable truncation of new input.
+	BodyTruncated bool
 }
 
 // Message is an immutable normalized message value.

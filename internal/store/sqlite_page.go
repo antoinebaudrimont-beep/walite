@@ -105,14 +105,17 @@ func scanSQLitePageMessage(scanner sqliteScanner) (model.Message, error) {
 		&values.body,
 		&values.bodyTruncated,
 		&values.retainedBody,
+		&values.senderID, &values.isGroup, &values.quoteID, &values.quoteText, &values.quoteFromMe,
 	); err != nil {
 		return model.Message{}, sqliteOperationError(err)
 	}
 	return sqliteMessageFromValues(chatID, messageID, values)
 }
 
-const sqliteMessagePageColumns = `
-chat_id, message_id, sent_at, from_me, body, body_truncated, retained_body`
+const sqliteMessageValueColumns = `sent_at, from_me, body, body_truncated, retained_body,
+sender_id, is_group, quote_id, quote_text, quote_from_me`
+
+const sqliteMessagePageColumns = `chat_id, message_id, ` + sqliteMessageValueColumns
 
 const sqliteFirstMessagePageSQL = `
 SELECT ` + sqliteMessagePageColumns + `
