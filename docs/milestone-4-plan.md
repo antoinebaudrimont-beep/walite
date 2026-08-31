@@ -413,3 +413,173 @@ the new screen test was fixed by capturing immutable frames on the drawing
 goroutine (five consecutive focused race runs passed). The unchanged SQLite
 batch-timing test also flaked during the first full race run; it passed in
 isolation and in the final full race suite. SQLite code/tests were not changed.
+
+## Milestone 4C — Contact and group display names
+
+Status: implemented for review; **manual name/group validation pending**. Not
+complete and not committed. The starting tree was clean on
+`milestone/4-live-whatsapp`, at `ba78874` (completed real outgoing 4B work).
+
+### Confirmed metadata sources
+
+Checked the pinned whatsmeow module
+`v0.0.0-20260828224850-0fadda796019` and read-only reference
+`../references/whatsmeow` at `662ad1dc6900ffe1b1a2a6bc0fca01cba488d747`.
+The following API/field relationships agree in both versions (MPL-2.0).
+Only API use and field interpretation were adapted; no upstream implementation
+files were copied:
+
+- `store/store.go:ContactStore.GetContact(ctx, JID)` and
+  `store/sqlstore/store.go:SQLStore.GetContact`: local device-store/cache reads,
+  not contact discovery. `types/user.go:ContactInfo` supplies `FullName`,
+  `FirstName`, `BusinessName`, and `PushName`. A missing record is not an error
+  requiring a network fetch. No `GetAllContacts` call is made.
+- `store/store.go:Device.GetAltJID`: the existing local PN/LID mapping, as in
+  4B. A fresh/unlinked device's absent stores remain guarded. Name resolution
+  never modifies walite's alias registry.
+- `types/events/appstate.go:Contact`, `PushName`, `BusinessName`: naturally
+  delivered saved-name changes (`Contact.Action.FullName/FirstName`), push-name
+  changes (`NewPushName`, `JIDAlt`), and verified business-name changes
+  (`NewBusinessName`). Full-sync contact events are ignored; no synchronization
+  is enabled/requested to obtain names.
+- `types/events/events.go:GroupInfo.Name` and `JoinedGroup.GroupInfo.Name`:
+  naturally delivered authoritative group subjects. `types/message.go` supplies
+  `MessageInfo.PushName` and embedded `MessageSource.Chat`, `Sender`, `SenderAlt`,
+  `RecipientAlt`, `IsFromMe`. An actual group chat is identified inside WA by
+  `Chat.Server == types.GroupServer`, not by a generic layer parsing JIDs.
+- `group.go:Client.GetGroupInfo(ctx, JID)`: an explicit **network lookup of one
+  observed group** when its subject is not known. There is no exported local
+  subject-store reader in this API. Only the returned matching group's `Name`
+  crosses the adapter; walite does not enumerate groups or retain participants.
+  Upstream itself parses participants, maintains its routing cache, and saves
+  authoritative LID/redacted-phone mappings as part of this call. This is not
+  a names-only wire request or an application-controlled response-byte bound.
+
+All whatsmeow/protobuf/JID types remain inside `internal/wa`. Tests substitute
+the contact/group/alternate lookup functions and never connect to WhatsApp.
+
+### Identity, source priority and aliases
+
+`model.DisplayMetadata` is an immutable advisory value: opaque ID, at most the
+existing **1 KiB** display-name limit, source quality, and group flag. Names
+are normalized to valid UTF-8/single-line text. No chat/message is keyed by a
+name. Two people with the same name remain separate.
+
+Person-name priority is deterministic:
+
+1. saved `FullName`, then saved `FirstName`;
+2. verified business name;
+3. authoritative push name;
+4. `+` plus digits from a validated PN JID (at most 15 digits);
+5. original opaque ID, including unknown LIDs.
+
+LID digits are never interpreted as a phone number; redacted phone strings are
+not promoted to a full phone number. Group subject is a separate highest rank
+used only for groups. Empty/lower-quality updates cannot erase a known name.
+Equal-quality live observations rename the label; equal-quality local PN/LID
+contact-record ties prefer the PN record regardless of request order. A live
+update arriving during a lookup wins over its stale result.
+
+Lookups read 4B's existing bounded alias table and, when necessary, the local
+`Device.GetAltJID` mapping. Event-provided `SenderAlt`/`RecipientAlt` pairs are
+preferred. A label is offered for both authoritative spellings; the existing
+chat keeps its established ChatID. There is no second alias registry, inferred
+name-based merge, identity-slot consumption by group participants, or alias
+eviction. The 4B identity capacity/conflict policy is unchanged.
+
+### Message and advisory-update paths
+
+Incoming group text now retains bounded generic `Message.SenderID` and
+`Message.IsGroup` through `Event -> WriteRealtime -> Memory -> LiveEvent -> cmd
+adapter -> TUI`. Sender identity is included in constructor/copy/pruning/batch
+byte accounting. Maximum writer-message validation includes that extra bounded
+ID; existing event reservations and queue counts are unchanged. Duplicate
+messages retain established sender/quote data without another committed insert.
+
+Names arrive through a **separate advisory metadata channel**, not a new kind
+of committed message. `cmd/walite` owns its cancellable forwarding goroutine:
+apply the label to `Memory`, then send the accepted metadata to the TUI. Memory
+updates display fields only and caches labels for not-yet-created chats/people.
+It does not insert chats/messages or change unread counts, activity order,
+timestamps or selection. Existing chats retain their known quality even when
+an advisory cache slot is replaced.
+
+TUI snapshot/live fields remain plain presentation values, preserving its
+enforced model/service/store/WA import boundary. A late name updates the chat
+list/header and retained matching group-sender labels without rebuilding state.
+Draft, cursor, reply target/selection, viewport, emoji/settings popups and
+stable IDs survive. Direct message bodies do not repeat the chat name. Incoming
+group messages have a compact bold sender line aligned with the existing
+timestamp/body layout; unknown participants use their opaque SenderID (or
+`Unknown sender` if identity was absent). From-me messages omit that extra label.
+Group sender rows are included in viewport measurement. Existing grapheme/cell
+truncation, unread suffix reservation, full-frame clearing and narrow layout
+are reused. Duplicate/lower-quality/empty metadata produces no redraw; changed
+presentation produces one frame, with no polling/idle redraw.
+
+The backend remains Memory. No SQLite schema, production SQLite composition,
+or persistence of these new fields is claimed. Reconnect/authentication, real
+send/protobuf behavior, bounded send worker, reservation-before-transport,
+reply handling and committed LiveEvents semantics are unchanged. Group replies
+remain unavailable despite the new presentation-only sender identity.
+
+### Bounded lookup and fallback policy
+
+- One connection-source-owned lookup worker, cancelled and joined on exit;
+  no goroutine per message or lookup. WhatsApp callbacks perform no lookup I/O.
+- Fixed **32 pending requests**, plus one in flight, deduplicated across known
+  PN/LID pairs. Reversed pairs remain intact. A newly learned alternate during
+  an in-flight lookup may schedule one coalesced follow-up. Overflow keeps older
+  pending work; a subsequent observation may request the missing label again.
+- Fixed **128-entry FIFO name caches** in the adapter, Memory and TUI; one
+  pending latest value per adapter slot, and capacity-one metadata channels.
+  Replacement discards advisory labels, never identity or committed messages.
+  Already-present chat/message labels retain their established quality; an
+  uncached future presentation can fall back to its opaque ID.
+- At most **256 distinct local contact reads per session**, once per JID,
+  including misses/failures. This also bounds additional entries our reads can
+  create in upstream `SQLStore.contactCache`; it is not a claim that all upstream
+  caches/activity are globally bounded by walite. The attempt set has no eviction.
+- At most **32 group network attempts per session**, one per observed group,
+  including failed attempts; no retry loop. Known/live subjects skip lookups.
+  Later natural subject events can still improve names after the limit.
+- Each lookup gets a **three-second context deadline**, and shutdown cancels it.
+  No real-client wait is in the message-admission, TUI or callback path. An
+  unavailable lookup leaves a safe fallback; it cannot fail committed traffic.
+
+These modest session limits leave headroom beyond the unchanged 16-chat/32-
+message-per-chat TUI working set without mirroring the global address book.
+No participant roster is traversed for name lookup. Contacts/subjects beyond
+these limits still receive live metadata observations, but may remain opaque
+until a later session. The cache limits are not identity-routing limits.
+
+Explicit exclusions: **read receipts/MarkRead**, delivery-receipt changes,
+selected-chat side effects, history/contact synchronization, media, roster UI,
+contact editing, quote-history reconstruction and outgoing transport changes.
+
+### Validation and manual gate
+
+Deterministic tests cover name-source priority and Unicode/length bounds;
+PN/LID mapping/order/coalescing; late saved/group updates racing stale lookups;
+fixed caches, request/attempt limits and cancellation; message delivery during
+a blocked group lookup; sender identity through store/LiveEvent/snapshot and
+live adapters; simulated-screen chat/sender names and opaque fallbacks; same-name
+distinct identities; state preservation; long-name resize and from-me rendering;
+metadata-only updates, duplicate protection and redraw counts.
+
+Manual validation must use the existing linked session (no re-pair required):
+check known direct names, one actual group subject, a received group's sender
+label, repeated chat switching without ghosting/PN-LID duplicates, then one
+normal send and one one-to-one reply. Automated tests do not perform these real
+operations. Do not mark 4C complete until this manual gate succeeds.
+
+Automated 4C validation passed: gofmt of all changed Go files, `go mod tidy`,
+`go mod tidy -diff`, `go vet ./...`, `go test ./...`, final
+`go test -race ./...`, and `git diff --check`. Twenty new tests cover the
+4C behavior above. Focused name/group/identity/real-text/reply/resize/ghosting
+tests also pass uncached, both normally and with race detection.
+`go.mod` and `go.sum` are unchanged. The first full race run encountered the
+previously documented SQLite queue-saturation timing assertion (13 rather than
+14 writes in its second transaction); its isolated race rerun and the subsequent
+complete race suite passed. No SQLite source/tests were modified and no data
+race was reported. No real connection, message send or commit was performed.

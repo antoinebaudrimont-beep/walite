@@ -18,9 +18,10 @@ const connectedShutdownGrace = 2 * time.Second
 // connectedApplicationService uses capabilities of the one connection-owned
 // client. Chat data still passes through Memory, the writer and LiveEvents.
 type connectedApplicationService struct {
-	core   *service.Core
-	store  *store.Memory
-	sender wa.TextSender
+	core    *service.Core
+	store   *store.Memory
+	sender  wa.TextSender
+	display displaySource
 }
 
 func newConnectedApplicationService(source service.EventSource, sender wa.TextSender) (applicationService, error) {
@@ -56,7 +57,19 @@ func newConnectedApplicationService(source service.EventSource, sender wa.TextSe
 	if err != nil {
 		return nil, err
 	}
-	return &connectedApplicationService{core: core, store: memory, sender: sender}, nil
+	display, _ := source.(displaySource)
+	return &connectedApplicationService{core: core, store: memory, sender: sender, display: display}, nil
+}
+
+func (application *connectedApplicationService) DisplayUpdates() <-chan model.DisplayMetadata {
+	if application.display == nil {
+		return nil
+	}
+	return application.display.DisplayUpdates()
+}
+
+func (application *connectedApplicationService) ApplyDisplayMetadata(ctx context.Context, metadata model.DisplayMetadata) (model.DisplayMetadata, error) {
+	return application.store.ApplyDisplayMetadata(ctx, metadata)
 }
 
 func (application *connectedApplicationService) ValidateText(request service.SendTextRequest) error {

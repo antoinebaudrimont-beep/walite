@@ -16,16 +16,20 @@ const (
 type messageID string
 
 type messageView struct {
-	id           messageID
-	sentAt       time.Time
-	time         string
-	text         string
-	fromMe       bool
-	bodyRetained bool
-	replyToID    messageID
-	hasReply     bool
-	replyText    string
-	replyFromMe  bool
+	id            messageID
+	sentAt        time.Time
+	time          string
+	text          string
+	fromMe        bool
+	bodyRetained  bool
+	replyToID     messageID
+	hasReply      bool
+	replyText     string
+	replyFromMe   bool
+	senderID      string
+	senderName    string
+	senderQuality uint8
+	isGroup       bool
 }
 
 // Presentation mirrors the application's bounded quote fields without an
@@ -40,6 +44,7 @@ func validReplyMetadata(id, text string, fromMe bool) bool {
 type chatView struct {
 	id           string
 	title        string
+	titleQuality uint8
 	isGroup      bool
 	messages     [maxMessages]messageView
 	messageCount int

@@ -17,6 +17,7 @@ const (
 
 type viewModel struct {
 	chats           *chatState
+	display         displayState
 	chatView        chatViewState
 	mode            inputMode
 	composer        composerState
@@ -353,9 +354,17 @@ func drawMessage(screen tcell.Screen, model *viewModel, chatIndex int, message m
 		bodyX += prefixWidth
 	}
 	rows := 0
+	if message.isGroup && !message.fromMe {
+		fillMessageRow(screen, x, y, limit, style)
+		if showTimestamp {
+			putText(screen, x, y, x+timestampTextWidth, timestampText(message.time), style)
+		}
+		putText(screen, bodyX, y, limit, truncateDisplayWidth(senderLabel(message), limit-bodyX), style.Bold(true))
+		rows++
+	}
 	if message.hasReply && y+rows < bottom {
 		fillMessageRow(screen, x, y+rows, limit, style)
-		if showTimestamp {
+		if showTimestamp && rows == 0 {
 			putText(screen, x, y+rows, x+timestampTextWidth, timestampText(message.time), style)
 		}
 		reference := "original message unavailable"
@@ -500,9 +509,13 @@ func wrappedMessageLines(message messageView, width int, showTimestamps bool) in
 	if bodyWidth <= 0 {
 		bodyWidth = 1
 	}
+	extra := 0
+	if message.isGroup && !message.fromMe {
+		extra = 1
+	}
 	if message.text == "" {
 		if message.hasReply {
-			return 1
+			return 1 + extra
 		}
 		return 1
 	}
@@ -515,7 +528,7 @@ func wrappedMessageLines(message messageView, width int, showTimestamps bool) in
 	if message.hasReply {
 		lines++
 	}
-	return lines
+	return lines + extra
 }
 
 func nextWrappedLine(value string, width int) (string, string) {

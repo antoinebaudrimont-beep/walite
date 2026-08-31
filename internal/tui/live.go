@@ -43,6 +43,12 @@ func applyLiveMessage(model *viewModel, event LiveMessage) bool {
 	}
 
 	mutation := model.chats.applyLiveMessage(chatIndex, event)
+	if chat, ok := model.chats.chatAt(chatIndex); ok {
+		chat.isGroup = chat.isGroup || event.IsGroup
+		if enrichChatDisplay(chat, &model.display) {
+			mutation.changed = true
+		}
+	}
 	if !mutation.changed {
 		return false
 	}
@@ -102,6 +108,7 @@ func validLiveMessage(event LiveMessage) bool {
 	return event.ChatID != "" && event.MessageID != "" &&
 		utf8.ValidString(event.ChatID) && utf8.ValidString(event.MessageID) && utf8.ValidString(event.Text) &&
 		validReplyMetadata(event.ReplyToID, event.ReplyToText, event.ReplyToFromMe) &&
+		len(event.SenderID) <= 512 && utf8.ValidString(event.SenderID) &&
 		!event.SentAt.IsZero() && !event.ActivityTime.IsZero() && !event.ActivityTime.Before(event.SentAt)
 }
 
@@ -138,6 +145,7 @@ func (state *chatState) applyLiveMessage(chatIndex int, event LiveMessage) liveM
 		replyFromMe:  event.ReplyToFromMe,
 		replyToID:    messageID(event.ReplyToID),
 		hasReply:     event.ReplyToID != "",
+		senderID:     event.SenderID, isGroup: event.IsGroup,
 	}
 	inserted, insertionIndex := insertBoundedMessage(chat, message)
 	return liveMessageMutation{changed: changed || inserted, inserted: inserted, insertionIndex: insertionIndex}

@@ -93,6 +93,22 @@ func newWhatsmeowConnectionClient(ctx context.Context, sessionPath string) (*wha
 		}
 		return device.GetAltJID(ctx, jid)
 	}
+	wrapped.realtime.display = newDisplayResolver(wrapped.realtime.aliases, wrapped.realtime.lookup,
+		func(ctx context.Context, jid types.JID) (types.ContactInfo, error) {
+			if device.Contacts == nil {
+				return types.ContactInfo{}, nil
+			}
+			return device.Contacts.GetContact(ctx, jid)
+		}, func(ctx context.Context, jid types.JID) (string, error) {
+			info, err := wrapped.client.GetGroupInfo(ctx, jid)
+			if err != nil {
+				return "", err
+			}
+			if info == nil || info.JID != jid {
+				return "", errors.New("group metadata identity mismatch")
+			}
+			return info.Name, nil
+		})
 	// A nil logger selects whatsmeow's no-op logger. This is mandatory during
 	// pairing because the upstream QR helper debug-logs the raw QR token.
 	wrapped.handlerID = wrapped.client.AddEventHandler(wrapped.handleEvent)
@@ -160,12 +176,16 @@ func (client *whatsmeowConnectionClient) Close() error {
 }
 
 func (client *whatsmeowConnectionClient) handleEvent(raw any) {
+	if client != nil && client.realtime != nil {
+		client.realtime.display.observeEvent(raw)
+	}
 	if message, ok := raw.(*events.Message); ok {
 		now := time.Now
 		if client != nil && client.now != nil {
 			now = client.now
 		}
 		if event, recognized := adaptTextMessage(message, now().UTC()); recognized && client.realtime != nil {
+			client.realtime.display.observeMessage(message.Info)
 			client.realtime.admitWithAlternate(event, messageChatAlternate(message.Info))
 		}
 		return
@@ -238,12 +258,19 @@ func adaptTextMessage(incoming *events.Message, receivedAt time.Time) (model.Eve
 	if text == "" {
 		return model.Event{}, false
 	}
+	senderID := ""
+	group := incoming.Info.Chat.Server == types.GroupServer
+	if group && !incoming.Info.Sender.IsEmpty() {
+		senderID = incoming.Info.Sender.ToNonAD().String()
+	}
 	message, err := model.NewMessage(model.MessageInput{
 		ChatID:    incoming.Info.Chat.String(),
 		MessageID: string(incoming.Info.ID),
 		SentAt:    incoming.Info.Timestamp,
 		FromMe:    incoming.Info.IsFromMe,
 		Text:      text,
+		SenderID:  senderID,
+		IsGroup:   group,
 	})
 	if err != nil {
 		return model.Event{}, false

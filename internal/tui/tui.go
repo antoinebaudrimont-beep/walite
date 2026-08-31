@@ -123,11 +123,21 @@ func runInitialized(
 	}()
 	liveEvents := input.LiveEvents
 	sendResults := input.SendResults
+	displayUpdates := input.DisplayUpdates
 
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case value, ok := <-displayUpdates:
+			if !ok {
+				displayUpdates = nil
+				continue
+			}
+			if applyDisplayMetadata(&model, value) {
+				draw(screen, &model)
+				screen.Show()
+			}
 		case result, ok := <-sendResults:
 			if !ok {
 				sendResults = nil

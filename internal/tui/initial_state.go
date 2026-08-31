@@ -42,6 +42,8 @@ type InitialMessage struct {
 	ReplyToID     string
 	ReplyToText   string
 	ReplyToFromMe bool
+	SenderID      string
+	IsGroup       bool
 }
 
 // LiveMessage is an immutable-by-convention committed message presentation
@@ -58,6 +60,8 @@ type LiveMessage struct {
 	ReplyToFromMe bool
 	UnreadCount   uint32
 	ActivityTime  time.Time
+	SenderID      string
+	IsGroup       bool
 }
 
 // SendRequest is an immutable-by-convention outgoing presentation request.
@@ -78,7 +82,8 @@ type Input struct {
 	Send         func(context.Context, SendRequest) error
 	// When non-nil, Send performs bounded admission only; completion arrives
 	// here and the draft remains protected until that result is processed.
-	SendResults <-chan SendResult
+	SendResults    <-chan SendResult
+	DisplayUpdates <-chan DisplayMetadata
 }
 
 func chatStateFromInitial(initial InitialState) (*chatState, error) {
@@ -104,6 +109,9 @@ func chatStateFromInitial(initial InitialState) (*chatState, error) {
 		chat.messageCount = len(sourceChat.Messages)
 		seenMessages := make(map[string]struct{}, len(sourceChat.Messages))
 		for messageIndex, sourceMessage := range sourceChat.Messages {
+			if len(sourceMessage.SenderID) > 512 || !utf8.ValidString(sourceMessage.SenderID) {
+				return nil, errors.New("tui initial state rejected")
+			}
 			if !validReplyMetadata(sourceMessage.ReplyToID, sourceMessage.ReplyToText, sourceMessage.ReplyToFromMe) {
 				return nil, errors.New("tui initial state rejected")
 			}
@@ -129,6 +137,7 @@ func chatStateFromInitial(initial InitialState) (*chatState, error) {
 				replyFromMe:  sourceMessage.ReplyToFromMe,
 				replyToID:    messageID(sourceMessage.ReplyToID),
 				hasReply:     sourceMessage.ReplyToID != "",
+				senderID:     sourceMessage.SenderID, isGroup: sourceMessage.IsGroup,
 			}
 		}
 	}

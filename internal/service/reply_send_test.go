@@ -110,7 +110,7 @@ func TestSendRequestAllowsOnlyOneValidatedQuote(t *testing.T) {
 }
 
 func TestQuotedMessageFitsMinimumWriterQueueBudget(t *testing.T) {
-	const maxMessageBytes = int64(3*model.MaxIdentifierBytes + model.MaxRetainedTextBytes + model.MaxQuoteTextBytes)
+	const maxMessageBytes = int64(4*model.MaxIdentifierBytes + model.MaxRetainedTextBytes + model.MaxQuoteTextBytes)
 	for _, history := range []bool{false, true} {
 		options := validCoreOptions()
 		queue := &options.LiveWrites

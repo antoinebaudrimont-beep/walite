@@ -16,7 +16,7 @@ const (
 
 	writeBatchRecordBytes = 32
 	maxWriteBatchBytes    = MaxWriteBatchMessages *
-		(3*MaxIdentifierBytes + MaxRetainedTextBytes + MaxQuoteTextBytes + writeBatchRecordBytes)
+		(4*MaxIdentifierBytes + MaxRetainedTextBytes + MaxQuoteTextBytes + writeBatchRecordBytes)
 )
 
 // ContactInput is the unvalidated input accepted by NewContact.
@@ -241,6 +241,7 @@ func (message Message) WithoutBody() Message {
 		withoutBody.messageID.value,
 		withoutBody.text,
 		withoutBody.quote,
+		withoutBody.senderID,
 	)
 	if !ok {
 		// Valid Messages cannot reach this branch because both identifiers are
@@ -470,6 +471,8 @@ func cloneNormalizedMessage(message Message) (Message, int, error) {
 		fromMe:        message.fromMe,
 		text:          strings.Clone(message.text),
 		quote:         quote,
+		senderID:      ContactID{value: strings.Clone(message.senderID.value)},
+		isGroup:       message.isGroup,
 		bodyTruncated: message.bodyTruncated,
 		bodyRetained:  message.bodyRetained,
 		byteSize:      byteSize,

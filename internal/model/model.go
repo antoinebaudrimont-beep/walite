@@ -39,6 +39,8 @@ type MessageInput struct {
 	FromMe            bool
 	Text              string
 	Quote             TextQuote
+	SenderID          string
+	IsGroup           bool
 }
 
 // Message is an immutable normalized message value.
@@ -49,6 +51,8 @@ type Message struct {
 	fromMe        bool
 	text          string
 	quote         TextQuote
+	senderID      ContactID
+	isGroup       bool
 	bodyTruncated bool
 	bodyRetained  bool
 	byteSize      int
@@ -71,7 +75,7 @@ func (message Message) WithChatID(id ChatID) (Message, error) {
 		return Message{}, err
 	}
 	message.chatID = ownedID
-	message.byteSize, _ = messageByteSize(id.String(), message.messageID.String(), message.text, message.quote)
+	message.byteSize, _ = messageByteSize(id.String(), message.messageID.String(), message.text, message.quote, message.senderID)
 	return message, nil
 }
 
@@ -98,12 +102,21 @@ func (message Message) Text() string {
 // Quote returns the bounded same-chat reply reference, or zero for plain text.
 func (message Message) Quote() TextQuote { return message.quote }
 
+func (message Message) SenderID() ContactID { return message.senderID }
+func (message Message) IsGroup() bool       { return message.isGroup }
+
+func (message Message) WithSender(sender ContactID, group bool) Message {
+	message.senderID, message.isGroup = sender, group
+	message.byteSize, _ = messageByteSize(message.chatID.value, message.messageID.value, message.text, message.quote, sender)
+	return message
+}
+
 // WithQuote returns an immutable copy with a constructor-owned quote. Like
 // WithoutBody, it leaves identity, timestamps and direction unchanged. Event
 // and batch constructors still validate and charge the complete message.
 func (message Message) WithQuote(quote TextQuote) Message {
 	message.quote = quote
-	message.byteSize, _ = messageByteSize(message.chatID.value, message.messageID.value, message.text, quote)
+	message.byteSize, _ = messageByteSize(message.chatID.value, message.messageID.value, message.text, quote, message.senderID)
 	return message
 }
 

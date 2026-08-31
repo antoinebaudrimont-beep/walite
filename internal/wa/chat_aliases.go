@@ -27,6 +27,26 @@ type chatAliases struct {
 	count   int
 }
 
+// alternateFor is a read-only view of the existing identity registry. Display
+// lookups (including group participants) never consume its non-evicting slots.
+func (aliases *chatAliases) alternateFor(id model.ChatID) model.ChatID {
+	if aliases == nil {
+		return model.ChatID{}
+	}
+	aliases.mu.Lock()
+	defer aliases.mu.Unlock()
+	for i := 0; i < aliases.count; i++ {
+		entry := aliases.entries[i]
+		if entry.primary == id {
+			return entry.alternate
+		}
+		if entry.alternate == id {
+			return entry.primary
+		}
+	}
+	return model.ChatID{}
+}
+
 func directChatJID(id model.ChatID) (types.JID, bool) {
 	jid, err := textRecipient(id)
 	return jid, err == nil && (jid.Server == types.DefaultUserServer || jid.Server == types.HiddenUserServer)

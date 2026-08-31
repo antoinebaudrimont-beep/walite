@@ -59,7 +59,7 @@ func TestMessageQuoteSurvivesNormalizedCopiesAndByteAccounting(t *testing.T) {
 func TestMessageQuoteKeepsMaximumBatchBounded(t *testing.T) {
 	id := strings.Repeat("i", MaxIdentifierBytes)
 	quote, _ := NewTextQuote(id, strings.Repeat("q", MaxQuoteTextBytes), true)
-	message, err := NewMessage(MessageInput{ChatID: id, MessageID: id, SentAt: time.Unix(1, 0), Text: strings.Repeat("b", MaxRetainedTextBytes), Quote: quote})
+	message, err := NewMessage(MessageInput{ChatID: id, MessageID: id, SenderID: id, IsGroup: true, SentAt: time.Unix(1, 0), Text: strings.Repeat("b", MaxRetainedTextBytes), Quote: quote})
 	if err != nil {
 		t.Fatal(err)
 	}

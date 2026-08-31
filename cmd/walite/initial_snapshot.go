@@ -96,6 +96,7 @@ func buildInitialTUIState(ctx context.Context, source applicationService) (tui.I
 				ReplyToID:     message.Quote().MessageID().String(),
 				ReplyToText:   message.Quote().Text(),
 				ReplyToFromMe: message.Quote().FromMe(),
+				SenderID:      message.SenderID().String(), IsGroup: message.IsGroup(),
 			}
 		}
 		result.Chats[index] = initialChat

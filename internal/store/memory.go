@@ -37,16 +37,19 @@ func (err *Error) Error() string {
 // Memory is a deterministic in-memory store. The outer map is bounded by
 // maxChats and every message map by model.MaxRetentionSnapshotSummaries.
 type Memory struct {
-	mu       sync.RWMutex
-	maxChats int
-	chats    map[string]*memoryChat
+	mu          sync.RWMutex
+	maxChats    int
+	chats       map[string]*memoryChat
+	display     [model.DisplayMetadataCapacity]model.DisplayMetadata
+	displayNext int
 }
 
 type memoryChat struct {
-	chat      model.Chat
-	messages  map[string]model.Message
-	anchor    model.MessageAnchor
-	hasAnchor bool
+	chat           model.Chat
+	messages       map[string]model.Message
+	anchor         model.MessageAnchor
+	hasAnchor      bool
+	displayQuality model.DisplayQuality
 }
 
 func NewMemory(maxChats int) (*Memory, error) {
@@ -176,6 +179,11 @@ func (memory *Memory) writeBatch(ctx context.Context, batch model.WriteBatch, em
 			if prior.Quote() != (model.TextQuote{}) {
 				message = message.WithQuote(prior.Quote())
 			}
+			sender := message.SenderID()
+			if prior.SenderID().String() != "" {
+				sender = prior.SenderID()
+			}
+			message = message.WithSender(sender, message.IsGroup() || prior.IsGroup())
 		} else {
 			inserted[i] = true
 			if newIDs[chatKey] == nil {
@@ -220,6 +228,7 @@ func (memory *Memory) writeBatch(ctx context.Context, batch model.WriteBatch, em
 				}
 			}
 		}
+		chat = chat.WithDisplayMetadata(memory.displayFor(message.ChatID()))
 		chat, err = advanceChatForMessage(chat, message, rebuilt.Origin() == model.WriteRealtime)
 		if err != nil {
 			return model.LiveEventBatch{}, &Error{kind: rejected}
@@ -244,6 +253,9 @@ func (memory *Memory) writeBatch(ctx context.Context, batch model.WriteBatch, em
 	}
 	for chatKey, chat := range stagedChats {
 		memory.chats[chatKey].chat = chat
+		if metadata := memory.displayFor(chat.ID()); metadata.Quality() > memory.chats[chatKey].displayQuality {
+			memory.chats[chatKey].displayQuality = metadata.Quality()
+		}
 	}
 	for chatKey, messages := range staged {
 		for id, message := range messages {
@@ -270,7 +282,7 @@ func advanceChatForMessage(chat model.Chat, message model.Message, countUnread b
 		ID:            chat.ID().String(),
 		ContactID:     contactID,
 		DisplayName:   chat.DisplayName(),
-		IsGroup:       chat.IsGroup(),
+		IsGroup:       chat.IsGroup() || message.IsGroup(),
 		LastMessageAt: lastMessageAt,
 		UnreadCount:   unreadCount,
 		Muted:         chat.Muted(),
@@ -434,6 +446,11 @@ func (memory *Memory) Usage(ctx context.Context) (model.CacheUsage, error) {
 	memory.mu.RLock()
 	defer memory.mu.RUnlock()
 	var bytes int64
+	for _, metadata := range memory.display {
+		if metadata.ID().String() != "" {
+			bytes = addSaturated(bytes, int64(32+metadata.ByteSize()))
+		}
+	}
 	messages, bodies, anchors := 0, 0, 0
 	for _, chat := range memory.chats {
 		bytes = addSaturated(bytes, int64(chatEnvelopeBytes+len(chat.chat.ID().String())+len(chat.chat.DisplayName())))

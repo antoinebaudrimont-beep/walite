@@ -43,6 +43,7 @@ type RealtimeSource struct {
 	closeOnce sync.Once
 	aliases   *chatAliases
 	lookup    alternateJIDLookup
+	display   *displayResolver
 }
 
 func newRealtimeSource() *RealtimeSource {
@@ -118,6 +119,12 @@ func (source *RealtimeSource) Run(ctx context.Context) error {
 	}
 	defer close(source.realtime)
 	defer source.closeAdmission()
+	if source.display != nil {
+		workerCtx, cancel := context.WithCancel(ctx)
+		done := make(chan struct{})
+		go func() { defer close(done); source.display.run(workerCtx) }()
+		defer func() { cancel(); <-done }()
+	}
 	for {
 		entry, ok, err := source.take(ctx)
 		if err != nil {
@@ -207,6 +214,15 @@ func (source *RealtimeSource) RealtimeEvents() <-chan model.Event {
 		return nil
 	}
 	return source.realtime
+}
+
+// DisplayUpdates is advisory and independently coalesced; it never masquerades
+// as a committed message or consumes the lossless LiveEvents capacity.
+func (source *RealtimeSource) DisplayUpdates() <-chan model.DisplayMetadata {
+	if source == nil || source.display == nil {
+		return nil
+	}
+	return source.display.updates
 }
 
 func (source *RealtimeSource) MetadataHistoryJobs() <-chan model.HistoryJob {
