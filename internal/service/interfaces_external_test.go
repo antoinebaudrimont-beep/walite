@@ -14,6 +14,7 @@ import (
 var (
 	_ service.EventSource     = (*contractSource)(nil)
 	_ service.EventSource     = (*wa.FakeSource)(nil)
+	_ service.EventSource     = (*wa.RealtimeSource)(nil)
 	_ service.Clock           = (*contractClock)(nil)
 	_ service.Timer           = (*contractTimer)(nil)
 	_ service.MessageStore    = (*store.Memory)(nil)

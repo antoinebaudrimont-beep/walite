@@ -458,11 +458,13 @@ func (core *Core) runRealtimeIngress(ctx context.Context) error {
 			if err != nil {
 				return &CoreError{Kind: CoreMalformed}
 			}
-			if err = core.realtimeQ.TryPut(normalized); err == errQueueFull {
-				core.localDrops.add(1)
-				signal(core.localDropWake)
-				continue
-			} else if err != nil {
+			if err = core.realtimeQ.Put(ctx, normalized); err != nil {
+				if errors.Is(err, context.Canceled) {
+					return ctx.Err()
+				}
+				if errors.Is(err, errQueueStopped) {
+					return nil
+				}
 				return err
 			}
 		}

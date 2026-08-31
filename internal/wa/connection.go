@@ -112,6 +112,10 @@ type connectionClient interface {
 	Close() error
 }
 
+type realtimeSourceProvider interface {
+	RealtimeSource() *RealtimeSource
+}
+
 type connectionError struct {
 	kind  error
 	cause error
@@ -196,6 +200,20 @@ func (connection *Connection) Updates() <-chan ConnectionUpdate {
 		return nil
 	}
 	return connection.updates
+}
+
+// RealtimeSource returns the bounded message source owned by the same
+// long-lived client as this connection. Test-only lifecycle clients may not
+// provide one.
+func (connection *Connection) RealtimeSource() *RealtimeSource {
+	if connection == nil || connection.client == nil {
+		return nil
+	}
+	provider, ok := connection.client.(realtimeSourceProvider)
+	if !ok {
+		return nil
+	}
+	return provider.RealtimeSource()
 }
 
 // Run performs pairing when required, establishes the connection, and remains

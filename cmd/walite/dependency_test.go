@@ -45,7 +45,7 @@ func TestWhatsmeowDependencyStaysInsideInternalWA(t *testing.T) {
 	}
 }
 
-func TestMilestone3AProductionCompositionKeepsOfflineSender(t *testing.T) {
+func TestMilestone4AProductionCompositionUsesRealReceiveOnlySource(t *testing.T) {
 	application, err := os.ReadFile("application.go")
 	if err != nil {
 		t.Fatal(err)
@@ -54,10 +54,21 @@ func TestMilestone3AProductionCompositionKeepsOfflineSender(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(application), "newService:    newOfflineApplicationService") {
-		t.Fatal("production authentication no longer composes the offline service")
+	connected, err := os.ReadFile("connected_service.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(application), "connection.RealtimeSource()") ||
+		!strings.Contains(string(application), "newConnectedApplicationService(realtimeSource)") {
+		t.Fatal("production authentication does not compose the connection-owned realtime source")
 	}
 	if !strings.Contains(string(demo), "wa.NewOfflineTextSender") {
-		t.Fatal("offline service no longer constructs OfflineTextSender")
+		t.Fatal("offline fixtures no longer construct OfflineTextSender")
+	}
+	if strings.Contains(string(application), "newService:    newOfflineApplicationService") ||
+		strings.Contains(string(connected), "FakeSource") ||
+		strings.Contains(string(connected), "OfflineTextSender") ||
+		strings.Contains(string(connected), "NewWithTextSender") {
+		t.Fatal("connected production composition still contains synthetic incoming or outgoing traffic")
 	}
 }

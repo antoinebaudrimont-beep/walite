@@ -59,6 +59,7 @@ func run(ctx context.Context, screen tcell.Screen) error {
 			return launchXFCEPairingWindow(ctx, executable, runPairingCommand)
 		},
 		runLinked: func(ctx context.Context, screen tcell.Screen) error {
+			var realtimeSource *wa.RealtimeSource
 			return runAuthenticatedApplication(ctx, screen, authenticatedApplicationDependencies{
 				configuration: configurationStore,
 				newConnection: func(ctx context.Context) (applicationConnection, error) {
@@ -70,9 +71,16 @@ func run(ctx context.Context, screen tcell.Screen) error {
 						_ = connection.Close()
 						return nil, errPairingSessionUnlinked
 					}
+					realtimeSource = connection.RealtimeSource()
+					if realtimeSource == nil {
+						_ = connection.Close()
+						return nil, errors.New("WhatsApp realtime source unavailable")
+					}
 					return connection, nil
 				},
-				newService:    newOfflineApplicationService,
+				newService: func() (applicationService, error) {
+					return newConnectedApplicationService(realtimeSource)
+				},
 				runConnection: tui.RunConnectionInitialized,
 				runTUI:        tui.RunInitialized,
 			})

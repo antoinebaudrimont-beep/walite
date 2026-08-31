@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/antoinebaudrimont-beep/walite/internal/model"
 	"github.com/antoinebaudrimont-beep/walite/internal/service"
 	"github.com/antoinebaudrimont-beep/walite/internal/tui"
+	"github.com/antoinebaudrimont-beep/walite/internal/wa"
 	"github.com/gdamore/tcell/v2"
 )
 
@@ -16,6 +18,67 @@ type capturingSendApplication struct {
 	request service.SendTextRequest
 	calls   int
 	failure error
+}
+
+func TestConnectedApplicationRejectsSendAndTUIKeepsDraft(t *testing.T) {
+	source, err := wa.NewFakeSource(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	application, err := newConnectedApplicationService(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := application.(applicationTextSender); ok {
+		t.Fatal("connected application unexpectedly implements outgoing sends")
+	}
+	request := tui.SendRequest{ChatID: "real-chat@s.whatsapp.net", Text: "preserve this draft"}
+	if err := sendTextFromTUI(context.Background(), application, request); err == nil || !strings.Contains(err.Error(), "send unavailable") {
+		t.Fatalf("sendTextFromTUI=%v", err)
+	}
+
+	base := time.Date(2026, 8, 30, 10, 0, 0, 0, time.UTC)
+	receiveOnly := &receiveOnlyChatApplication{
+		authenticationReadyService: newAuthenticationReadyService(),
+		chat:                       mustSnapshotChat(t, "real-chat@s.whatsapp.net", "Real chat", false, 0, base),
+		message:                    mustSnapshotMessage(t, "real-chat@s.whatsapp.net", "incoming-1", base, false, "incoming text"),
+	}
+	screen := newStartupObservedScreen()
+	done := make(chan error, 1)
+	go func() {
+		done <- runStartedApplication(context.Background(), screen, tui.DefaultOptions(), receiveOnly, tui.Run)
+	}()
+	<-screen.shown
+	screen.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
+	<-screen.shown
+	for _, character := range "draft" {
+		screen.InjectKey(tcell.KeyRune, character, tcell.ModNone)
+		<-screen.shown
+	}
+	screen.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
+	screen.InjectKey(tcell.KeyLeft, 0, tcell.ModNone)
+	<-screen.shown
+	if rendered := startupScreenText(screen); !strings.Contains(rendered, "draft") || !strings.Contains(rendered, "incoming text") {
+		t.Fatalf("rejected connected send changed presentation:\n%s", rendered)
+	}
+	screen.InjectKey(tcell.KeyCtrlC, 0, tcell.ModNone)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+type receiveOnlyChatApplication struct {
+	*authenticationReadyService
+	chat    model.Chat
+	message model.Message
+}
+
+func (application *receiveOnlyChatApplication) InitialChats(context.Context, int) ([]model.Chat, error) {
+	return []model.Chat{application.chat}, nil
+}
+
+func (application *receiveOnlyChatApplication) InitialMessages(context.Context, model.ChatID, int) ([]model.Message, error) {
+	return []model.Message{application.message}, nil
 }
 
 func (*capturingSendApplication) Run(context.Context) error          { return nil }

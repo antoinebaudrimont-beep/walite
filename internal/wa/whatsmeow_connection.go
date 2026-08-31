@@ -10,7 +10,9 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
+	"github.com/antoinebaudrimont-beep/walite/internal/model"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types/events"
@@ -21,6 +23,8 @@ type whatsmeowConnectionClient struct {
 	container *sqlstore.Container
 	client    *whatsmeow.Client
 	events    chan protocolEvent
+	realtime  *RealtimeSource
+	now       func() time.Time
 	eventMu   sync.Mutex
 	handlerID uint32
 	closeOnce sync.Once
@@ -75,6 +79,8 @@ func newWhatsmeowConnectionClient(ctx context.Context, sessionPath string) (*wha
 		container: container,
 		client:    whatsmeow.NewClient(device, nil),
 		events:    make(chan protocolEvent, 1),
+		realtime:  newRealtimeSource(),
+		now:       time.Now,
 	}
 	// A nil logger selects whatsmeow's no-op logger. This is mandatory during
 	// pairing because the upstream QR helper debug-logs the raw QR token.
@@ -107,6 +113,13 @@ func (client *whatsmeowConnectionClient) Events() <-chan protocolEvent {
 	return client.events
 }
 
+func (client *whatsmeowConnectionClient) RealtimeSource() *RealtimeSource {
+	if client == nil {
+		return nil
+	}
+	return client.realtime
+}
+
 func (client *whatsmeowConnectionClient) Disconnect() {
 	if client != nil && client.client != nil {
 		client.client.Disconnect()
@@ -118,6 +131,9 @@ func (client *whatsmeowConnectionClient) Close() error {
 		return nil
 	}
 	client.closeOnce.Do(func() {
+		if client.realtime != nil {
+			client.realtime.closeAdmission()
+		}
 		if client.client != nil {
 			client.client.RemoveEventHandler(client.handlerID)
 		}
@@ -132,6 +148,16 @@ func (client *whatsmeowConnectionClient) Close() error {
 }
 
 func (client *whatsmeowConnectionClient) handleEvent(raw any) {
+	if message, ok := raw.(*events.Message); ok {
+		now := time.Now
+		if client != nil && client.now != nil {
+			now = client.now
+		}
+		if event, recognized := adaptTextMessage(message, now().UTC()); recognized && client.realtime != nil {
+			client.realtime.admit(event)
+		}
+		return
+	}
 	var event protocolEvent
 	switch raw.(type) {
 	case *events.Connected:
@@ -143,8 +169,8 @@ func (client *whatsmeowConnectionClient) handleEvent(raw any) {
 	case *events.LoggedOut:
 		event = protocolEvent{kind: protocolLoggedOut, cause: ErrConnectionFailed}
 	default:
-		// Message, history, receipt, media, typing, and all other protocol events
-		// are deliberately not adapted during Milestone 3A.
+		// History, receipt, media, typing, and all other protocol events are not
+		// part of the Milestone 4A realtime text boundary.
 		return
 	}
 	client.eventMu.Lock()
@@ -157,6 +183,43 @@ func (client *whatsmeowConnectionClient) handleEvent(raw any) {
 	case client.events <- event:
 	default:
 	}
+}
+
+func adaptTextMessage(incoming *events.Message, receivedAt time.Time) (model.Event, bool) {
+	if incoming == nil || incoming.Message == nil || incoming.SourceWebMsg != nil ||
+		incoming.IsEphemeral || incoming.IsViewOnce || incoming.IsViewOnceV2 ||
+		incoming.IsViewOnceV2Extension || incoming.IsDocumentWithCaption ||
+		incoming.IsLottieSticker || incoming.IsBotInvoke || incoming.IsEdit ||
+		incoming.NewsletterMeta != nil || incoming.Message.GetProtocolMessage() != nil {
+		return model.Event{}, false
+	}
+
+	text := ""
+	if incoming.Message.Conversation != nil {
+		text = incoming.Message.GetConversation()
+	} else if extended := incoming.Message.GetExtendedTextMessage(); extended != nil && extended.Text != nil {
+		text = extended.GetText()
+	} else {
+		return model.Event{}, false
+	}
+	if text == "" {
+		return model.Event{}, false
+	}
+	message, err := model.NewMessage(model.MessageInput{
+		ChatID:    incoming.Info.Chat.String(),
+		MessageID: string(incoming.Info.ID),
+		SentAt:    incoming.Info.Timestamp,
+		FromMe:    incoming.Info.IsFromMe,
+		Text:      text,
+	})
+	if err != nil {
+		return model.Event{}, false
+	}
+	event, err := model.NewEvent(message, receivedAt)
+	if err != nil {
+		return model.Event{}, false
+	}
+	return event, true
 }
 
 func prepareSessionPath(path string) (string, error) {

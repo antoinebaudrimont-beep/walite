@@ -40,6 +40,7 @@ func draw(screen tcell.Screen, model *viewModel) {
 	if width <= 0 || height <= 0 {
 		return
 	}
+	clearMessagePane(screen, width, height)
 	drawBase(screen, model, width, height)
 	if model.emojiPicker.open {
 		drawEmojiPicker(screen, model, width, height)
@@ -47,6 +48,25 @@ func draw(screen tcell.Screen, model *viewModel) {
 	if model.settingsOpen {
 		drawSettingsPopup(screen, model, width, height)
 	}
+}
+
+// clearMessagePane resets the entire conversation interior, including header,
+// unused rows, line tails, reply preview, and composer. Clear alone only resets
+// tcell's logical contents: Show can skip a physically stale cell that its
+// buffer already considers blank. In tcell v2.13.10 unlocking a region also
+// marks every cell dirty, forcing those blanks into the same changed-frame
+// flush. Walite does not use locked terminal graphics in this region.
+func clearMessagePane(screen tcell.Screen, width, height int) {
+	left, top, right, bottom := 0, 2, width, height-1
+	if height < shortHeight {
+		left, top, right, bottom = 0, 0, width, height
+	} else if width >= narrowWidth {
+		left, top, right, bottom = paneSeparator(width)+1, 1, width-1, height-3
+	}
+	for y := top; y < bottom; y++ {
+		fillMessageRow(screen, left, y, right, tcell.StyleDefault)
+	}
+	screen.LockRegion(left, top, right-left, bottom-top, false)
 }
 
 func drawBase(screen tcell.Screen, model *viewModel, width, height int) {

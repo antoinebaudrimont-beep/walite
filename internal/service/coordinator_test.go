@@ -46,6 +46,50 @@ func TestCoreWeightsRejectMalformed(t *testing.T) {
 		t.Fatal("malformed update weighed")
 	}
 }
+
+func TestRealtimeIngressBackpressuresWithoutDroppingRecognizedEvent(t *testing.T) {
+	source := newCoreTestSource()
+	budget := mustBudget(t, 2*model.MaxNormalizedEventBytes)
+	realtime, err := newBoundedQueue(1, budget, weighEvent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstMessage := historyMessage(t, "ingress-first", 0)
+	first, _ := model.NewEvent(firstMessage, writerTestTime)
+	secondMessage := historyMessage(t, "ingress-second", 1)
+	second, _ := model.NewEvent(secondMessage, writerTestTime)
+	if err := realtime.TryPut(first); err != nil {
+		t.Fatal(err)
+	}
+	source.realtime <- second
+	close(source.realtime)
+	drops := &saturatingCounter{}
+	core := &Core{source: source, realtimeQ: realtime, localDrops: drops, localDropWake: make(chan struct{}, 1)}
+	done := make(chan error, 1)
+	go func() { done <- core.runRealtimeIngress(context.Background()) }()
+	for realtime.Stats().EntryWaiters != 1 {
+		<-realtime.stateChanges()
+	}
+	if drops.load() != 0 {
+		t.Fatalf("drops=%d", drops.load())
+	}
+	owned, ok := realtime.TryTake()
+	if !ok || owned.Value().Message().MessageID().String() != "ingress-first" {
+		t.Fatal("prefilled event missing")
+	}
+	_ = owned.Release()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	owned, ok = realtime.TryTake()
+	if !ok || owned.Value().Message().MessageID().String() != "ingress-second" {
+		t.Fatal("backpressured event missing")
+	}
+	_ = owned.Release()
+	if realtime.Stats().UsedBytes != 0 {
+		t.Fatalf("used bytes=%d", realtime.Stats().UsedBytes)
+	}
+}
 func TestSystemClockStructural(t *testing.T) {
 	clock := NewSystemClock()
 	if clock.Now().IsZero() {

@@ -6,7 +6,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
+	waE2E "go.mau.fi/whatsmeow/proto/waE2E"
+	waTypes "go.mau.fi/whatsmeow/types"
 	waEvents "go.mau.fi/whatsmeow/types/events"
 )
 
@@ -48,12 +51,30 @@ func TestSessionLinkedClosesUnlinkedStoreBeforeReopen(t *testing.T) {
 	}
 }
 
-func TestWhatsmeowEventAdapterIgnoresMessages(t *testing.T) {
-	client := &whatsmeowConnectionClient{events: make(chan protocolEvent, 1)}
-	client.handleEvent(&waEvents.Message{})
+func TestWhatsmeowEventAdapterSeparatesMessagesFromLifecycle(t *testing.T) {
+	receivedAt := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	client := &whatsmeowConnectionClient{
+		events:   make(chan protocolEvent, 1),
+		realtime: newRealtimeSource(),
+		now:      func() time.Time { return receivedAt },
+	}
+	text := "real text"
+	client.handleEvent(&waEvents.Message{
+		Info: waTypes.MessageInfo{
+			MessageSource: waTypes.MessageSource{Chat: waTypes.NewJID("12345", waTypes.DefaultUserServer)},
+			ID:            "message-1",
+			Timestamp:     receivedAt.Add(-time.Minute),
+		},
+		Message: &waE2E.Message{Conversation: &text},
+	})
 	if got := len(client.events); got != 0 {
 		t.Fatalf("message produced %d connection events", got)
 	}
+	client.realtime.mu.Lock()
+	if client.realtime.count != 1 {
+		t.Fatalf("message source entries=%d", client.realtime.count)
+	}
+	client.realtime.mu.Unlock()
 	client.handleEvent(&waEvents.Connected{})
 	if got := len(client.events); got != 1 {
 		t.Fatalf("connected produced %d events", got)
