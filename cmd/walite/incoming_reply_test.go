@@ -103,6 +103,7 @@ func TestIncomingCommittedReplyUsesDirectionalQuoteRenderer(t *testing.T) {
 					}
 				}
 				nextFrame()
+				nextFrame() // asynchronous selected-chat cache page
 				quote, err := model.NewTextQuote("original", excerpt, true)
 				if err != nil {
 					t.Fatal(err)
@@ -110,7 +111,7 @@ func TestIncomingCommittedReplyUsesDirectionalQuoteRenderer(t *testing.T) {
 				quoteLine := "↪ " + excerpt
 				prefix := 0
 				if timestamps {
-					quoteLine = "↪ 15:56 " + excerpt
+					quoteLine = "↪ " + at.In(time.Local).Format("15:04") + " " + excerpt
 					prefix = 7
 				}
 				var final incomingReplyFrame

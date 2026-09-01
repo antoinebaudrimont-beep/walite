@@ -16,24 +16,25 @@ const (
 )
 
 type viewModel struct {
-	chats           *chatState
-	display         displayState
-	chatView        chatViewState
-	mode            inputMode
-	composer        composerState
-	emojiPicker     emojiPickerState
-	replySelect     replySelectionState
-	replyTarget     replyTarget
-	options         Options
-	settingsOpen    bool
-	terminalWidth   int
-	terminalHeight  int
-	preferencesPath string
-	send            func(SendRequest) error
-	asyncSend       bool
-	sendPending     bool
-	sendUncertain   bool
-	sendStatus      string
+	chats            *chatState
+	display          displayState
+	chatView         chatViewState
+	mode             inputMode
+	composer         composerState
+	emojiPicker      emojiPickerState
+	replySelect      replySelectionState
+	replyTarget      replyTarget
+	options          Options
+	settingsOpen     bool
+	terminalWidth    int
+	terminalHeight   int
+	preferencesPath  string
+	send             func(SendRequest) error
+	asyncSend        bool
+	sendPending      bool
+	sendUncertain    bool
+	sendStatus       string
+	localReadRequest LocalReadRequest
 }
 
 func draw(screen tcell.Screen, model *viewModel) {
@@ -115,7 +116,7 @@ func drawNarrow(screen tcell.Screen, model *viewModel, width, height int) {
 	selectedIndex := model.chats.selectedIndex()
 	chat, ok := model.chats.selectedChat()
 	if !ok {
-		putText(screen, 0, 2, width, "No chats", tcell.StyleDefault.Dim(true))
+		putText(screen, 0, 2, width, "No chats — syncing…", tcell.StyleDefault.Dim(true))
 		putText(screen, 0, height-1, width, narrowNavigationFooter(model, width), tcell.StyleDefault.Dim(true))
 		return
 	}
@@ -177,7 +178,7 @@ func drawTwoPane(screen tcell.Screen, model *viewModel, width, height int) {
 	chat, ok := model.chats.selectedChat()
 	putText(screen, 2, 1, separator-2, title, tcell.StyleDefault.Bold(true))
 	if !ok {
-		putText(screen, 2, 3, separator-2, "No chats", tcell.StyleDefault.Dim(true))
+		putText(screen, 2, 3, separator-2, "No chats — syncing…", tcell.StyleDefault.Dim(true))
 		putText(screen, 2, footerTop+1, width-3, navigationFooter(model, false), tcell.StyleDefault.Dim(true))
 		return
 	}
@@ -185,8 +186,13 @@ func drawTwoPane(screen tcell.Screen, model *viewModel, width, height int) {
 	drawNewerMessagesIndicator(screen, model, width, height, separator+2, 2, width-2)
 
 	chatY := 3
-	for index := 0; index < model.chats.count() && chatY+index < footerTop; index++ {
-		y := chatY + index
+	visibleChats := footerTop - chatY
+	startChat := 0
+	if visibleChats > 0 && selectedIndex >= visibleChats {
+		startChat = selectedIndex - visibleChats + 1
+	}
+	for index := startChat; index < model.chats.count() && chatY+index-startChat < footerTop; index++ {
+		y := chatY + index - startChat
 		chat, ok := model.chats.chatAt(index)
 		if !ok {
 			break
@@ -330,6 +336,13 @@ func drawReplyPreview(screen tcell.Screen, model *viewModel, chatIndex, x, y, li
 
 func drawMessages(screen tcell.Screen, model *viewModel, chatIndex int, chat *chatView, start, end, x, y, limit, bottom int) {
 	for index := start; index < end && y < bottom; index++ {
+		if messageStartsVisibleDay(chat, index, start) {
+			drawDateSeparator(screen, x, y, limit, chat.messages[index].sentAt)
+			y++
+			if y >= bottom {
+				break
+			}
+		}
 		if model.chatView.hasUnreadBoundary(chat.messages[index]) && y+1 < bottom {
 			drawUnreadSeparator(screen, x, y, limit, model.chatView.unreadBoundary.count)
 			y++
@@ -466,7 +479,11 @@ func visibleMessageRange(model *viewModel, width, height int) (int, int) {
 	start := end
 	used := 0
 	for start > 0 {
-		lines := renderedMessageLines(model, chat.messages[start-1], messageWidth)
+		candidate := chat.messages[start-1]
+		lines := renderedMessageLines(model, candidate, messageWidth)
+		if !candidate.sentAt.IsZero() && (start == end || !sameLocalMessageDay(candidate.sentAt, chat.messages[start].sentAt)) {
+			lines++
+		}
 		if used > 0 && used+lines > rows {
 			break
 		}
@@ -492,6 +509,9 @@ func maximumScrollOffset(model *viewModel, width, height int) int {
 	used := 0
 	for end < chat.messageCount {
 		lines := renderedMessageLines(model, chat.messages[end], messageWidth)
+		if !chat.messages[end].sentAt.IsZero() && (end == 0 || !sameLocalMessageDay(chat.messages[end-1].sentAt, chat.messages[end].sentAt)) {
+			lines++
+		}
 		if used > 0 && used+lines > rows {
 			break
 		}
@@ -502,6 +522,13 @@ func maximumScrollOffset(model *viewModel, width, height int) int {
 		}
 	}
 	return chat.messageCount - end
+}
+
+func messageStartsVisibleDay(chat *chatView, index, visibleStart int) bool {
+	if chat == nil || index < 0 || index >= chat.messageCount || chat.messages[index].sentAt.IsZero() {
+		return false
+	}
+	return index == visibleStart || index == 0 || !sameLocalMessageDay(chat.messages[index-1].sentAt, chat.messages[index].sentAt)
 }
 
 func renderedMessageLines(model *viewModel, message messageView, width int) int {

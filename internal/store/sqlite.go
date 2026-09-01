@@ -509,6 +509,19 @@ func (store *SQLiteStore) EnsureChat(ctx context.Context, chat model.Chat) error
 	return store.writer.submit(ctx, newPendingChat(validated))
 }
 
+// MarkChatLocallyRead clears only walite's cached unread presentation state.
+// It is serialized with message writes and never sends a transport receipt.
+func (store *SQLiteStore) MarkChatLocallyRead(ctx context.Context, id model.ChatID, through time.Time) error {
+	if err := store.checkOpen(ctx); err != nil {
+		return err
+	}
+	validated, err := model.NewChatID(id.String())
+	if err != nil {
+		return newSQLiteError(ErrStoreRejected, err)
+	}
+	return store.writer.submit(ctx, newPendingLocalRead(validated, through))
+}
+
 // PutMessage submits one message to the bounded writer and waits for commit.
 func (store *SQLiteStore) PutMessage(ctx context.Context, message model.Message) error {
 	return store.SubmitMessage(ctx, message)
@@ -604,6 +617,11 @@ func (store *SQLiteStore) commitPendingWrites(requests *[sqliteMaxBatchWrites]pe
 			}
 			request.result.display = metadata
 			continue
+		case pendingLocalReadWrite:
+			if err := writeSQLiteLocalRead(ctx, transaction, request.chatID, request.readThrough); err != nil {
+				return time.Since(started), err
+			}
+			continue
 		case pendingMessageWrite:
 		default:
 			return time.Since(started), newSQLiteError(ErrStoreRejected, nil)
@@ -631,6 +649,18 @@ func (store *SQLiteStore) commitPendingWrites(requests *[sqliteMaxBatchWrites]pe
 	// A later permission failure degrades future writes, never this commit.
 	_ = store.checkWriteFiles()
 	return duration, nil
+}
+
+func writeSQLiteLocalRead(ctx context.Context, transaction *sql.Tx, chatID model.ChatID, through time.Time) error {
+	throughMilliseconds := int64(0)
+	if !through.IsZero() {
+		throughMilliseconds = through.UnixMilli()
+	}
+	_, err := transaction.ExecContext(ctx, markChatLocallyReadSQL, chatID.String(), throughMilliseconds)
+	if err != nil {
+		return fmt.Errorf("mark chat locally read: %w", sqliteOperationError(err))
+	}
+	return nil
 }
 
 func normalizeContact(contact model.Contact) (model.Contact, error) {
@@ -903,7 +933,12 @@ ON CONFLICT(chat_id) DO UPDATE SET
     END,
 	is_group = MAX(chats.is_group, excluded.is_group),
 	last_message_at = MAX(chats.last_message_at, excluded.last_message_at),
-	unread_count = MAX(chats.unread_count, excluded.unread_count),
+	-- A non-placeholder chat record carries an authoritative conversation
+	-- unread snapshot, unless newer realtime activity is already cached.
+	unread_count = CASE
+		WHEN chats.last_message_at > excluded.last_message_at THEN chats.unread_count
+		ELSE excluded.unread_count
+	END,
 	muted = excluded.muted,
 	archived = excluded.archived,
 	placeholder = 0,
@@ -923,6 +958,8 @@ const ensurePlaceholderChatSQL = `
 INSERT INTO chats(chat_id, placeholder, last_message_at, updated_at, ingest_seq)
 VALUES (?, 1, ?, ?, 0)
 ON CONFLICT(chat_id) DO NOTHING`
+
+const markChatLocallyReadSQL = `UPDATE chats SET unread_count = 0 WHERE chat_id = ? AND last_message_at <= ?`
 
 const insertMessageSQL = `
 INSERT INTO messages(

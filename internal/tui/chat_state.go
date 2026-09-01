@@ -46,10 +46,11 @@ type chatView struct {
 	title        string
 	titleQuality uint8
 	isGroup      bool
-	messages     [maxMessages]messageView
+	messages     *[maxMessages]messageView
 	messageCount int
 	unreadCount  uint32
 	activityTime time.Time
+	revision     uint64
 }
 
 type chatState struct {
@@ -105,6 +106,7 @@ func (state *chatState) moveSelection(delta int) bool {
 		return false
 	}
 	state.selected = next
+	state.chats[next].revision++
 	state.chats[next].unreadCount = 0
 	return true
 }
@@ -133,6 +135,7 @@ func (state *chatState) appendMessage(chatIndex int, message messageView) bool {
 	if message.id == "" {
 		message.id = state.allocateMessageID()
 	}
+	chat.ensureMessages()
 	if chat.messageCount < len(chat.messages) {
 		chat.messages[chat.messageCount] = message
 		chat.messageCount++
@@ -141,6 +144,12 @@ func (state *chatState) appendMessage(chatIndex int, message messageView) bool {
 	copy(chat.messages[:], chat.messages[1:])
 	chat.messages[len(chat.messages)-1] = message
 	return true
+}
+
+func (chat *chatView) ensureMessages() {
+	if chat != nil && chat.messages == nil {
+		chat.messages = new([maxMessages]messageView)
+	}
 }
 
 func (state *chatState) findMessageByID(chatIndex int, id messageID) (messageView, bool) {
@@ -153,7 +162,7 @@ func (state *chatState) findMessageByID(chatIndex int, id messageID) (messageVie
 
 func (state *chatState) messageIndexByID(chatIndex int, id messageID) (int, bool) {
 	chat, ok := state.chatAt(chatIndex)
-	if !ok || id == "" {
+	if !ok || id == "" || chat.messages == nil {
 		return 0, false
 	}
 	for index := 0; index < chat.messageCount; index++ {
@@ -177,6 +186,9 @@ func (state *chatState) allocateMessageID() messageID {
 func (state *chatState) containsMessageID(id messageID) bool {
 	for chatIndex := 0; chatIndex < state.chatCount; chatIndex++ {
 		chat := &state.chats[chatIndex]
+		if chat.messages == nil {
+			continue
+		}
 		for messageIndex := 0; messageIndex < chat.messageCount; messageIndex++ {
 			if chat.messages[messageIndex].id == id {
 				return true

@@ -30,7 +30,14 @@ func TestDisplayGroupSenderSurvivesSnapshotAdapter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := state.Chats[0].Messages[0]
+	if len(state.Chats[0].Messages) != 0 {
+		t.Fatal("startup summary preloaded group messages")
+	}
+	loaded, err := buildChatLoadResult(context.Background(), source, tui.ChatLoadRequest{ChatID: "group"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := loaded.Messages[0]
 	if got.SenderID != message.SenderID().String() || !got.IsGroup || got.Text != message.Text() || state.Chats[0].Title != chat.DisplayName() {
 		t.Fatal("snapshot lost group/sender display data")
 	}

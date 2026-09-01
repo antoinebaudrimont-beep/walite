@@ -254,3 +254,48 @@ func realtimeCoreOptions(values config.Values) service.Options {
 		ShutdownGrace: 2 * time.Second,
 	}
 }
+
+func TestBootstrapRecordBridgeIsOneSlotBoundedAndShutdownUnblocksProducer(t *testing.T) {
+	source := newRealtimeSource()
+	if cap(source.BootstrapRecords()) != BootstrapRecordCapacity || BootstrapRecordCapacity != 1 {
+		t.Fatalf("bootstrap capacity=%d", cap(source.BootstrapRecords()))
+	}
+	record, err := model.NewBootstrapComplete(model.BootstrapInitial)
+	if err != nil || !source.admitBootstrap(record) {
+		t.Fatal("first bounded bootstrap record rejected", err)
+	}
+	started := make(chan struct{})
+	done := make(chan bool, 1)
+	go func() {
+		close(started)
+		done <- source.admitBootstrap(record)
+	}()
+	<-started
+	source.closeAdmission()
+	select {
+	case admitted := <-done:
+		if admitted {
+			t.Fatal("blocked bootstrap producer admitted after shutdown")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("shutdown did not release bounded bootstrap producer")
+	}
+}
+
+func TestRealtimeSourceCachedIdentitySeedWinsWhenAlternateArrivesFirst(t *testing.T) {
+	source := newRealtimeSource()
+	cached, _ := model.NewChatID("12345@s.whatsapp.net")
+	lid, _ := model.NewChatID("98765@lid")
+	if err := source.SeedChatIDs([]model.ChatID{cached}); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := source.aliases.resolve(lid, cached)
+	if err != nil || resolved != cached || source.aliases.alternateFor(cached) != lid {
+		t.Fatalf("resolved=%q alternate=%q err=%v", resolved.String(), source.aliases.alternateFor(cached).String(), err)
+	}
+	localUnreadRows := map[string]uint32{cached.String(): 0}
+	localUnreadRows[resolved.String()]++
+	if len(localUnreadRows) != 1 || localUnreadRows[cached.String()] != 1 {
+		t.Fatalf("alternate created second local unread identity: %+v", localUnreadRows)
+	}
+}

@@ -21,6 +21,7 @@ const (
 	pendingContactWrite
 	pendingChatWrite
 	pendingDisplayWrite
+	pendingLocalReadWrite
 )
 
 // A single mailbox carries only this request's definitive transaction outcome.
@@ -32,15 +33,17 @@ type sqliteWriteResult struct {
 }
 
 type pendingWrite struct {
-	kind     pendingWriteKind
-	contact  model.Contact
-	chat     model.Chat
-	messages model.WriteBatch
-	display  model.DisplayMetadata
-	emitLive bool
-	result   sqliteWriteResult
-	ack      chan sqliteWriteResult
-	queuedAt time.Time
+	kind        pendingWriteKind
+	contact     model.Contact
+	chat        model.Chat
+	messages    model.WriteBatch
+	display     model.DisplayMetadata
+	chatID      model.ChatID
+	readThrough time.Time
+	emitLive    bool
+	result      sqliteWriteResult
+	ack         chan sqliteWriteResult
+	queuedAt    time.Time
 }
 
 func newPendingMessages(batch model.WriteBatch) pendingWrite {
@@ -53,6 +56,10 @@ func newPendingContact(contact model.Contact) pendingWrite {
 
 func newPendingChat(chat model.Chat) pendingWrite {
 	return pendingWrite{kind: pendingChatWrite, chat: chat}
+}
+
+func newPendingLocalRead(chatID model.ChatID, through time.Time) pendingWrite {
+	return pendingWrite{kind: pendingLocalReadWrite, chatID: chatID, readThrough: through}
 }
 
 func (pending pendingWrite) logicalWrites() int {

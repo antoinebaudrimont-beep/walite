@@ -266,7 +266,7 @@ func TestNewLiveChatPreservesTransientSelectedState(t *testing.T) {
 	}
 }
 
-func TestNewLiveChatWorkingSetEvictsLeastActiveNonSelectedDeterministically(t *testing.T) {
+func TestNewLiveChatAtSummaryCapacityIsIgnoredDeterministically(t *testing.T) {
 	initial := InitialState{Chats: make([]InitialChat, ChatWorkingSetCapacity)}
 	for index := range initial.Chats {
 		initial.Chats[index] = InitialChat{
@@ -283,25 +283,22 @@ func TestNewLiveChatWorkingSetEvictsLeastActiveNonSelectedDeterministically(t *t
 	model := viewModel{chats: state, options: DefaultOptions(), terminalWidth: 100, terminalHeight: 20}
 	selectedID := state.chats[state.selected].id
 
+	before := *model.chats
 	newest := liveTestMessage("capacity-new", "capacity-message", 100, 100, false, "bounded", 4)
-	if !applyLiveMessage(&model, newest) {
-		t.Fatal("qualifying new chat was not admitted")
+	if applyLiveMessage(&model, newest) || *model.chats != before {
+		t.Fatal("10,001st chat changed the bounded summary set")
 	}
 	if model.chats.chatCount != ChatWorkingSetCapacity {
 		t.Fatalf("chat count=%d bound=%d", model.chats.chatCount, ChatWorkingSetCapacity)
 	}
-	if _, found := model.chats.chatIndexByID("full-14"); found {
-		t.Fatal("least-active non-selected chat was not evicted")
-	}
-	if _, found := model.chats.chatIndexByID("capacity-new"); !found {
-		t.Fatal("new chat missing after bounded admission")
+	if _, found := model.chats.chatIndexByID("capacity-new"); found {
+		t.Fatal("over-capacity chat was admitted")
 	}
 	selected, _ := model.chats.selectedChat()
 	if selected.id != selectedID {
 		t.Fatalf("selected chat=%q want=%q", selected.id, selectedID)
 	}
 
-	before := *model.chats
 	stale := liveTestMessage("capacity-stale", "stale-message", -2, -1, false, "outside working set", 1)
 	if applyLiveMessage(&model, stale) || *model.chats != before {
 		t.Fatal("stale new chat displaced the bounded working set")

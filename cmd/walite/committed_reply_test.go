@@ -37,7 +37,7 @@ func TestConnectedCommittedPlainAndReplyRenderThroughApplication(t *testing.T) {
 			}
 			defer connection.Close() // no Connect/Run: transport is a deterministic fake
 			sender := &connectedTestSender{at: time.Date(2100, 8, 1, 12, 0, 0, 0, time.UTC)}
-			application, err := newConnectedApplicationService(connection.RealtimeSource(), sender)
+			application, err := newConnectedApplicationService(connection.RealtimeSource(), sender, openConnectedTestCache(t))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -124,7 +124,14 @@ func TestCommittedQuoteSurvivesLiveAndSnapshotAdapters(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			got := initial.Chats[0].Messages[0]
+			if len(initial.Chats[0].Messages) != 0 {
+				t.Fatal("startup summary unexpectedly preloaded messages")
+			}
+			loaded, err := buildChatLoadResult(context.Background(), stub, tui.ChatLoadRequest{ChatID: "chat"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := loaded.Messages[0]
 			if got.ReplyToID != quote.MessageID().String() || got.ReplyToText != quote.Text() || got.ReplyToFromMe != quote.FromMe() {
 				t.Fatal("snapshot adapter lost bounded quote")
 			}

@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"time"
 
 	"github.com/antoinebaudrimont-beep/walite/internal/model"
 	"github.com/antoinebaudrimont-beep/walite/internal/service"
 	"github.com/antoinebaudrimont-beep/walite/internal/store"
 	"github.com/antoinebaudrimont-beep/walite/internal/tui"
+	"github.com/antoinebaudrimont-beep/walite/internal/wa"
 )
 
 type offlineApplicationService struct {
@@ -31,6 +33,10 @@ func (application *offlineApplicationService) LiveEvents() <-chan model.LiveEven
 
 func (application *offlineApplicationService) SendText(ctx context.Context, request service.SendTextRequest) error {
 	return application.core.SendText(ctx, request)
+}
+
+func (application *offlineApplicationService) MarkChatLocallyRead(ctx context.Context, id model.ChatID, through time.Time) error {
+	return application.store.MarkChatLocallyRead(ctx, id, through)
 }
 
 func (application *offlineApplicationService) InitialChats(ctx context.Context, limit int) ([]model.Chat, error) {
@@ -64,42 +70,48 @@ func buildInitialTUIState(ctx context.Context, source applicationService) (tui.I
 	})
 	result := tui.InitialState{Chats: make([]tui.InitialChat, len(chats))}
 	for index, chat := range chats {
-		messages, err := source.InitialMessages(ctx, chat.ID(), tui.MaxInitialMessagesPerChat)
-		if err != nil {
-			return tui.InitialState{}, err
+		title := chat.DisplayName()
+		if title == "" {
+			title = wa.ReadableChatFallback(chat.ID())
 		}
-		if len(messages) > tui.MaxInitialMessagesPerChat {
-			return tui.InitialState{}, errors.New("initial message snapshot exceeded bound")
-		}
-		// Store pages are newest-first. The renderer consumes oldest-first.
-		sort.Slice(messages, func(i, j int) bool {
-			if messages[i].SentAt().Equal(messages[j].SentAt()) {
-				return messages[i].MessageID().String() < messages[j].MessageID().String()
-			}
-			return messages[i].SentAt().Before(messages[j].SentAt())
-		})
 		initialChat := tui.InitialChat{
 			ID:           chat.ID().String(),
-			Title:        chat.DisplayName(),
+			Title:        title,
 			IsGroup:      chat.IsGroup(),
 			UnreadCount:  chat.UnreadCount(),
 			ActivityTime: chat.LastMessageAt(),
-			Messages:     make([]tui.InitialMessage, len(messages)),
-		}
-		for messageIndex, message := range messages {
-			initialChat.Messages[messageIndex] = tui.InitialMessage{
-				ID:            message.MessageID().String(),
-				SentAt:        message.SentAt(),
-				FromMe:        message.FromMe(),
-				Text:          message.Text(),
-				BodyRetained:  message.BodyRetained(),
-				ReplyToID:     message.Quote().MessageID().String(),
-				ReplyToText:   message.Quote().Text(),
-				ReplyToFromMe: message.Quote().FromMe(),
-				SenderID:      message.SenderID().String(), IsGroup: message.IsGroup(),
-			}
 		}
 		result.Chats[index] = initialChat
+	}
+	return result, nil
+}
+
+func buildChatLoadResult(ctx context.Context, source applicationService, request tui.ChatLoadRequest) (tui.ChatLoadResult, error) {
+	id, err := model.NewChatID(request.ChatID)
+	if err != nil {
+		return tui.ChatLoadResult{}, err
+	}
+	messages, err := source.InitialMessages(ctx, id, tui.MaxInitialMessagesPerChat)
+	if err != nil {
+		return tui.ChatLoadResult{}, err
+	}
+	if len(messages) > tui.MaxInitialMessagesPerChat {
+		return tui.ChatLoadResult{}, errors.New("chat message snapshot exceeded bound")
+	}
+	sort.Slice(messages, func(i, j int) bool {
+		if messages[i].SentAt().Equal(messages[j].SentAt()) {
+			return messages[i].MessageID().String() < messages[j].MessageID().String()
+		}
+		return messages[i].SentAt().Before(messages[j].SentAt())
+	})
+	result := tui.ChatLoadResult{ChatID: request.ChatID, Revision: request.Revision, Messages: make([]tui.InitialMessage, len(messages))}
+	for index, message := range messages {
+		result.Messages[index] = tui.InitialMessage{
+			ID: message.MessageID().String(), SentAt: message.SentAt(), FromMe: message.FromMe(),
+			Text: message.Text(), BodyRetained: message.BodyRetained(),
+			ReplyToID: message.Quote().MessageID().String(), ReplyToText: message.Quote().Text(), ReplyToFromMe: message.Quote().FromMe(),
+			SenderID: message.SenderID().String(), IsGroup: message.IsGroup(),
+		}
 	}
 	return result, nil
 }

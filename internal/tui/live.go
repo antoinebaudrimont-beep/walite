@@ -52,6 +52,9 @@ func applyLiveMessage(model *viewModel, event LiveMessage) bool {
 	if !mutation.changed {
 		return false
 	}
+	if mutation.inserted {
+		model.chats.chats[chatIndex].revision++
+	}
 	model.chats.sortByActivity()
 
 	if selectedEvent && mutation.inserted && readingOlder && mutation.insertionIndex >= oldVisibleEnd {
@@ -72,10 +75,10 @@ func applyLiveMessage(model *viewModel, event LiveMessage) bool {
 	return true
 }
 
-// admitLiveChat adds an unknown committed chat to the fixed presentation
-// working set. When full, only a more-recent chat may replace the least-active
-// non-selected chat; the selected chat is pinned. Live events do not carry a
-// display name, so the stable chat ID is the bounded presentation fallback.
+// admitLiveChat adds an unknown committed chat to the bounded summary set.
+// At capacity, unknown chats are deterministically ignored; existing visible
+// state is never evicted. Live events do not carry a display name, so the
+// stable chat ID is the bounded presentation fallback.
 func (state *chatState) admitLiveChat(event LiveMessage) (int, bool) {
 	if state == nil || state.chatCount < 0 || state.chatCount > len(state.chats) {
 		return 0, false
@@ -87,21 +90,7 @@ func (state *chatState) admitLiveChat(event LiveMessage) (int, bool) {
 		state.chatCount++
 		return index, true
 	}
-
-	eviction := -1
-	for index := 0; index < state.chatCount; index++ {
-		if index == state.selected {
-			continue
-		}
-		if eviction < 0 || chatBefore(state.chats[eviction], state.chats[index]) {
-			eviction = index
-		}
-	}
-	if eviction < 0 || !chatBefore(incoming, state.chats[eviction]) {
-		return 0, false
-	}
-	state.chats[eviction] = incoming
-	return eviction, true
+	return 0, false
 }
 
 func validLiveMessage(event LiveMessage) bool {
@@ -137,7 +126,7 @@ func (state *chatState) applyLiveMessage(chatIndex int, event LiveMessage) liveM
 	message := messageView{
 		id:           messageID(event.MessageID),
 		sentAt:       event.SentAt,
-		time:         event.SentAt.Format("15:04"),
+		time:         localMessageTime(event.SentAt),
 		text:         text,
 		fromMe:       event.FromMe,
 		bodyRetained: event.BodyRetained,
@@ -155,6 +144,7 @@ func insertBoundedMessage(chat *chatView, message messageView) (bool, int) {
 	if chat == nil {
 		return false, -1
 	}
+	chat.ensureMessages()
 	insertion := chat.messageCount
 	for index := 0; index < chat.messageCount; index++ {
 		if messageBefore(message, chat.messages[index]) {

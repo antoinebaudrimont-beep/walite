@@ -6,6 +6,7 @@ import (
 	"math"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/antoinebaudrimont-beep/walite/internal/model"
 )
@@ -110,6 +111,31 @@ func (memory *Memory) EnsureChat(ctx context.Context, chat model.Chat) error {
 		return &Error{kind: capacity}
 	}
 	memory.chats[key] = &memoryChat{chat: normalized, messages: make(map[string]model.Message, model.MaxRetentionSnapshotSummaries)}
+	return nil
+}
+
+// MarkChatLocallyRead clears only walite's cached unread presentation state.
+func (memory *Memory) MarkChatLocallyRead(ctx context.Context, id model.ChatID, through time.Time) error {
+	if err := checkContext(ctx); err != nil {
+		return err
+	}
+	validated, err := validateChatID(id)
+	if err != nil {
+		return &Error{kind: rejected}
+	}
+	memory.mu.Lock()
+	defer memory.mu.Unlock()
+	chat, ok := memory.chats[validated.String()]
+	if !ok {
+		return &Error{kind: rejected}
+	}
+	if chat.chat.LastMessageAt().After(through) {
+		return nil
+	}
+	chat.chat, err = rebuildChatUnread(chat.chat, 0)
+	if err != nil {
+		return &Error{kind: rejected}
+	}
 	return nil
 }
 
@@ -290,6 +316,18 @@ func advanceChatForMessage(chat model.Chat, message model.Message, countUnread b
 		Placeholder:   chat.Placeholder(),
 		UpdatedAt:     chat.UpdatedAt(),
 		IngestSeq:     chat.IngestSeq(),
+	})
+}
+
+func rebuildChatUnread(chat model.Chat, unread uint32) (model.Chat, error) {
+	contactID := ""
+	if chat.HasContact() {
+		contactID = chat.ContactID().String()
+	}
+	return model.NewChat(model.ChatInput{
+		ID: chat.ID().String(), ContactID: contactID, DisplayName: chat.DisplayName(), IsGroup: chat.IsGroup(),
+		LastMessageAt: chat.LastMessageAt(), UnreadCount: unread, Muted: chat.Muted(), Archived: chat.Archived(),
+		Placeholder: chat.Placeholder(), UpdatedAt: chat.UpdatedAt(), IngestSeq: chat.IngestSeq(),
 	})
 }
 

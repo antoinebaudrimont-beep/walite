@@ -97,6 +97,9 @@ func moveChatSelection(model *viewModel, delta int) bool {
 		return false
 	}
 	boundary := unreadBoundaryForChat(nextChat)
+	if nextChat.unreadCount > 0 {
+		model.localReadRequest = LocalReadRequest{ChatID: nextChat.id, ActivityTime: nextChat.activityTime}
+	}
 	if !model.chats.moveSelection(delta) {
 		return false
 	}

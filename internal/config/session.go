@@ -7,6 +7,7 @@ import (
 )
 
 const whatsAppSessionFilename = "whatsmeow-session.db"
+const applicationCacheFilename = "walite-cache.db"
 
 // DefaultWhatsAppSessionPath returns walite's persistent linked-device store
 // path. Session credentials are private application data, not disposable cache.
@@ -23,4 +24,21 @@ func DefaultWhatsAppSessionPath() (string, error) {
 		return "", errors.New("invalid data directory")
 	}
 	return filepath.Join(filepath.Clean(dataHome), "walite", whatsAppSessionFilename), nil
+}
+
+// DefaultApplicationCachePath returns walite's disposable application-cache
+// database path, separate from persistent WhatsApp credentials.
+func DefaultApplicationCachePath() (string, error) {
+	cacheHome := os.Getenv("XDG_CACHE_HOME")
+	if cacheHome == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		cacheHome = filepath.Join(home, ".cache")
+	}
+	if !filepath.IsAbs(cacheHome) {
+		return "", errors.New("invalid cache directory")
+	}
+	return filepath.Join(filepath.Clean(cacheHome), "walite", applicationCacheFilename), nil
 }

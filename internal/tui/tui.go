@@ -101,6 +101,9 @@ func runInitialized(
 	}
 	if selectedChat, ok := model.chats.selectedChat(); ok {
 		model.chatView.unreadBoundary = unreadBoundaryForChat(selectedChat)
+		if selectedChat.unreadCount > 0 {
+			model.localReadRequest = LocalReadRequest{ChatID: selectedChat.id, ActivityTime: selectedChat.activityTime}
+		}
 		selectedChat.unreadCount = 0
 	}
 	if preferencesPath != "" {
@@ -109,6 +112,8 @@ func runInitialized(
 	}
 	draw(screen, &model)
 	screen.Show()
+	requestPendingLocalRead(&model, input.PersistLocalRead)
+	requestSelectedChatLoad(&model, input.LoadChat)
 
 	events := make(chan tcell.Event, 1)
 	stopEvents := make(chan struct{})
@@ -124,6 +129,8 @@ func runInitialized(
 	liveEvents := input.LiveEvents
 	sendResults := input.SendResults
 	displayUpdates := input.DisplayUpdates
+	summaryUpdates := input.SummaryUpdates
+	chatLoads := input.ChatLoads
 
 	for {
 		select {
@@ -135,6 +142,27 @@ func runInitialized(
 				continue
 			}
 			if applyDisplayMetadata(&model, value) {
+				draw(screen, &model)
+				screen.Show()
+			}
+		case update, ok := <-summaryUpdates:
+			if !ok {
+				summaryUpdates = nil
+				continue
+			}
+			changed := applyChatSummaries(&model, update)
+			requestPendingLocalRead(&model, input.PersistLocalRead)
+			if changed {
+				requestSelectedChatLoad(&model, input.LoadChat)
+				draw(screen, &model)
+				screen.Show()
+			}
+		case result, ok := <-chatLoads:
+			if !ok {
+				chatLoads = nil
+				continue
+			}
+			if applyChatLoad(&model, result) {
 				draw(screen, &model)
 				screen.Show()
 			}
@@ -163,11 +191,19 @@ func runInitialized(
 			switch event := event.(type) {
 			case *tcell.EventKey:
 				width, height := screen.Size()
+				selectedBefore := ""
+				if selected, ok := model.chats.selectedChat(); ok {
+					selectedBefore = selected.id
+				}
 				changed, exit := handleKey(&model, event, width, height)
+				requestPendingLocalRead(&model, input.PersistLocalRead)
 				if exit {
 					return nil
 				}
 				if changed {
+					if selected, ok := model.chats.selectedChat(); ok && selected.id != selectedBefore {
+						requestSelectedChatLoad(&model, input.LoadChat)
+					}
 					draw(screen, &model)
 					screen.Show()
 				}
@@ -179,5 +215,14 @@ func runInitialized(
 				screen.Show()
 			}
 		}
+	}
+}
+
+func requestPendingLocalRead(model *viewModel, persist func(LocalReadRequest) bool) {
+	if model == nil || model.localReadRequest.ChatID == "" {
+		return
+	}
+	if persist == nil || persist(model.localReadRequest) {
+		model.localReadRequest = LocalReadRequest{}
 	}
 }

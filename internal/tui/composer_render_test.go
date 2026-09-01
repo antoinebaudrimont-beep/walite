@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gdamore/tcell/v2"
 )
@@ -51,7 +52,8 @@ func TestDrawSubmittedLocalMessage(t *testing.T) {
 	draw(screen, &model)
 	screen.Show()
 	text := screenText(screen)
-	if !strings.Contains(text, "10:00") || !strings.Contains(text, "hello rendered demo") {
+	wantTime := localMessageTime(time.Date(2200, 1, 2, 10, 0, 1, 0, time.UTC))
+	if !strings.Contains(text, wantTime) || !strings.Contains(text, "hello rendered demo") {
 		t.Fatalf("submitted message missing:\n%s", text)
 	}
 }
@@ -72,7 +74,8 @@ func TestDrawNarrowComposeAndSend(t *testing.T) {
 	}
 	draw(screen, &model)
 	screen.Show()
-	if text := screenText(screen); !strings.Contains(text, "narrow draft") || !strings.Contains(text, "10:00") {
+	wantTime := localMessageTime(time.Date(2200, 1, 2, 10, 0, 1, 0, time.UTC))
+	if text := screenText(screen); !strings.Contains(text, "narrow draft") || !strings.Contains(text, wantTime) {
 		t.Fatalf("narrow sent message missing:\n%s", text)
 	}
 }

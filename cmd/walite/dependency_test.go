@@ -60,7 +60,8 @@ func TestMilestone4BProductionCompositionUsesConnectionOwnedSourceAndSender(t *t
 	}
 	if !strings.Contains(string(application), "connection.RealtimeSource()") ||
 		!strings.Contains(string(application), "connection.TextSender()") ||
-		!strings.Contains(string(application), "newConnectedApplicationService(realtimeSource, textSender)") {
+		!strings.Contains(string(application), "realtimeSource.SeedChatIDs(cachedIDs)") ||
+		!strings.Contains(string(application), "newConnectedApplicationService(realtimeSource, textSender, cache)") {
 		t.Fatal("production authentication does not compose the connection-owned realtime source")
 	}
 	if !strings.Contains(string(demo), "wa.NewOfflineTextSender") {
@@ -69,7 +70,39 @@ func TestMilestone4BProductionCompositionUsesConnectionOwnedSourceAndSender(t *t
 	if strings.Contains(string(application), "newService:    newOfflineApplicationService") ||
 		strings.Contains(string(connected), "FakeSource") ||
 		strings.Contains(string(connected), "OfflineTextSender") ||
+		strings.Contains(string(connected), "NewMemory") ||
+		!strings.Contains(string(application), "store.OpenSQLite") ||
 		!strings.Contains(string(connected), "NewWithTextSender") {
-		t.Fatal("connected production composition still contains synthetic incoming or outgoing traffic")
+		t.Fatal("connected production composition is not SQLite-only with real traffic")
+	}
+}
+
+func TestMilestone4DLocalReadDoesNotCallWhatsAppReceiptOrHistoryRequestAPIs(t *testing.T) {
+	root := filepath.Clean(filepath.Join("..", ".."))
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			if entry.Name() == ".git" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		source := string(contents)
+		if strings.Contains(source, ".MarkRead(") || strings.Contains(source, "BuildHistorySyncRequest(") {
+			t.Errorf("%s introduces remote read/history request behavior", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

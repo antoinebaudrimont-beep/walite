@@ -95,6 +95,34 @@ func TestChatAliasesDoNotInferNumbersOrMergeEstablishedChats(t *testing.T) {
 	}
 }
 
+func TestSendRouteReconcilesOnlyAuthoritativeSingletonPair(t *testing.T) {
+	pn, lid := aliasID(t, "12345@s.whatsapp.net"), aliasID(t, "987654@lid")
+	aliases := &chatAliases{}
+	for _, id := range []model.ChatID{pn, lid} {
+		if _, err := aliases.resolve(id, model.ChatID{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, err := aliases.resolveForSend(lid, pn); err != nil || got != lid || aliases.count != 1 || aliases.entries[0] != (chatAlias{primary: lid, alternate: pn}) {
+		t.Fatalf("resolved=%q entries=%d first=%+v err=%v", got.String(), aliases.count, aliases.entries[0], err)
+	}
+	if got, err := aliases.resolveForSend(pn, lid); err != nil || got != pn || aliases.count != 1 || aliases.entries[0] != (chatAlias{primary: pn, alternate: lid}) {
+		t.Fatalf("reoriented=%q entries=%d first=%+v err=%v", got.String(), aliases.count, aliases.entries[0], err)
+	}
+
+	otherPN := aliasID(t, "22222@s.whatsapp.net")
+	conflict := &chatAliases{}
+	_, _ = conflict.resolve(pn, lid)
+	_, _ = conflict.resolve(otherPN, model.ChatID{})
+	before := conflict.entries
+	if _, err := conflict.resolveForSend(otherPN, lid); !errors.Is(err, ErrChatAliasConflict) {
+		t.Fatalf("established relationship conflict=%v", err)
+	}
+	if conflict.entries != before || conflict.count != 2 {
+		t.Fatal("send reconciliation changed a non-singleton relationship")
+	}
+}
+
 func TestChatAliasesRejectConflictingAuthoritativePair(t *testing.T) {
 	aliases := &chatAliases{}
 	pn, lid := aliasID(t, "12345@s.whatsapp.net"), aliasID(t, "987654@lid")

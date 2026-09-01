@@ -116,22 +116,24 @@ func BenchmarkSQLitePagination(b *testing.B) {
 	benchmarks := []struct {
 		name   string
 		cursor model.Cursor
+		limit  int
 	}{
-		{name: "First_100", cursor: model.NoCursor()},
-		{name: "Middle_100", cursor: sqliteBenchmarkCursor(b, 2_601)},
-		{name: "Old_100", cursor: sqliteBenchmarkCursor(b, 201)},
+		{name: "First_50", cursor: model.NoCursor(), limit: 50},
+		{name: "First_100", cursor: model.NoCursor(), limit: 100},
+		{name: "Middle_100", cursor: sqliteBenchmarkCursor(b, 2_601), limit: 100},
+		{name: "Old_100", cursor: sqliteBenchmarkCursor(b, 201), limit: 100},
 	}
 	for _, benchmark := range benchmarks {
 		b.Run(benchmark.name, func(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for range b.N {
-				messages, _, err := store.Page(context.Background(), chatID, benchmark.cursor, 100)
+				messages, _, err := store.Page(context.Background(), chatID, benchmark.cursor, benchmark.limit)
 				if err != nil {
 					b.Fatal(err)
 				}
-				if len(messages) != 100 {
-					b.Fatalf("page len=%d want=100", len(messages))
+				if len(messages) != benchmark.limit {
+					b.Fatalf("page len=%d want=%d", len(messages), benchmark.limit)
 				}
 			}
 		})

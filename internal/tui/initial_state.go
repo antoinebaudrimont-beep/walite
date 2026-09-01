@@ -7,12 +7,10 @@ import (
 	"unicode/utf8"
 )
 
-// The initial snapshot is deliberately bounded to the TUI's fixed in-memory
-// working set. The chat bound is a small presentation capacity, not the
-// application's global retained-chat limit. Loading older pages remains a
-// later increment.
+// Chat summaries and message working memory have independent fixed bounds.
+// Metadata-only chats do not allocate message slots.
 const (
-	ChatWorkingSetCapacity    = 16
+	ChatWorkingSetCapacity    = 10_000
 	MaxInitialMessagesPerChat = 32
 )
 
@@ -82,8 +80,33 @@ type Input struct {
 	Send         func(context.Context, SendRequest) error
 	// When non-nil, Send performs bounded admission only; completion arrives
 	// here and the draft remains protected until that result is processed.
-	SendResults    <-chan SendResult
-	DisplayUpdates <-chan DisplayMetadata
+	SendResults      <-chan SendResult
+	DisplayUpdates   <-chan DisplayMetadata
+	SummaryUpdates   <-chan InitialState
+	ChatLoads        <-chan ChatLoadResult
+	LoadChat         func(ChatLoadRequest) bool
+	PersistLocalRead func(LocalReadRequest) bool
+}
+
+// LocalReadRequest clears cached unread state only through the activity that
+// was visible when the user opened the chat.
+type LocalReadRequest struct {
+	ChatID       string
+	ActivityTime time.Time
+}
+
+// ChatLoadRequest identifies one selected-chat page and the presentation
+// revision that it is allowed to replace.
+type ChatLoadRequest struct {
+	ChatID   string
+	Revision uint64
+}
+
+// ChatLoadResult is one bounded oldest-first cached page.
+type ChatLoadResult struct {
+	ChatID   string
+	Revision uint64
+	Messages []InitialMessage
 }
 
 func chatStateFromInitial(initial InitialState) (*chatState, error) {
@@ -107,6 +130,9 @@ func chatStateFromInitial(initial InitialState) (*chatState, error) {
 		chat.unreadCount = sourceChat.UnreadCount
 		chat.activityTime = sourceChat.ActivityTime
 		chat.messageCount = len(sourceChat.Messages)
+		if chat.messageCount > 0 {
+			chat.messages = new([maxMessages]messageView)
+		}
 		seenMessages := make(map[string]struct{}, len(sourceChat.Messages))
 		for messageIndex, sourceMessage := range sourceChat.Messages {
 			if len(sourceMessage.SenderID) > 512 || !utf8.ValidString(sourceMessage.SenderID) {
@@ -129,7 +155,7 @@ func chatStateFromInitial(initial InitialState) (*chatState, error) {
 			chat.messages[messageIndex] = messageView{
 				id:           messageID(sourceMessage.ID),
 				sentAt:       sourceMessage.SentAt,
-				time:         sourceMessage.SentAt.Format("15:04"),
+				time:         localMessageTime(sourceMessage.SentAt),
 				text:         text,
 				fromMe:       sourceMessage.FromMe,
 				bodyRetained: sourceMessage.BodyRetained,

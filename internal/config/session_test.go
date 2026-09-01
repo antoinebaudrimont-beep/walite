@@ -40,3 +40,30 @@ func TestDefaultWhatsAppSessionPathRejectsRelativeDataHome(t *testing.T) {
 		t.Fatal("relative XDG_DATA_HOME accepted")
 	}
 }
+
+func TestDefaultApplicationCachePathUsesSeparateXDGCacheHome(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", root)
+	got, err := DefaultApplicationCachePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(root, "walite", "walite-cache.db")
+	if got != want {
+		t.Fatalf("DefaultApplicationCachePath()=%q want=%q", got, want)
+	}
+}
+
+func TestDefaultApplicationCachePathUsesHomeFallbackAndRejectsRelative(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", "")
+	got, err := DefaultApplicationCachePath()
+	if err != nil || got != filepath.Join(home, ".cache", "walite", "walite-cache.db") {
+		t.Fatalf("fallback=%q err=%v", got, err)
+	}
+	t.Setenv("XDG_CACHE_HOME", "relative")
+	if _, err := DefaultApplicationCachePath(); err == nil {
+		t.Fatal("relative XDG_CACHE_HOME accepted")
+	}
+}

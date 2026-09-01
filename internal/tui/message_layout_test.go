@@ -349,9 +349,9 @@ func TestDirectionalChatSwitchAndShorterReplacementDoNotGhost(t *testing.T) {
 		draw(screen, &view)
 		screen.Show()
 		assertMessagePaneMatchesFresh(t, screen, &view)
-		right, y := width, 4
+		right, y := width, 5
 		if width >= narrowWidth {
-			right, y = width-2, 3
+			right, y = width-2, 4
 		}
 		assertDirectionalTextAt(t, screen, right-2, y, "ok")
 		if strings.Contains(replyScreenText(screen), "OLD RIGHT TEXT") {

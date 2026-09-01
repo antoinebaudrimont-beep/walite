@@ -57,12 +57,12 @@ func TestReplyAlignmentHonorsTimestampConfiguration(t *testing.T) {
 		screen.Show()
 		rows := strings.Split(screenText(screen), "\n")
 		if show {
-			if !strings.HasPrefix(rows[0], "10:20  ↪ 09:42 Synthetic message one") ||
+			if !strings.HasPrefix(rows[0], "10:20  ↪ "+original.time+" Synthetic message one") ||
 				!strings.HasPrefix(rows[1], strings.Repeat(" ", prefixWidth)+"reply body") {
 				t.Fatalf("timestamped reply alignment:\n%s", screenText(screen))
 			}
 		} else if !strings.HasPrefix(rows[0], "↪ Synthetic message one") ||
-			!strings.HasPrefix(rows[1], "reply body") || strings.Contains(screenText(screen), "09:42") || strings.Contains(screenText(screen), "10:20") {
+			!strings.HasPrefix(rows[1], "reply body") || strings.Contains(screenText(screen), original.time) || strings.Contains(screenText(screen), "10:20") {
 			t.Fatalf("timestamp-free reply alignment:\n%s", screenText(screen))
 		}
 	}

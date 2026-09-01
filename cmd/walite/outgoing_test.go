@@ -25,7 +25,7 @@ func TestUnavailableApplicationSendKeepsTUIDraft(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := newConnectedApplicationService(source, nil); err == nil {
+	if _, err := newConnectedApplicationService(source, nil, nil); err == nil {
 		t.Fatal("connected application accepted missing real sender")
 	}
 

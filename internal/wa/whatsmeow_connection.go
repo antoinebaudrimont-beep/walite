@@ -197,6 +197,10 @@ func (client *whatsmeowConnectionClient) handleEvent(raw any) {
 		}
 		return
 	}
+	if history, ok := raw.(*events.HistorySync); ok {
+		client.handleHistorySync(history)
+		return
+	}
 	var event protocolEvent
 	switch raw.(type) {
 	case *events.Connected:
@@ -212,7 +216,7 @@ func (client *whatsmeowConnectionClient) handleEvent(raw any) {
 		client.textReady.Store(false)
 		event = protocolEvent{kind: protocolLoggedOut, cause: ErrConnectionFailed}
 	default:
-		// History, receipt, media, typing, and all other protocol events are not
+		// Receipt, media, typing, and all other protocol events are not
 		// part of the Milestone 4A realtime text boundary.
 		return
 	}

@@ -18,6 +18,7 @@ import (
 type startupObservedScreen struct {
 	tcell.SimulationScreen
 	shown       chan struct{}
+	frameMu     sync.Mutex
 	finiOnce    sync.Once
 	initErr     error
 	initialized bool
@@ -46,13 +47,44 @@ func (screen *startupObservedScreen) Init() error {
 }
 
 func (screen *startupObservedScreen) Show() {
+	screen.frameMu.Lock()
 	screen.SimulationScreen.Show()
+	screen.frameMu.Unlock()
 	screen.shown <- struct{}{}
+}
+
+func (screen *startupObservedScreen) GetContents() ([]tcell.SimCell, int, int) {
+	screen.frameMu.Lock()
+	defer screen.frameMu.Unlock()
+	cells, width, height := screen.SimulationScreen.GetContents()
+	owned := make([]tcell.SimCell, len(cells))
+	for index, cell := range cells {
+		owned[index] = cell
+		owned[index].Bytes = append([]byte(nil), cell.Bytes...)
+		owned[index].Runes = append([]rune(nil), cell.Runes...)
+	}
+	return owned, width, height
+}
+
+func (screen *startupObservedScreen) SetSize(width, height int) {
+	screen.frameMu.Lock()
+	defer screen.frameMu.Unlock()
+	screen.SimulationScreen.SetSize(width, height)
+}
+
+func (screen *startupObservedScreen) Sync() {
+	screen.frameMu.Lock()
+	defer screen.frameMu.Unlock()
+	screen.SimulationScreen.Sync()
 }
 
 func (screen *startupObservedScreen) Fini() {
 	screen.finiCount.Add(1)
-	screen.finiOnce.Do(screen.SimulationScreen.Fini)
+	screen.finiOnce.Do(func() {
+		screen.frameMu.Lock()
+		defer screen.frameMu.Unlock()
+		screen.SimulationScreen.Fini()
+	})
 }
 
 type staticUIStore struct {
@@ -148,6 +180,7 @@ func TestProductionServiceStartsBeforeInteractiveTUIAndIsJoined(t *testing.T) {
 
 	<-observedService.started
 	<-screen.shown
+	<-screen.shown // asynchronous selected-chat cache page
 	if text := startupScreenText(screen); strings.Contains(text, "09:42") || !strings.Contains(text, "Synthetic message one") {
 		t.Fatalf("mapped hidden-timestamp option not applied:\n%s", text)
 	}

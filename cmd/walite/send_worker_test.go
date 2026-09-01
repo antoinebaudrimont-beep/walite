@@ -184,6 +184,7 @@ func TestOutgoingTUIStaysResponsiveDuringBlockedSendAndShutsDown(t *testing.T) {
 		done <- runStartedApplication(context.Background(), screen, tui.DefaultOptions(), application, tui.Run)
 	}()
 	<-screen.shown
+	<-screen.shown // asynchronous selected-chat cache page
 	screen.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
 	<-screen.shown
 	for _, r := range "draft 🐧" {
@@ -284,7 +285,7 @@ func TestConnectedOutgoingWorkerUsesCommittedLivePath(t *testing.T) {
 	}
 	defer connection.Close() // never Connect or Run this connection
 	sender := &connectedTestSender{at: time.Now().UTC()}
-	application, err := newConnectedApplicationService(connection.RealtimeSource(), sender)
+	application, err := newConnectedApplicationService(connection.RealtimeSource(), sender, openConnectedTestCache(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +306,7 @@ func TestConnectedOutgoingWorkerUsesCommittedLivePath(t *testing.T) {
 	if err := runStartedApplication(context.Background(), newStartupObservedScreen(), tui.DefaultOptions(), application, view); err != nil {
 		t.Fatal(err)
 	}
-	if presented.MessageID != "real-result-fixture" || !presented.FromMe || presented.Text != "é 日本語 🐧" || presented.SentAt != sender.at || sender.calls.Load() != 1 {
+	if presented.MessageID != "real-result-fixture" || !presented.FromMe || presented.Text != "é 日本語 🐧" || presented.SentAt.UnixMilli() != sender.at.UnixMilli() || sender.calls.Load() != 1 {
 		t.Fatalf("presented=%+v calls=%d", presented, sender.calls.Load())
 	}
 	chatID, _ := model.NewChatID("123@lid")

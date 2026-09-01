@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/antoinebaudrimont-beep/walite/internal/syncpolicy"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	waHistorySync "go.mau.fi/whatsmeow/proto/waHistorySync"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 )
@@ -117,6 +119,189 @@ func TestRealTextSenderCancellationAndSuccessRace(t *testing.T) {
 				t.Fatalf("err=%v calls=%d", err, client.calls.Load())
 			}
 		})
+	}
+}
+
+func TestHistorySyncKnownAliasSendsWithoutRedundantLookup(t *testing.T) {
+	for _, chat := range []string{"12345@s.whatsapp.net", "98765@lid"} {
+		t.Run(chat, func(t *testing.T) {
+			primary := aliasID(t, chat)
+			alternate := aliasID(t, map[string]string{
+				"12345@s.whatsapp.net": "98765@lid",
+				"98765@lid":            "12345@s.whatsapp.net",
+			}[chat])
+			aliases := &chatAliases{}
+			if _, err := aliases.resolve(primary, alternate); err != nil {
+				t.Fatal(err)
+			}
+			var lookups atomic.Int32
+			client := &fakeTextClient{connected: true, loggedIn: true, send: func(context.Context, types.JID, *waE2E.Message) (whatsmeow.SendResponse, error) {
+				return whatsmeow.SendResponse{ID: "history-send", Timestamp: time.Now().UTC()}, nil
+			}}
+			sender := &realTextSender{client: client, aliases: aliases, lookup: func(context.Context, types.JID) (types.JID, error) {
+				lookups.Add(1)
+				return types.EmptyJID, errors.New("historical mapping absent from session lookup")
+			}}
+			if _, err := sender.SendText(context.Background(), aliasID(t, chat), "send from history"); err != nil {
+				t.Fatal(err)
+			}
+			quote, _ := model.NewTextQuote("history-original", "quoted Café 👋", false)
+			if _, err := sender.SendText(context.Background(), aliasID(t, chat), "reply from history", quote); err != nil {
+				t.Fatal(err)
+			}
+			if lookups.Load() != 0 || client.calls.Load() != 2 {
+				t.Fatalf("lookups=%d transport calls=%d", lookups.Load(), client.calls.Load())
+			}
+		})
+	}
+}
+
+func TestCacheSeededPNAndLIDRowsRemainSendable(t *testing.T) {
+	for _, chat := range []string{"12345@s.whatsapp.net", "98765@lid"} {
+		t.Run(chat, func(t *testing.T) {
+			pn := aliasID(t, "12345@s.whatsapp.net")
+			lid := aliasID(t, "98765@lid")
+			aliases := &chatAliases{}
+			// Production cache seeding knows stable rows, but not their relation.
+			for _, id := range []model.ChatID{pn, lid} {
+				if _, err := aliases.resolve(id, model.ChatID{}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			client := &fakeTextClient{connected: true, loggedIn: true, send: func(context.Context, types.JID, *waE2E.Message) (whatsmeow.SendResponse, error) {
+				return whatsmeow.SendResponse{ID: "cache-seeded-send", Timestamp: time.Now().UTC()}, nil
+			}}
+			sender := &realTextSender{client: client, aliases: aliases, lookup: func(_ context.Context, jid types.JID) (types.JID, error) {
+				if jid.Server == types.DefaultUserServer {
+					return types.NewJID("98765", types.HiddenUserServer), nil
+				}
+				return types.NewJID("12345", types.DefaultUserServer), nil
+			}}
+			if _, err := sender.SendText(context.Background(), aliasID(t, chat), "cache-seeded send"); err != nil {
+				t.Fatal(err)
+			}
+			quote, _ := model.NewTextQuote("cache-original", "quoted from cache", false)
+			if _, err := sender.SendText(context.Background(), aliasID(t, chat), "cache-seeded reply", quote); err != nil {
+				t.Fatal(err)
+			}
+			if aliases.count != 1 || aliases.alternateFor(aliasID(t, chat)).String() == "" || client.calls.Load() != 2 {
+				t.Fatalf("aliases=%d alternate=%q transport calls=%d", aliases.count, aliases.alternateFor(aliasID(t, chat)).String(), client.calls.Load())
+			}
+		})
+	}
+}
+
+func TestHistorySyncChatSendsCommitOnceThroughSQLite(t *testing.T) {
+	for _, cacheSplit := range []bool{false, true} {
+		for _, chat := range []string{"12345@s.whatsapp.net", "98765@lid"} {
+			for _, reply := range []bool{false, true} {
+				name := map[bool]string{false: "history/", true: "cache-split/"}[cacheSplit] + chat + map[bool]string{false: "/plain", true: "/reply"}[reply]
+				t.Run(name, func(t *testing.T) {
+					source := newRealtimeSource()
+					at := time.Date(2026, 9, 1, 12, 30, 0, 0, time.UTC)
+					var record model.BootstrapRecord
+					if cacheSplit {
+						pn, lid := aliasID(t, "12345@s.whatsapp.net"), aliasID(t, "98765@lid")
+						if err := source.SeedChatIDs([]model.ChatID{pn, lid}); err != nil {
+							t.Fatal(err)
+						}
+						selected, err := model.NewChat(model.ChatInput{ID: chat, LastMessageAt: at.Add(-time.Minute), UpdatedAt: at})
+						if err != nil {
+							t.Fatal(err)
+						}
+						record, err = model.NewBootstrapRecord(model.BootstrapFull, selected, nil)
+						if err != nil {
+							t.Fatal(err)
+						}
+					} else {
+						bootstrap := bootstrapTestClient(at)
+						bootstrap.realtime = source
+						conversation := &waHistorySync.Conversation{ID: stringPointer(chat), LastMsgTimestamp: uint64Pointer(uint64(at.Add(-time.Minute).Unix()))}
+						if strings.HasSuffix(chat, types.DefaultUserServer) {
+							conversation.LidJID = stringPointer("98765@lid")
+						} else {
+							conversation.PnJID = stringPointer("12345@s.whatsapp.net")
+						}
+						var ok bool
+						record, ok = bootstrap.adaptBootstrapConversation(model.BootstrapFull, conversation, at)
+						if !ok || record.Chat().ID().String() != chat {
+							t.Fatalf("history chat=%q accepted=%t", record.Chat().ID().String(), ok)
+						}
+					}
+
+					cache, err := store.OpenSQLite(context.Background(), store.SQLiteOptions{Path: filepath.Join(t.TempDir(), "cache.db")})
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer cache.Close()
+					if err := cache.EnsureChat(context.Background(), record.Chat()); err != nil {
+						t.Fatal(err)
+					}
+					if cacheSplit {
+						other := "98765@lid"
+						if chat == other {
+							other = "12345@s.whatsapp.net"
+						}
+						otherChat, _ := model.NewChat(model.ChatInput{ID: other, LastMessageAt: at.Add(-2 * time.Minute), UpdatedAt: at})
+						if err := cache.EnsureChat(context.Background(), otherChat); err != nil {
+							t.Fatal(err)
+						}
+					}
+					var sentPayload *waE2E.Message
+					transport := &fakeTextClient{connected: true, loggedIn: true, send: func(_ context.Context, jid types.JID, payload *waE2E.Message) (whatsmeow.SendResponse, error) {
+						if jid.String() != chat {
+							t.Errorf("destination=%q", jid.String())
+						}
+						sentPayload = payload
+						return whatsmeow.SendResponse{ID: "sqlite-send", Timestamp: at}, nil
+					}}
+					sender := &realTextSender{client: transport, aliases: source.aliases, lookup: func(_ context.Context, jid types.JID) (types.JID, error) {
+						if cacheSplit {
+							if jid.Server == types.DefaultUserServer {
+								return types.NewJID("98765", types.HiddenUserServer), nil
+							}
+							return types.NewJID("12345", types.DefaultUserServer), nil
+						}
+						return types.EmptyJID, errors.New("redundant lookup must not run")
+					}}
+					values := config.DefaultValues()
+					policy, err := syncpolicy.New(values.Retention)
+					if err != nil {
+						t.Fatal(err)
+					}
+					core, err := service.NewWithTextSender(realtimeCoreOptions(values), source, cache, policy, service.NewSystemClock(), sender)
+					if err != nil {
+						t.Fatal(err)
+					}
+					ctx, cancel := context.WithCancel(context.Background())
+					done := make(chan error, 1)
+					go func() { done <- core.Run(ctx) }()
+					waitForCoreReady(t, core.Updates())
+					request, _ := service.NewSendTextRequest(chat, "history sqlite send 👋")
+					var quote model.TextQuote
+					if reply {
+						quote, _ = model.NewTextQuote("history-original", "quoted Café 👋", false)
+						request, _ = service.NewSendTextRequest(chat, "history sqlite send 👋", quote)
+					}
+					if err := core.SendText(ctx, request); err != nil {
+						cancel()
+						t.Fatal(err)
+					}
+					committed := <-core.LiveEvents()
+					cancel()
+					if err := <-done; !errors.Is(err, context.Canceled) {
+						t.Fatal(err)
+					}
+					messages, _, err := cache.Page(context.Background(), record.Chat().ID(), model.NoCursor(), 10)
+					if err != nil || len(messages) != 1 || committed.Message().MessageID().String() != "sqlite-send" || messages[0].Quote() != quote || transport.calls.Load() != 1 {
+						t.Fatalf("messages=%d committed=%+v calls=%d err=%v", len(messages), committed, transport.calls.Load(), err)
+					}
+					if reply != (sentPayload.GetExtendedTextMessage().GetContextInfo().GetStanzaID() == "history-original") {
+						t.Fatal("plain/reply payload changed")
+					}
+				})
+			}
+		}
 	}
 }
 

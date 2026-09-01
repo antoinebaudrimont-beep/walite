@@ -63,13 +63,8 @@ func TestInitialSnapshotAdapterOrdersAndPreservesFidelity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stub.chatLimit != tui.ChatWorkingSetCapacity || len(stub.messageLimits) != 3 {
+	if stub.chatLimit != tui.ChatWorkingSetCapacity || len(stub.messageLimits) != 0 {
 		t.Fatalf("bounds chats=%d messages=%v", stub.chatLimit, stub.messageLimits)
-	}
-	for _, limit := range stub.messageLimits {
-		if limit != tui.MaxInitialMessagesPerChat {
-			t.Fatalf("message limit=%d", limit)
-		}
 	}
 	if got := []string{initial.Chats[0].ID, initial.Chats[1].ID, initial.Chats[2].ID}; fmt.Sprint(got) != "[new-chat a-group b-contact]" {
 		t.Fatalf("chat order=%v", got)
@@ -78,14 +73,24 @@ func TestInitialSnapshotAdapterOrdersAndPreservesFidelity(t *testing.T) {
 	if !group.IsGroup || group.UnreadCount != 2 || group.Title != "Family ❤️" || !group.ActivityTime.Equal(equal) {
 		t.Fatalf("chat fidelity=%+v", group)
 	}
-	if got := []string{group.Messages[0].ID, group.Messages[1].ID, group.Messages[2].ID}; fmt.Sprint(got) != "[bodyless m-a m-b]" {
+	if len(group.Messages) != 0 {
+		t.Fatal("summary allocated message history")
+	}
+	loaded, err := buildChatLoadResult(context.Background(), stub, tui.ChatLoadRequest{ChatID: "a-group", Revision: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Revision != 7 || stub.messageLimits[0] != tui.MaxInitialMessagesPerChat {
+		t.Fatalf("load revision=%d limits=%v", loaded.Revision, stub.messageLimits)
+	}
+	if got := []string{loaded.Messages[0].ID, loaded.Messages[1].ID, loaded.Messages[2].ID}; fmt.Sprint(got) != "[bodyless m-a m-b]" {
 		t.Fatalf("oldest-first equal-time order=%v", got)
 	}
-	if group.Messages[0].BodyRetained || group.Messages[0].Text != "" {
-		t.Fatalf("bodyless message=%+v", group.Messages[0])
+	if loaded.Messages[0].BodyRetained || loaded.Messages[0].Text != "" {
+		t.Fatalf("bodyless message=%+v", loaded.Messages[0])
 	}
-	if !group.Messages[2].FromMe || group.Messages[2].Text != "👨‍👩‍👧‍👦" {
-		t.Fatalf("direction/unicode lost=%+v", group.Messages[2])
+	if !loaded.Messages[2].FromMe || loaded.Messages[2].Text != "👨‍👩‍👧‍👦" {
+		t.Fatalf("direction/unicode lost=%+v", loaded.Messages[2])
 	}
 }
 
@@ -101,12 +106,32 @@ func TestInitialSnapshotAdapterKeepsLargeHistoryBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(initial.Chats) != 1 || len(initial.Chats[0].Messages) != tui.MaxInitialMessagesPerChat || stub.messageLimits[0] != tui.MaxInitialMessagesPerChat {
-		t.Fatalf("snapshot chats=%d messages=%d requested=%d", len(initial.Chats), len(initial.Chats[0].Messages), stub.messageLimits[0])
+	if len(initial.Chats) != 1 || len(initial.Chats[0].Messages) != 0 || len(stub.messageLimits) != 0 {
+		t.Fatalf("snapshot chats=%d messages=%d requests=%v", len(initial.Chats), len(initial.Chats[0].Messages), stub.messageLimits)
+	}
+	loaded, err := buildChatLoadResult(context.Background(), stub, tui.ChatLoadRequest{ChatID: "large"})
+	if err != nil || len(loaded.Messages) != tui.MaxInitialMessagesPerChat || stub.messageLimits[0] != tui.MaxInitialMessagesPerChat {
+		t.Fatalf("loaded=%d requested=%v err=%v", len(loaded.Messages), stub.messageLimits, err)
 	}
 	stub.ignoreMessageLimit = true
-	if _, err := buildInitialTUIState(context.Background(), stub); err == nil {
+	if _, err := buildChatLoadResult(context.Background(), stub, tui.ChatLoadRequest{ChatID: "large"}); err == nil {
 		t.Fatal("oversized provider result accepted")
+	}
+}
+
+func TestInitialSnapshotUsesReadablePNFallbackForExistingCache(t *testing.T) {
+	activity := time.Date(2026, 9, 1, 7, 0, 0, 0, time.UTC)
+	stub := &snapshotStub{chats: []model.Chat{
+		mustSnapshotChat(t, "12086708856@s.whatsapp.net", "", false, 0, activity),
+		mustSnapshotChat(t, "218699835404531@lid", "", false, 0, activity.Add(-time.Minute)),
+		mustSnapshotChat(t, "33621344453@s.whatsapp.net", "Saved Name", false, 0, activity.Add(-2*time.Minute)),
+	}}
+	initial, err := buildInitialTUIState(context.Background(), stub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if initial.Chats[0].Title != "+12086708856" || initial.Chats[1].Title != "218699835404531@lid" || initial.Chats[2].Title != "Saved Name" {
+		t.Fatalf("fallback titles=%q/%q/%q", initial.Chats[0].Title, initial.Chats[1].Title, initial.Chats[2].Title)
 	}
 }
 
@@ -174,6 +199,7 @@ func TestApplicationLoadsSnapshotOnlyAfterReady(t *testing.T) {
 	if !service.snapshotAfterReady.Load() {
 		t.Fatal("initial snapshot loaded before ready")
 	}
+	<-screen.shown // selected-chat page is loaded by the single cache worker
 	if rendered := startupScreenText(screen); !strings.Contains(rendered, "Adapter Only Chat") || !strings.Contains(rendered, "Only supplied by adapter") || strings.Contains(rendered, "Demo Chat") {
 		t.Fatalf("TUI replaced adapter snapshot:\n%s", rendered)
 	}

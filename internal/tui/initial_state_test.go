@@ -36,7 +36,7 @@ func TestInitialStateOwnsBoundedApplicationSnapshot(t *testing.T) {
 	if chat.messages[0].text != "" || chat.messages[0].bodyRetained || chat.messages[0].fromMe {
 		t.Fatalf("bodyless message rendered synthetic content: %+v", chat.messages[0])
 	}
-	if got := chat.messages[1]; got.id != "outgoing" || got.text != "Hello 🙂" || !got.fromMe || !got.bodyRetained || got.time != "05:07" {
+	if got := chat.messages[1]; got.id != "outgoing" || got.text != "Hello 🙂" || !got.fromMe || !got.bodyRetained || got.time != localMessageTime(sentAt.Add(time.Minute)) {
 		t.Fatalf("message fidelity lost: %+v", got)
 	}
 	if !state.chats[1].isGroup {

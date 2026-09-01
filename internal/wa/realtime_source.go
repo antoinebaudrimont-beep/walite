@@ -11,6 +11,8 @@ import (
 
 const RealtimeSourceCapacity = 64
 
+const BootstrapRecordCapacity = 1
+
 type realtimeEntry struct {
 	event     model.Event
 	alternate model.ChatID
@@ -31,13 +33,14 @@ type RealtimeSource struct {
 	waiters int
 	closed  bool
 
-	notEmpty chan struct{}
-	space    chan struct{}
-	state    chan struct{}
-	stopped  chan struct{}
-	realtime chan model.Event
-	history  chan model.HistoryJob
-	status   chan struct{}
+	notEmpty  chan struct{}
+	space     chan struct{}
+	state     chan struct{}
+	stopped   chan struct{}
+	realtime  chan model.Event
+	bootstrap chan model.BootstrapRecord
+	history   chan model.HistoryJob
+	status    chan struct{}
 
 	started   atomic.Bool
 	closeOnce sync.Once
@@ -52,14 +55,15 @@ func newRealtimeSource() *RealtimeSource {
 	close(history)
 	close(status)
 	return &RealtimeSource{
-		aliases:  &chatAliases{},
-		notEmpty: make(chan struct{}, 1),
-		space:    make(chan struct{}, 1),
-		state:    make(chan struct{}, 1),
-		stopped:  make(chan struct{}),
-		realtime: make(chan model.Event),
-		history:  history,
-		status:   status,
+		aliases:   &chatAliases{},
+		notEmpty:  make(chan struct{}, 1),
+		space:     make(chan struct{}, 1),
+		state:     make(chan struct{}, 1),
+		stopped:   make(chan struct{}),
+		realtime:  make(chan model.Event),
+		bootstrap: make(chan model.BootstrapRecord, BootstrapRecordCapacity),
+		history:   history,
+		status:    status,
 	}
 }
 
@@ -144,6 +148,46 @@ func (source *RealtimeSource) Run(ctx context.Context) error {
 		case <-source.stopped:
 			return nil
 		}
+	}
+}
+
+// BootstrapRecords is the bounded, backpressured history-bootstrap stream.
+// Historical records are deliberately separate from lossless live events.
+func (source *RealtimeSource) BootstrapRecords() <-chan model.BootstrapRecord {
+	if source == nil {
+		return nil
+	}
+	return source.bootstrap
+}
+
+// SeedChatIDs establishes identities already persisted by the application
+// cache before the connection starts. A later authoritative PN/LID alternate
+// is attached to that entry, so reconnect traffic cannot create a second row
+// merely because the transport presents the opposite identifier first.
+func (source *RealtimeSource) SeedChatIDs(ids []model.ChatID) error {
+	if source == nil || len(ids) > model.MaxChatSummaries {
+		return errors.New("WhatsApp chat identity seed rejected")
+	}
+	for _, id := range ids {
+		if id.String() == "" {
+			return errors.New("WhatsApp chat identity seed rejected")
+		}
+		if _, err := source.aliases.resolve(id, model.ChatID{}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (source *RealtimeSource) admitBootstrap(record model.BootstrapRecord) bool {
+	if source == nil {
+		return false
+	}
+	select {
+	case source.bootstrap <- record:
+		return true
+	case <-source.stopped:
+		return false
 	}
 }
 

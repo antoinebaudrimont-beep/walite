@@ -11,7 +11,7 @@ import (
 
 // ChatAliasCapacity bounds session routing, not contacts or message IDs. No
 // eviction is safe without knowing whether a chat is still visible/retained.
-const ChatAliasCapacity = 128
+const ChatAliasCapacity = 10_000
 
 var (
 	ErrChatAliasesFull   = errors.New("WhatsApp session chat identity capacity reached")
@@ -119,6 +119,78 @@ func (aliases *chatAliases) resolve(primary, alternate model.ChatID) (model.Chat
 		entry.alternate = id
 	}
 	return entry.primary, nil
+}
+
+// resolveForSend makes the selected presentation identity authoritative before
+// transport. Unlike general live routing, it may reconcile exactly two
+// singleton cache-seeded routes when the current session supplies a validated
+// opposite PN/LID pair. It never merges entries that already carry another
+// relationship, and it allocates no additional state.
+func (aliases *chatAliases) resolveForSend(primary, alternate model.ChatID) (model.ChatID, error) {
+	if aliases == nil {
+		return primary, nil
+	}
+	if _, direct := directChatJID(primary); !direct {
+		return primary, nil
+	}
+	if alternate.String() != "" {
+		jid, _ := types.ParseJID(alternate.String())
+		alternate = authoritativeAlternate(primary, jid)
+	}
+	aliases.mu.Lock()
+	defer aliases.mu.Unlock()
+	first, second := -1, -1
+	for index := 0; index < aliases.count; index++ {
+		entry := aliases.entries[index]
+		if entry.primary == primary || entry.alternate == primary {
+			first = index
+		}
+		if alternate.String() != "" && (entry.primary == alternate || entry.alternate == alternate) {
+			second = index
+		}
+	}
+	if first >= 0 && second >= 0 && first != second {
+		// Only independently seeded singleton rows are safe to reconcile here.
+		// A pre-existing alternate denotes another established relationship.
+		if aliases.entries[first].alternate.String() != "" || aliases.entries[second].alternate.String() != "" {
+			return model.ChatID{}, ErrChatAliasConflict
+		}
+		keep, remove := first, second
+		if remove < keep {
+			keep, remove = remove, keep
+		}
+		aliases.entries[keep] = chatAlias{primary: primary, alternate: alternate}
+		copy(aliases.entries[remove:aliases.count-1], aliases.entries[remove+1:aliases.count])
+		aliases.count--
+		aliases.entries[aliases.count] = chatAlias{}
+		return primary, nil
+	}
+	index := first
+	if index < 0 {
+		index = second
+	}
+	if index < 0 {
+		if aliases.count == len(aliases.entries) {
+			return model.ChatID{}, ErrChatAliasesFull
+		}
+		aliases.entries[aliases.count] = chatAlias{primary: primary, alternate: alternate}
+		aliases.count++
+		return primary, nil
+	}
+	entry := &aliases.entries[index]
+	if entry.primary != primary {
+		if entry.alternate != primary {
+			return model.ChatID{}, ErrChatAliasConflict
+		}
+		entry.primary, entry.alternate = entry.alternate, entry.primary
+	}
+	if alternate.String() != "" && alternate != entry.primary && alternate != entry.alternate {
+		if entry.alternate.String() != "" {
+			return model.ChatID{}, ErrChatAliasConflict
+		}
+		entry.alternate = alternate
+	}
+	return primary, nil
 }
 
 // lookupAlternate runs only on an existing source/sender worker. The network

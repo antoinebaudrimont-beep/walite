@@ -257,6 +257,22 @@ func TestDisplayLocalAlternatePhoneAndOpaqueFallbacks(t *testing.T) {
 	}
 }
 
+func TestReadableChatFallbackValidatesPNAndKeepsOpaqueIdentity(t *testing.T) {
+	for _, test := range []struct {
+		id, want string
+	}{
+		{id: "12086708856@s.whatsapp.net", want: "+12086708856"},
+		{id: "218699835404531@lid", want: "218699835404531@lid"},
+		{id: "not-a-phone@s.whatsapp.net", want: "not-a-phone@s.whatsapp.net"},
+		{id: "family@g.us", want: "family@g.us"},
+	} {
+		id := aliasID(t, test.id)
+		if got := ReadableChatFallback(id); got != test.want {
+			t.Fatalf("id=%q fallback=%q want=%q", test.id, got, test.want)
+		}
+	}
+}
+
 func TestDisplayEqualQualityContactLookupIsAliasOrderIndependent(t *testing.T) {
 	pn, lid := types.NewJID("12345", types.DefaultUserServer), types.NewJID("98765", types.HiddenUserServer)
 	for _, pair := range [][2]types.JID{{pn, lid}, {lid, pn}} {

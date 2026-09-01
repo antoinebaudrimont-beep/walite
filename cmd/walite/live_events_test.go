@@ -163,6 +163,7 @@ func TestApplicationForwardsCommittedLiveEventIntoExistingChat(t *testing.T) {
 		done <- runStartedApplication(context.Background(), screen, tui.DefaultOptions(), application, tui.Run)
 	}()
 	<-screen.shown
+	<-screen.shown // asynchronous selected-chat cache page
 
 	liveMessage := mustSnapshotMessage(t, "c", "c-live", base.Add(35*time.Minute), false, "Charlie committed live")
 	committed, err := model.NewLiveMessageCommitted(liveMessage, 4, base.Add(40*time.Minute))
@@ -214,6 +215,7 @@ func TestApplicationForwardsCommittedLiveEventIntoFifthChat(t *testing.T) {
 		done <- runStartedApplication(context.Background(), screen, tui.DefaultOptions(), application, tui.Run)
 	}()
 	<-screen.shown
+	<-screen.shown // asynchronous selected-chat cache page
 
 	message := mustSnapshotMessage(t, "new-chat", "new-chat-message", base.Add(50*time.Minute), true, "Café 東京 ❤️")
 	committed, err := model.NewLiveMessageCommitted(message, 5, base.Add(60*time.Minute))

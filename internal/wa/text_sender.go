@@ -122,20 +122,17 @@ func (sender *realTextSender) SendText(ctx context.Context, chatID model.ChatID,
 		return model.Event{}, ErrTextUnavailable
 	}
 	jid, _ := textRecipient(chatID)
-	// Pin the requested presentation identity before any remote operation so
-	// even an echo delivered before SendMessage returns routes to this chat.
-	canonical, err := sender.aliases.resolve(chatID, model.ChatID{})
+	// HistorySync and live traffic may already have supplied the authoritative
+	// PN/LID pair. Reuse it: a broad historical chat is still sendable even when
+	// the session store cannot independently answer a redundant lookup.
+	alternate := sender.aliases.alternateFor(chatID)
+	alternate, err := lookupAlternate(ctx, chatID, alternate, sender.lookup)
 	if err != nil {
 		return model.Event{}, err
 	}
-	if canonical != chatID {
-		return model.Event{}, ErrTextRejected
-	}
-	alternate, err := lookupAlternate(ctx, chatID, model.ChatID{}, sender.lookup)
-	if err != nil {
-		return model.Event{}, err
-	}
-	canonical, err = sender.aliases.resolve(chatID, alternate)
+	// Install the selected route before any remote operation so an echo that
+	// arrives before SendMessage returns is normalized to this visible chat.
+	canonical, err := sender.aliases.resolveForSend(chatID, alternate)
 	if err != nil {
 		return model.Event{}, err
 	}

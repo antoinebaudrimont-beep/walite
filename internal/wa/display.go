@@ -250,8 +250,8 @@ func (resolver *displayResolver) lookup(parent context.Context, request displayR
 		if !valid {
 			continue
 		}
-		if person.Server == types.DefaultUserServer && phoneUser(person.User) {
-			candidate, _ = model.NewDisplayMetadata(request.id.String(), "+"+person.User, model.DisplayPhone, false)
+		if fallback := readablePhoneFallback(id); fallback != "" {
+			candidate, _ = model.NewDisplayMetadata(request.id.String(), fallback, model.DisplayPhone, false)
 			best = best.Merge(candidate)
 		}
 		if resolver.contact == nil || resolver.contactSeen(person) || resolver.contactCount == len(resolver.contacts) {
@@ -340,6 +340,27 @@ func contactDisplayName(contact types.ContactInfo) (string, model.DisplayQuality
 		}
 	}
 	return "", model.DisplayOpaque
+}
+
+func readablePhoneFallback(ids ...model.ChatID) string {
+	for _, id := range ids {
+		jid, direct := directChatJID(id)
+		if direct && jid.Server == types.DefaultUserServer && phoneUser(jid.User) {
+			return "+" + jid.User
+		}
+	}
+	return ""
+}
+
+// ReadableChatFallback keeps WhatsApp JID parsing inside the transport
+// boundary while allowing an already-persisted empty-name PN chat to render a
+// validated phone number. Opaque identities, including unmapped LIDs, remain
+// unchanged and can still be improved by later display metadata.
+func ReadableChatFallback(id model.ChatID) string {
+	if phone := readablePhoneFallback(id); phone != "" {
+		return phone
+	}
+	return id.String()
 }
 
 func phoneUser(user string) bool {

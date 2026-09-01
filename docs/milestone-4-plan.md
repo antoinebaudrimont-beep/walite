@@ -756,3 +756,193 @@ consecutive focused race runs. An existing queue-saturation timer assertion
 flaked once in an initial normal run; five unchanged focused reruns and the
 final full suites passed. No timing threshold was changed. Module files are
 unchanged. **4D.0 is ready for review, uncommitted; 4D remains future work.**
+
+## Milestone 4D — Persistent chat list and bounded history bootstrap
+
+Status: the explicitly approved one-time manual repair/re-pair succeeded. A
+broad HistorySync populated the application cache, historical messages survive
+restart, and the linked session reconnects without another QR. Walite does not
+unlink automatically, issue history requests, or manipulate the phone.
+Filtering `status@broadcast` is a separate presentation issue and is not part
+of 4D. The acceptance fixes below are ready for one final manual test.
+
+### Production cache and HistorySync boundary
+
+Connected production now opens one SQLite application cache at
+`${XDG_CACHE_HOME:-~/.cache}/walite/walite-cache.db` before constructing the
+long-lived WhatsApp connection. The existing WhatsApp credential database
+remains separate at `${XDG_DATA_HOME:-~/.local/share}/walite/whatsmeow-session.db`.
+SQLite is the sole connected chat/message authority; Memory remains only in
+offline fixtures. The cache is closed after the authenticated application and
+its workers stop.
+
+Pinned whatsmeow `INITIAL_BOOTSTRAP`, `RECENT`, `FULL`, and `ON_DEMAND`
+HistorySync deliveries map respectively to walite transport-neutral initial,
+recent, full, and on-demand bootstrap categories. Each upstream conversation is
+converted and released independently. One fixed-capacity channel (capacity 1)
+applies cancellable backpressure between the WhatsApp callback and one cache
+consumer; no protobuf graph or goroutine per message is retained.
+
+One bootstrap record owns the chat ID, bounded name/group/archive/mute/activity
+metadata, the upstream unread count only when that optional field is present,
+and at most the newest **50** supported text messages. Messages retain stable
+ID, timestamp, direction, exact bounded Unicode text, generic quote, group
+sender ID and group flag. Unsupported media/system/protocol entries are omitted
+without invented body text. Metadata-only conversations still create summaries.
+Messages are normalized oldest-first inside the record before the existing
+historical SQLite writer receives them.
+
+Conversation activity is the later complete Unix timestamp from
+`LastMsgTimestamp` and `ConversationTimestamp`; either field may be absent in a
+HistorySync variant. SQLite and TUI ordering use that absolute timestamp
+descending and stable ChatID ascending for ties. Formatted `HH:MM` text is never
+an ordering key, and metadata/name-only refreshes do not promote a chat.
+
+Authoritative `PnJID`, `LidJID`, `NewJID`, and `OldJID` pairs are applied through
+the existing bounded alias resolver before a bootstrap row is written. The
+resolver bound is now the same 10,000-conversation application bound. On
+restart, cached stable chat IDs seed that resolver before the WhatsApp
+connection starts; when the opposite PN/LID arrives first, it attaches to and
+resolves back to the cached primary. This prevents a persistent cache row from
+splitting solely because transport identity presentation changed. No generic
+store suffix rules or alias schema was added, and groups bypass direct-chat
+alias slots.
+
+Outgoing sends reuse an authoritative PN/LID alternate already learned from
+HistorySync or live traffic. They do not fail merely because a redundant local
+session-store lookup lacks that broad historical mapping. The established
+presentation ChatID remains the committed identity, and plain/reply sends still
+use the existing bounded reservation, one client, realtime SQLite commit, and
+LiveEvent path.
+
+Manual acceptance exposed a second, production-only cache shape after re-pair:
+both spellings of an authoritative PN/LID pair could already exist as separate
+cached rows, so startup seeded two singleton routes. The session lookup then
+succeeded, but general alias resolution correctly returned
+`ErrChatAliasConflict` before transport. Send routing now reconciles only that
+exact case: two singleton entries plus a current authoritative opposite-server
+mapping. It chooses the selected visible ChatID before `SendMessage`, removes
+one bounded routing slot, and can reorient the proven pair if the other cached
+row is selected later. General live alias resolution still refuses to merge
+established/non-singleton relationships. No cache rows are deleted or migrated,
+and echo normalization continues to target the selected committed identity.
+
+Historical batches use `WriteHistory`, never `WriteRealtime`, and therefore do
+not publish LiveEvents or increment unread once per imported message. A present
+conversation unread value is authoritative, including zero, when its activity
+is genuinely newer than the cached conversation. Missing metadata or an equal/
+older activity snapshot preserves cached unread, so a stale bootstrap chunk
+cannot resurrect a local clear. Realtime inserts after bootstrap continue
+through the unchanged committed path: incoming increments from that value,
+outgoing does not, and both update the same chat. Duplicate bootstrap records
+remain idempotent. Completion, rather than each message, triggers one coalesced
+cache-list refresh and the existing bounded cache-budget enforcement. `MarkRead`
+is not called, and walite does not issue `BuildHistorySyncRequest`.
+
+### Persistent local read state
+
+Selecting an unread chat still clears its TUI badge immediately. The TUI now
+submits that stable ChatID to the existing single cache worker instead of
+blocking on SQLite. The worker owns a deterministic FIFO of at most 10,000
+deduplicated chat IDs plus their visible activity watermark, uses no goroutine
+per selection, and drains accepted local-read writes during shutdown.
+`SQLiteStore.MarkChatLocallyRead` runs through the existing bounded single
+writer and atomically updates only `chats.unread_count` to zero when cached
+activity is not newer than that watermark. Thus a delayed clear cannot erase a
+new message that committed first. No state file or schema migration is involved.
+Memory implements the same generic cache operation for offline parity.
+
+The ordering contract is local and transport-neutral. A new incoming realtime
+insert committed after the clear increments zero to one; replaying that same
+message does not increment twice; another chat is untouched. A later HistorySync
+snapshot may replace unread only with newer conversation activity. Persistence
+failure does not crash or undo the current TUI clear; the existing SQLite cache
+failure classification remains the storage diagnostic boundary. This operation
+does not call WhatsApp, send a receipt, or claim remote read state. Remote
+`MarkRead` remains Milestone 4E.
+
+### Broad summaries and lazy selected history
+
+`ListChats` returns at most **10,000** lightweight summaries ordered by activity
+descending and stable ChatID ascending. SQLite restart restores IDs, names,
+group status, unread and activity without waiting for HistorySync. The bounded
+bootstrap consumer preserves the first 10,000 established/cache identities and
+deterministically ignores a new unknown 10,001st conversation; it never evicts
+the selected/visible working set or grows storage in memory. The rendered TUI
+uses the same fixed summary bound, follows selection through the full list, and
+keeps the selected row visible while `j`/`k` navigate well beyond the viewport.
+
+The TUI chat record stores only summary fields plus a nullable pointer to one
+fixed 32-message buffer. Consequently 10,000 metadata-only chats allocate zero
+per-chat message buffers; only chats whose page or committed live message is
+present own a buffer. Scrolling the summary list does not load messages.
+
+After the cached summary first frame is shown, the selected chat requests the
+newest **32** messages using the existing indexed keyset page. One application-
+owned loader has a capacity-one wake mailbox, coalesces summary refreshes, and
+keeps only the newest pending selection request. It performs no query on the
+TUI event loop and creates no worker per selection. Each request carries the
+chat's presentation revision. A result for another selected ID or an older
+revision is rejected. If a committed live message arrives while the page is in
+flight, the accepted page merges rather than erases that message. Selection,
+draft, cursor, reply, viewport and popup state remain presentation-owned and
+transient.
+
+An empty cache renders `No chats — syncing…`; HistorySync completion refreshes
+the summary list asynchronously. Full HistorySync is never a startup gate.
+On-demand older-history download is deferred to 4D.1, and read receipts remain
+4E.
+
+### Acceptance presentation fixes
+
+Individual messages retain `HH:MM`, presented in the process local timezone.
+Each visible local calendar day begins with a centered `Mon 2 Jan 2006`
+separator. Separator rows participate in viewport measurement, so scrolling,
+resize, unread boundaries, directionality, Unicode and reply quote rows remain
+deterministic. A viewport that begins mid-day still supplies its date context.
+
+The existing 4C display priority is unchanged. When authoritative name fields
+are empty, a validated PN JID is presented as `+` plus its digits by the shared
+`internal/wa` fallback. This also improves already-populated cache rows on the
+next startup without exposing JID parsing to the TUI. An unmapped LID remains
+its opaque stable ID until authoritative PN/name metadata arrives.
+
+### Deterministic coverage and target measurements
+
+Tests cover category mapping; metadata-only conversations; exact Unicode,
+direction, quotes and group senders; newest-50 retention; one-slot shutdown;
+PN/LID bootstrap and restart seeding; authoritative/absent unread; duplicate
+replay; incoming/outgoing realtime after history; SQLite restart; deterministic
+10,000/10,001 ordering; 100-chat TUI navigation; no summary message-slot
+allocation; newest-32 page loading; newest-request coalescing; stale generation
+rejection; live/page merge; production SQLite dependency composition; and clean
+bootstrap cancellation. Local-read additions cover selection through SQLite
+restart, one-chat isolation, incoming-after-clear, duplicate idempotency,
+PN/LID identity stability, stale/equal versus newer HistorySync, bounded FIFO
+dedup/shutdown drain, and preservation of draft/reply/viewport/popup state.
+Acceptance regressions additionally cover HistorySync PN/LID plain and reply
+sends through SQLite, exact single commit and echo deduplication, activity
+ordering across dates/restart and insertion order, local-day separators with
+scroll/realtime/unread/reply/Unicode presentation, and readable PN versus opaque
+LID fallback for both new bootstrap and an already-populated cache.
+
+Measurements on the target Intel Core 2 Duo T9900, linux/amd64
+(`-benchtime=3x -count=1`, short/noisy samples):
+
+| Operation | Time | Allocated bytes / allocations |
+| --- | ---: | ---: |
+| ListChats 1,000 | 11.20 ms | 569,778 B / 19,003 |
+| ListChats 10,000 | 118.59 ms | 5,738,402 B / 196,699 |
+| newest message page, 50 | 0.761 ms | 37,744 B / 1,047 |
+| build/draw cached 10,000-summary first frame | 14.94 ms | 3,135,634 B / 14,251 |
+
+The fixed `chatState` value is **960,024 bytes** on amd64. Its 10,000 records
+contain summary fields and message-buffer pointers, not 320,000 message slots;
+the benchmark's additional allocation includes owned input conversion and a
+100×30 simulation screen. These measurements support the direct indexed
+all-summary query and asynchronous selected-page design on the current target.
+
+The original linked session did not replay a sufficiently broad bootstrap. The
+user then explicitly completed the one-time repair/re-pair, and the expected
+broad HistorySync arrived. No further unlink/re-pair is required or permitted
+for this acceptance pass; the populated cache and linked session are preserved.

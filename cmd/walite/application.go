@@ -10,6 +10,7 @@ import (
 	"github.com/antoinebaudrimont-beep/walite/internal/config"
 	"github.com/antoinebaudrimont-beep/walite/internal/model"
 	"github.com/antoinebaudrimont-beep/walite/internal/service"
+	"github.com/antoinebaudrimont-beep/walite/internal/store"
 	"github.com/antoinebaudrimont-beep/walite/internal/tui"
 	"github.com/antoinebaudrimont-beep/walite/internal/wa"
 	"github.com/gdamore/tcell/v2"
@@ -29,6 +30,10 @@ type applicationService interface {
 
 type applicationTextSender interface {
 	SendText(context.Context, service.SendTextRequest) error
+}
+
+type cacheUpdateApplication interface {
+	CacheUpdates() <-chan struct{}
 }
 
 type applicationDependencies struct {
@@ -58,6 +63,15 @@ func run(ctx context.Context, screen tcell.Screen) error {
 			return launchXFCEPairingWindow(ctx, executable, runPairingCommand)
 		},
 		runLinked: func(ctx context.Context, screen tcell.Screen) error {
+			cachePath, err := config.DefaultApplicationCachePath()
+			if err != nil {
+				return fmt.Errorf("application cache path: %w", err)
+			}
+			cache, err := store.OpenSQLite(ctx, store.SQLiteOptions{Path: cachePath})
+			if err != nil {
+				return fmt.Errorf("open application cache: %w", err)
+			}
+			defer cache.Close()
 			var realtimeSource *wa.RealtimeSource
 			var textSender wa.TextSender
 			return runAuthenticatedApplication(ctx, screen, authenticatedApplicationDependencies{
@@ -77,10 +91,23 @@ func run(ctx context.Context, screen tcell.Screen) error {
 						_ = connection.Close()
 						return nil, errors.New("WhatsApp realtime source unavailable")
 					}
+					cachedChats, err := cache.ListChats(ctx, model.MaxChatSummaries)
+					if err != nil {
+						_ = connection.Close()
+						return nil, fmt.Errorf("load cached chat identities: %w", err)
+					}
+					cachedIDs := make([]model.ChatID, len(cachedChats))
+					for index, chat := range cachedChats {
+						cachedIDs[index] = chat.ID()
+					}
+					if err := realtimeSource.SeedChatIDs(cachedIDs); err != nil {
+						_ = connection.Close()
+						return nil, fmt.Errorf("seed cached chat identities: %w", err)
+					}
 					return connection, nil
 				},
 				newService: func() (applicationService, error) {
-					return newConnectedApplicationService(realtimeSource, textSender)
+					return newConnectedApplicationService(realtimeSource, textSender, cache)
 				},
 				runConnection: tui.RunConnectionInitialized,
 				runTUI:        tui.RunInitialized,
@@ -153,6 +180,31 @@ func runStartedApplication(
 		}
 		return fmt.Errorf("load initial snapshot: %w", err)
 	}
+	loader := newCacheLoader(serviceCore)
+	loaderDone := make(chan struct{})
+	go func() {
+		defer close(loaderDone)
+		loader.run(runCtx)
+	}()
+	cacheUpdatesDone := make(chan struct{})
+	go func() {
+		defer close(cacheUpdatesDone)
+		application, ok := serviceCore.(cacheUpdateApplication)
+		if !ok || application.CacheUpdates() == nil {
+			return
+		}
+		for {
+			select {
+			case <-runCtx.Done():
+				return
+			case _, ok := <-application.CacheUpdates():
+				if !ok {
+					return
+				}
+				loader.requestSummary()
+			}
+		}
+	}()
 
 	updatesDone := make(chan struct{})
 	go func() {
@@ -183,6 +235,8 @@ func runStartedApplication(
 			Options: options, InitialState: initialState, LiveEvents: liveMessages,
 			Send: sender.admit, SendResults: sender.results,
 			DisplayUpdates: displayUpdates,
+			SummaryUpdates: loader.summaries, ChatLoads: loader.chats, LoadChat: loader.requestChat,
+			PersistLocalRead: loader.requestLocalRead,
 		})
 	}()
 
@@ -193,6 +247,8 @@ func runStartedApplication(
 		serviceErr := <-serviceDone
 		<-liveDone
 		<-updatesDone
+		<-loaderDone
+		<-cacheUpdatesDone
 		return applicationResultAfterTUI(parent, tuiErr, serviceErr)
 	case serviceErr := <-serviceDone:
 		var tuiErr error
@@ -205,6 +261,8 @@ func runStartedApplication(
 			<-liveDone
 		}
 		<-updatesDone
+		<-loaderDone
+		<-cacheUpdatesDone
 		return applicationResultAfterService(parent, serviceErr, tuiErr)
 	}
 }
