@@ -113,6 +113,7 @@ func runInitialized(
 	draw(screen, &model)
 	screen.Show()
 	requestPendingLocalRead(&model, input.PersistLocalRead)
+	requestPendingReadReceipt(&model, input.SendReadReceipt)
 	requestSelectedChatLoad(&model, input.LoadChat)
 
 	events := make(chan tcell.Event, 1)
@@ -163,6 +164,7 @@ func runInitialized(
 				continue
 			}
 			if applyChatLoad(&model, result) {
+				requestPendingReadReceipt(&model, input.SendReadReceipt)
 				draw(screen, &model)
 				screen.Show()
 			}
@@ -197,6 +199,7 @@ func runInitialized(
 				}
 				changed, exit := handleKey(&model, event, width, height)
 				requestPendingLocalRead(&model, input.PersistLocalRead)
+				requestPendingReadReceipt(&model, input.SendReadReceipt)
 				if exit {
 					return nil
 				}

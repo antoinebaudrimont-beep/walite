@@ -51,6 +51,10 @@ func applyChatLoad(model *viewModel, result ChatLoadResult) bool {
 	chat.revision++
 	model.chatView.reset()
 	model.chatView.unreadBoundary = unreadBoundaryForChat(chat)
+	prepareReadReceipt(model, chat)
+	if model.readIntent.chatID == chat.id {
+		model.readIntent = readReceiptIntent{}
+	}
 	clampMessageViewport(model, model.terminalWidth, model.terminalHeight)
 	return true
 }

@@ -285,7 +285,7 @@ func TestConnectedOutgoingWorkerUsesCommittedLivePath(t *testing.T) {
 	}
 	defer connection.Close() // never Connect or Run this connection
 	sender := &connectedTestSender{at: time.Now().UTC()}
-	application, err := newConnectedApplicationService(connection.RealtimeSource(), sender, openConnectedTestCache(t))
+	application, err := newConnectedApplicationService(connection.RealtimeSource(), sender, connection.ReadReceiptSender(), openConnectedTestCache(t))
 	if err != nil {
 		t.Fatal(err)
 	}

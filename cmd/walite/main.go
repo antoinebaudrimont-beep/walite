@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -29,11 +30,17 @@ func runMain() int {
 	if err == nil || errors.Is(err, context.Canceled) {
 		return 0
 	}
+	return reportMainError(os.Stderr, err)
+}
+
+func reportMainError(destination io.Writer, err error) int {
 	var pairingErr *pairingWindowError
 	if errors.As(err, &pairingErr) {
-		_, _ = fmt.Fprintln(os.Stderr, pairingErr.UserMessage())
+		_, _ = fmt.Fprintln(destination, pairingErr.UserMessage())
 		return 1
 	}
-	_, _ = fmt.Fprintln(os.Stderr, "walite failed")
+	// Application and transport boundaries expose content-free wrapped errors.
+	// Keep that operation context instead of hiding the only startup diagnostic.
+	_, _ = fmt.Fprintf(destination, "walite failed: %v\n", err)
 	return 1
 }

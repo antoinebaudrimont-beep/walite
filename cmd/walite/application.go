@@ -74,6 +74,7 @@ func run(ctx context.Context, screen tcell.Screen) error {
 			defer cache.Close()
 			var realtimeSource *wa.RealtimeSource
 			var textSender wa.TextSender
+			var readReceiptSender wa.ReadReceiptSender
 			return runAuthenticatedApplication(ctx, screen, authenticatedApplicationDependencies{
 				configuration: configurationStore,
 				newConnection: func(ctx context.Context) (applicationConnection, error) {
@@ -87,6 +88,7 @@ func run(ctx context.Context, screen tcell.Screen) error {
 					}
 					realtimeSource = connection.RealtimeSource()
 					textSender = connection.TextSender()
+					readReceiptSender = connection.ReadReceiptSender()
 					if realtimeSource == nil {
 						_ = connection.Close()
 						return nil, errors.New("WhatsApp realtime source unavailable")
@@ -107,7 +109,7 @@ func run(ctx context.Context, screen tcell.Screen) error {
 					return connection, nil
 				},
 				newService: func() (applicationService, error) {
-					return newConnectedApplicationService(realtimeSource, textSender, cache)
+					return newConnectedApplicationService(realtimeSource, textSender, readReceiptSender, cache)
 				},
 				runConnection: tui.RunConnectionInitialized,
 				runTUI:        tui.RunInitialized,
@@ -222,6 +224,8 @@ func runStartedApplication(
 
 	sender := newSendWorker(runCtx, serviceCore)
 	defer sender.stop()
+	readReceipts := newReadReceiptWorker(runCtx, serviceCore)
+	defer readReceipts.stop()
 	var displayUpdates chan tui.DisplayMetadata
 	if display, ok := serviceCore.(displayApplication); ok {
 		displayUpdates = make(chan tui.DisplayMetadata, 1)
@@ -237,12 +241,14 @@ func runStartedApplication(
 			DisplayUpdates: displayUpdates,
 			SummaryUpdates: loader.summaries, ChatLoads: loader.chats, LoadChat: loader.requestChat,
 			PersistLocalRead: loader.requestLocalRead,
+			SendReadReceipt:  readReceipts.admit,
 		})
 	}()
 
 	select {
 	case tuiErr := <-tuiDone:
 		sender.stop()
+		readReceipts.stop()
 		cancel()
 		serviceErr := <-serviceDone
 		<-liveDone

@@ -78,7 +78,7 @@ func TestChatAliasesFullNeverEvictsOrChangesExistingIdentity(t *testing.T) {
 	}
 }
 
-func TestChatAliasesDoNotInferNumbersOrMergeEstablishedChats(t *testing.T) {
+func TestChatAliasesDoNotInferNumbersBeforeAuthoritativeSingletonReconciliation(t *testing.T) {
 	aliases := &chatAliases{}
 	pn, lid := aliasID(t, "12345@s.whatsapp.net"), aliasID(t, "12345@lid")
 	for _, id := range []model.ChatID{pn, lid} {
@@ -86,12 +86,32 @@ func TestChatAliasesDoNotInferNumbersOrMergeEstablishedChats(t *testing.T) {
 			t.Fatalf("unproven alias=%v %v", got, err)
 		}
 	}
-	before := aliases.entries
-	if _, err := aliases.resolve(pn, lid); !errors.Is(err, ErrChatAliasConflict) {
-		t.Fatalf("late independent merge=%v", err)
+	if aliases.count != 2 || aliases.alternateFor(pn).String() != "" || aliases.alternateFor(lid).String() != "" {
+		t.Fatal("similar numbers were inferred as aliases")
 	}
-	if aliases.entries != before || aliases.count != 2 {
-		t.Fatal("conflict mutated identities")
+	if got, err := aliases.resolve(pn, lid); err != nil || got != pn || aliases.count != 1 || aliases.alternateFor(pn) != lid {
+		t.Fatalf("authoritative singleton reconciliation=%q count=%d err=%v", got.String(), aliases.count, err)
+	}
+}
+
+func TestCacheSeededPNAndLIDReconcileOnFirstAuthoritativeLiveEvent(t *testing.T) {
+	base := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
+	pn, lid := aliasID(t, "12345@s.whatsapp.net"), aliasID(t, "987654@lid")
+	for _, seeds := range [][]model.ChatID{{pn, lid}, {lid, pn}} {
+		source := newRealtimeSource()
+		if err := source.SeedChatIDs(seeds); err != nil || source.aliases.count != 2 {
+			t.Fatalf("seed count=%d err=%v", source.aliases.count, err)
+		}
+		message, err := model.NewMessage(model.MessageInput{ChatID: seeds[1].String(), MessageID: "first-live", SentAt: base, Text: "exact Unicode 🐧"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		event, _ := model.NewEvent(message, base)
+		resolved, err := source.resolveEntry(context.Background(), realtimeEntry{event: event, alternate: seeds[0]})
+		if err != nil || resolved.Message().ChatID() != seeds[0] || resolved.Message().MessageID() != message.MessageID() ||
+			resolved.Message().Text() != message.Text() || source.aliases.count != 1 || source.aliases.alternateFor(seeds[0]) != seeds[1] {
+			t.Fatalf("seeds=%v resolved=%+v aliases=%d err=%v", seeds, resolved, source.aliases.count, err)
+		}
 	}
 }
 

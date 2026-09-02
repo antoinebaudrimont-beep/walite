@@ -22,14 +22,15 @@ type connectedApplicationService struct {
 	core         *service.Core
 	store        *store.SQLiteStore
 	sender       wa.TextSender
+	readReceipts wa.ReadReceiptSender
 	display      displaySource
 	source       service.EventSource
 	policy       service.RetentionPolicy
 	cacheUpdates chan struct{}
 }
 
-func newConnectedApplicationService(source service.EventSource, sender wa.TextSender, cache *store.SQLiteStore) (applicationService, error) {
-	if source == nil || sender == nil || cache == nil {
+func newConnectedApplicationService(source service.EventSource, sender wa.TextSender, readReceipts wa.ReadReceiptSender, cache *store.SQLiteStore) (applicationService, error) {
+	if source == nil || sender == nil || readReceipts == nil || cache == nil {
 		return nil, errors.New("connected event source rejected")
 	}
 	values := config.DefaultValues()
@@ -58,7 +59,14 @@ func newConnectedApplicationService(source service.EventSource, sender wa.TextSe
 		return nil, err
 	}
 	display, _ := source.(displaySource)
-	return &connectedApplicationService{core: core, store: cache, sender: sender, display: display, source: source, policy: policy, cacheUpdates: make(chan struct{}, 1)}, nil
+	return &connectedApplicationService{core: core, store: cache, sender: sender, readReceipts: readReceipts, display: display, source: source, policy: policy, cacheUpdates: make(chan struct{}, 1)}, nil
+}
+
+func (application *connectedApplicationService) MarkRead(ctx context.Context, request model.ReadReceiptRequest) error {
+	if application == nil || application.readReceipts == nil {
+		return wa.ErrReadReceiptUnavailable
+	}
+	return application.readReceipts.MarkRead(ctx, request)
 }
 
 func (application *connectedApplicationService) DisplayUpdates() <-chan model.DisplayMetadata {

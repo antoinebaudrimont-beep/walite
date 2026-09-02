@@ -946,3 +946,82 @@ The original linked session did not replay a sufficiently broad bootstrap. The
 user then explicitly completed the one-time repair/re-pair, and the expected
 broad HistorySync arrived. No further unlink/re-pair is required or permitted
 for this acceptance pass; the populated cache and linked session are preserved.
+
+## Milestone 4E — Read receipts
+
+Status: ready for automated review and manual direct/group receipt validation.
+Do not mark complete until the linked-account manual test confirms the remote
+sender observes the read transition.
+
+Walite sends a remote read receipt only when `j`/`k` actually changes selection
+into a chat whose local unread count is nonzero. Receipt work is not triggered
+by realtime arrival, HistorySync, startup with cached unread, chat-list display,
+summary/name refresh, or automatic first-chat selection. The existing local
+behavior remains immediate and authoritative for walite: selection clears the
+badge and asynchronously persists unread zero to SQLite independently of the
+remote operation. A receipt admission/network failure neither restores that
+badge nor retries forever.
+
+The pinned whatsmeow API is:
+
+```go
+func (*Client) MarkRead(context.Context, []types.MessageID, time.Time,
+    types.JID, types.JID, ...types.ReceiptType) error
+```
+
+The first JID is always the chat. The second is empty for a direct chat and is
+the sending participant for a group. One call may contain several message IDs
+only when they share that sender. Walite supplies the receipt worker's current
+UTC time as read-at time. Direct chats reuse the connection-owned PN/LID alias
+registry and session mapping; no phone number is derived outside `internal/wa`.
+Group receipts are supported for cached messages whose existing SenderID is
+present. Mixed-participant group frontiers are split into deterministic calls;
+missing participant identity is never guessed.
+
+Only the newest known unread incoming identities in the selected chat's current
+**32-message** cache page are acknowledged. Interleaved `FromMe` messages are
+excluded, message bodies are irrelevant, and no older history is loaded solely
+for a receipt. If the selected page has not arrived, one transient selection
+intent waits for that already-requested bounded page. This UI intent and all
+receipt queues are transient and never written to SQLite.
+
+One application-owned worker performs the synchronous network calls. It has a
+fixed **32-chat** pending ring, no per-request goroutine, and no unbounded map.
+Pending requests for the same ChatID coalesce into their newest/highest bounded
+frontier, deduplicated by stable MessageID; if the union exceeds 32, the newest
+32 are retained. A full ring rejects further remote admission without changing
+local read state. Each admitted operation has a 15-second context deadline and
+is attempted once. Disconnection or transport failure is controlled and causes
+no background retry; a later genuinely unread selection may naturally submit a
+new frontier.
+
+Receipt tests are network-free and cover explicit selection versus background,
+startup and HistorySync paths; stable IDs and timestamps; Unicode/bodyless
+irrelevance; `FromMe` exclusion; deferred page loading; duplicate events and
+already-read reselection; bounded request/queue behavior; coalescing; controlled
+disconnection/failure; PN/LID routing; direct calls; mixed-participant groups;
+SQLite local-read persistence; incoming-after-clear; and existing outgoing,
+history/cache, contact/name, reply and directional-layout regressions.
+
+Typing, presence, reactions, played/media receipts, delivery receipts, and read-
+receipt status presentation are explicitly outside Milestone 4E.
+
+### Startup alias reconciliation follow-up
+
+The first restart after broad bootstrap exposed a pre-existing routing edge:
+SQLite could legitimately contain both PN and LID rows for one direct chat, so
+startup seeded two independent alias-table singletons. The first later
+authoritative PN/LID live event made the general resolver return
+`ErrChatAliasConflict`, stopping the service before the TUI. Read-receipt code
+did not enqueue or call `MarkRead`; the restart merely exposed the cached shape.
+
+The existing outgoing path already allowed safe reconciliation of exactly two
+independently seeded singleton routes. The same narrow policy now applies when
+authoritative incoming event metadata or the linked session mapping proves the
+PN/LID pair: preserve the first activity-ordered cache identity, attach the
+other spelling, and remove only the duplicate routing-table slot. No SQLite
+chat/message row is merged, deleted, or rewritten. Any entry that already has
+another relationship still returns the same controlled conflict. Regression
+coverage constructs the production capabilities and worker, seeds both cached
+forms, then proves the first paired live event resolves without stopping while
+preserving stable message identity and Unicode.

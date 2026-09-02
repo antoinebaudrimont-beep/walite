@@ -37,7 +37,7 @@ func TestConnectedCommittedPlainAndReplyRenderThroughApplication(t *testing.T) {
 			}
 			defer connection.Close() // no Connect/Run: transport is a deterministic fake
 			sender := &connectedTestSender{at: time.Date(2100, 8, 1, 12, 0, 0, 0, time.UTC)}
-			application, err := newConnectedApplicationService(connection.RealtimeSource(), sender, openConnectedTestCache(t))
+			application, err := newConnectedApplicationService(connection.RealtimeSource(), sender, connection.ReadReceiptSender(), openConnectedTestCache(t))
 			if err != nil {
 				t.Fatal(err)
 			}

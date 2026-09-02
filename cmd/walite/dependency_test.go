@@ -60,8 +60,9 @@ func TestMilestone4BProductionCompositionUsesConnectionOwnedSourceAndSender(t *t
 	}
 	if !strings.Contains(string(application), "connection.RealtimeSource()") ||
 		!strings.Contains(string(application), "connection.TextSender()") ||
+		!strings.Contains(string(application), "connection.ReadReceiptSender()") ||
 		!strings.Contains(string(application), "realtimeSource.SeedChatIDs(cachedIDs)") ||
-		!strings.Contains(string(application), "newConnectedApplicationService(realtimeSource, textSender, cache)") {
+		!strings.Contains(string(application), "newConnectedApplicationService(realtimeSource, textSender, readReceiptSender, cache)") {
 		t.Fatal("production authentication does not compose the connection-owned realtime source")
 	}
 	if !strings.Contains(string(demo), "wa.NewOfflineTextSender") {
@@ -77,7 +78,7 @@ func TestMilestone4BProductionCompositionUsesConnectionOwnedSourceAndSender(t *t
 	}
 }
 
-func TestMilestone4DLocalReadDoesNotCallWhatsAppReceiptOrHistoryRequestAPIs(t *testing.T) {
+func TestMilestone4EWhatsAppReceiptCallsStayInsideInternalWA(t *testing.T) {
 	root := filepath.Clean(filepath.Join("..", ".."))
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -89,7 +90,7 @@ func TestMilestone4DLocalReadDoesNotCallWhatsAppReceiptOrHistoryRequestAPIs(t *t
 			}
 			return nil
 		}
-		if filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
+		if filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") || strings.Contains(path, string(filepath.Separator)+"internal"+string(filepath.Separator)+"wa"+string(filepath.Separator)) {
 			return nil
 		}
 		contents, err := os.ReadFile(path)
@@ -97,8 +98,8 @@ func TestMilestone4DLocalReadDoesNotCallWhatsAppReceiptOrHistoryRequestAPIs(t *t
 			return err
 		}
 		source := string(contents)
-		if strings.Contains(source, ".MarkRead(") || strings.Contains(source, "BuildHistorySyncRequest(") {
-			t.Errorf("%s introduces remote read/history request behavior", path)
+		if strings.Contains(source, "go.mau.fi/whatsmeow") || strings.Contains(source, "types.JID") || strings.Contains(source, "BuildHistorySyncRequest(") {
+			t.Errorf("%s leaks WhatsApp receipt/history types outside internal/wa", path)
 		}
 		return nil
 	})

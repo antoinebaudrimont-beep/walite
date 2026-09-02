@@ -86,6 +86,7 @@ type Input struct {
 	ChatLoads        <-chan ChatLoadResult
 	LoadChat         func(ChatLoadRequest) bool
 	PersistLocalRead func(LocalReadRequest) bool
+	SendReadReceipt  func(ReadReceiptRequest) bool
 }
 
 // LocalReadRequest clears cached unread state only through the activity that
@@ -93,6 +94,23 @@ type Input struct {
 type LocalReadRequest struct {
 	ChatID       string
 	ActivityTime time.Time
+}
+
+// ReadReceiptMessage contains only the stable identity needed to acknowledge
+// one known incoming message. Bodies never cross this side-effect boundary.
+type ReadReceiptMessage struct {
+	MessageID string
+	SentAt    time.Time
+	SenderID  string
+}
+
+// ReadReceiptRequest is the bounded transport-neutral frontier captured by an
+// explicit user chat selection. Messages is always limited to the chat working
+// set and contains no FromMe entries.
+type ReadReceiptRequest struct {
+	ChatID   string
+	IsGroup  bool
+	Messages []ReadReceiptMessage
 }
 
 // ChatLoadRequest identifies one selected-chat page and the presentation

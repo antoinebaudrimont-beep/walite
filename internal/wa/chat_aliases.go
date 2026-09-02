@@ -94,7 +94,28 @@ func (aliases *chatAliases) resolve(primary, alternate model.ChatID) (model.Chat
 		}
 	}
 	if first >= 0 && second >= 0 && first != second {
-		return model.ChatID{}, ErrChatAliasConflict
+		// A broad cache may contain both spellings as independent singleton
+		// rows. Once WhatsApp supplies their authoritative PN/LID relationship,
+		// reconcile routing only and preserve the first cache-seeded identity.
+		// Established relationships remain non-mergeable.
+		if aliases.entries[first].alternate.String() != "" || aliases.entries[second].alternate.String() != "" {
+			return model.ChatID{}, ErrChatAliasConflict
+		}
+		keep, remove := first, second
+		if remove < keep {
+			keep, remove = remove, keep
+		}
+		canonical := aliases.entries[keep].primary
+		other := aliases.entries[remove].primary
+		jid, err := types.ParseJID(other.String())
+		if err != nil || authoritativeAlternate(canonical, jid) != other {
+			return model.ChatID{}, ErrChatAliasConflict
+		}
+		aliases.entries[keep] = chatAlias{primary: canonical, alternate: other}
+		copy(aliases.entries[remove:aliases.count-1], aliases.entries[remove+1:aliases.count])
+		aliases.count--
+		aliases.entries[aliases.count] = chatAlias{}
+		return canonical, nil
 	}
 	index := first
 	if index < 0 {

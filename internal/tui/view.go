@@ -35,6 +35,8 @@ type viewModel struct {
 	sendUncertain    bool
 	sendStatus       string
 	localReadRequest LocalReadRequest
+	readRequest      ReadReceiptRequest
+	readIntent       readReceiptIntent
 }
 
 func draw(screen tcell.Screen, model *viewModel) {
