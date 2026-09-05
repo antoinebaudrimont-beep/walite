@@ -9,15 +9,21 @@ func handleKey(model *viewModel, event *tcell.EventKey, width, height int) (chan
 	if event.Key() == tcell.KeyCtrlC {
 		return false, true
 	}
-	if model.settingsOpen {
-		if event.Key() == tcell.KeyEscape {
-			model.settingsOpen = false
+	if model.quitConfirm {
+		switch event.Key() {
+		case tcell.KeyEnter:
+			return false, true
+		case tcell.KeyEscape, tcell.KeyCtrlP:
+			model.quitConfirm = false
 			return true, false
 		}
 		return false, false
 	}
+	if model.settingsOpen {
+		return handleSettingsKey(model, event), false
+	}
 	if event.Key() == tcell.KeyCtrlP {
-		model.settingsOpen = true
+		openSettings(model)
 		return true, false
 	}
 	// Protect the admitted draft against edits, cancellation, and key-repeat
@@ -59,6 +65,10 @@ func handleKey(model *viewModel, event *tcell.EventKey, width, height int) (chan
 
 	switch {
 	case event.Key() == tcell.KeyEscape:
+		if model.options.ConfirmQuit {
+			model.quitConfirm = true
+			return true, false
+		}
 		return false, true
 	case event.Key() == tcell.KeyEnter:
 		if _, ok := model.chats.selectedChat(); !ok {

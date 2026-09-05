@@ -115,7 +115,7 @@ func runAuthenticatedApplication(
 			// joining its send worker. Disconnect releases upstream response
 			// waiters even if a send is waiting behind an internal peer send.
 			defer cancel()
-			err := dependencies.runTUI(ctx, screen, input)
+			err := runConfiguredTUI(ctx, screen, input, dependencies.configuration, dependencies.runTUI)
 			viewExitedNormally = err == nil
 			return err
 		},

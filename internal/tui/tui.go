@@ -132,11 +132,21 @@ func runInitialized(
 	displayUpdates := input.DisplayUpdates
 	summaryUpdates := input.SummaryUpdates
 	chatLoads := input.ChatLoads
+	optionsResults := input.OptionsResults
 
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case err, ok := <-optionsResults:
+			if !ok {
+				optionsResults = nil
+				err = errors.New("settings persistence unavailable")
+			}
+			if finishSettingsSave(&model, err) {
+				draw(screen, &model)
+				screen.Show()
+			}
 		case value, ok := <-displayUpdates:
 			if !ok {
 				displayUpdates = nil
@@ -198,6 +208,7 @@ func runInitialized(
 					selectedBefore = selected.id
 				}
 				changed, exit := handleKey(&model, event, width, height)
+				requestSettingsSave(&model, input.SaveOptions)
 				requestPendingLocalRead(&model, input.PersistLocalRead)
 				requestPendingReadReceipt(&model, input.SendReadReceipt)
 				if exit {

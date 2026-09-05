@@ -500,11 +500,15 @@ func TestSQLiteWriterQueueSaturationUsesCancellableBackpressure(t *testing.T) {
 
 	releaseWriter()
 	timer.waitReset(t)
+	// Consume the first batch's observations before waiting for the tail;
+	// timer reset only means its first request was added, not all queued work.
+	waitSQLiteBatchLogical(t, signals.batchAdds, 50)
 	first := receiveSQLiteTest(t, signals.transactions)
 	if first.logicalWrites != 50 || first.err != nil {
 		t.Fatalf("first transaction=%+v", first)
 	}
 	timer.waitReset(t)
+	waitSQLiteBatchLogical(t, signals.batchAdds, 14)
 	if !timer.Fire() {
 		t.Fatal("timer was not active for remaining queue")
 	}

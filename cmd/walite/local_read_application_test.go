@@ -14,6 +14,14 @@ import (
 )
 
 func TestSelectingUnreadChatPersistsThroughSQLiteRestart(t *testing.T) {
+	testSelectingUnreadChatPersistsThroughSQLiteRestart(t, true)
+}
+
+func TestReadReceiptsOffStillPersistsLocalClearThroughSQLiteRestart(t *testing.T) {
+	testSelectingUnreadChatPersistsThroughSQLiteRestart(t, false)
+}
+
+func testSelectingUnreadChatPersistsThroughSQLiteRestart(t *testing.T, receipts bool) {
 	isolateApplicationFiles(t)
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "cache.db")
@@ -42,9 +50,11 @@ func TestSelectingUnreadChatPersistsThroughSQLiteRestart(t *testing.T) {
 	screen := newStartupObservedScreen()
 	tuiDone := make(chan error, 1)
 	remoteReads := make(chan tui.ReadReceiptRequest, 1)
+	options := tui.DefaultOptions()
+	options.SendReadReceipts = receipts
 	go func() {
 		tuiDone <- tui.Run(context.Background(), screen, tui.Input{
-			Options: tui.DefaultOptions(), InitialState: tui.InitialState{Chats: []tui.InitialChat{
+			Options: options, InitialState: tui.InitialState{Chats: []tui.InitialChat{
 				{ID: first.ID().String(), Title: "First", UnreadCount: 0, ActivityTime: first.LastMessageAt()},
 				{ID: second.ID().String(), Title: "Second", UnreadCount: 3, ActivityTime: second.LastMessageAt(), Messages: []tui.InitialMessage{
 					{ID: "stable-incoming", SentAt: second.LastMessageAt(), Text: "unicode 🐧", BodyRetained: true},
@@ -59,9 +69,17 @@ func TestSelectingUnreadChatPersistsThroughSQLiteRestart(t *testing.T) {
 	if rendered := startupScreenText(screen); !strings.Contains(rendered, "> Second") || strings.Contains(rendered, "> Second (3)") {
 		t.Fatalf("selected unread chat did not clear locally:\n%s", rendered)
 	}
-	remote := <-remoteReads
-	if remote.ChatID != second.ID().String() || len(remote.Messages) != 1 || remote.Messages[0].MessageID != "stable-incoming" {
-		t.Fatalf("remote read=%+v", remote)
+	if receipts {
+		remote := <-remoteReads
+		if remote.ChatID != second.ID().String() || len(remote.Messages) != 1 || remote.Messages[0].MessageID != "stable-incoming" {
+			t.Fatalf("remote read=%+v", remote)
+		}
+	} else {
+		select {
+		case remote := <-remoteReads:
+			t.Fatalf("Off admitted remote read: %+v", remote)
+		default:
+		}
 	}
 	screen.InjectKey(tcell.KeyCtrlC, 0, tcell.ModNone)
 	if err := <-tuiDone; err != nil {

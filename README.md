@@ -64,7 +64,7 @@ The pairing window closes after a successful link. Later launches reuse the pers
 | `Home` / `End` | Jump to the oldest / newest loaded message |
 | `Enter` | Start composing |
 | `Ctrl-R` | Select a message to reply to |
-| `Ctrl-P` | Open the settings summary |
+| `Ctrl-P` | Open settings |
 | `Esc` or `Ctrl-C` | Quit |
 
 ### Composing and popups
@@ -76,10 +76,18 @@ The pairing window closes after a successful link. Later launches reuse the pers
 | `↑` / `↓`, `PageUp` / `PageDown`, `End` | Browse history without losing the draft |
 | `Ctrl-R` | Choose a reply target |
 | `Ctrl-E` | Open or close the emoji picker |
-| `Ctrl-P` | Open the settings summary |
+| `Ctrl-P` | Open settings |
 | `Esc` | Cancel the current mode or close a popup |
 
 In reply selection, use `↑`/`↓` or `j`/`k`, then `Enter` to confirm. In the emoji picker, use the arrow keys or `h`/`j`/`k`/`l`; `Tab` and `Shift-Tab` switch categories, and `Enter` inserts the selected emoji.
+
+### Settings
+
+Press `Ctrl-P` to edit **Timestamps**, **Confirm quit**, or **Send read receipts**. Move with `↑`/`↓` or `j`/`k`, and toggle with `Enter` or `Space`. Select **Save and close** to persist and apply changes. `Esc` or `Ctrl-P` discards unsaved edits; once Save has been submitted, closing the panel does not cancel that write. Saves run in the background, and a failure leaves the previous settings active with an error in the panel. Theme is informational and currently supports only `default`.
+
+Preferences are stored in `$XDG_CONFIG_HOME/walite/config.json` (normally `~/.config/walite/config.json`) using atomic replacement, a private directory (`0700`), and a private file (`0600`). Missing files receive defaults; malformed configuration produces a controlled startup error. Timestamps and read receipts default to On; quit confirmation defaults to Off. With confirmation enabled, `Esc` in navigation asks before quitting; `Ctrl-C` remains an immediate exit.
+
+Turning read receipts Off still clears and persists the local unread badge when you open a chat, but suppresses new remote read requests. Turning them back On applies to future unread selections without sending receipts retroactively. Requests already admitted before disabling may finish.
 
 ## Chat history and cache
 

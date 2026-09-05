@@ -26,6 +26,8 @@ type viewModel struct {
 	replyTarget      replyTarget
 	options          Options
 	settingsOpen     bool
+	settings         settingsState
+	quitConfirm      bool
 	terminalWidth    int
 	terminalHeight   int
 	preferencesPath  string
@@ -64,7 +66,12 @@ func draw(screen tcell.Screen, model *viewModel) {
 		drawEmojiPicker(screen, model, width, height)
 	}
 	if model.settingsOpen {
+		screen.HideCursor()
 		drawSettingsPopup(screen, model, width, height)
+	}
+	if model.quitConfirm {
+		screen.HideCursor()
+		drawQuitConfirmation(screen, width, height)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -40,8 +41,52 @@ func TestCreatedDefaultUIConfigContainsDefaults(t *testing.T) {
 	}
 	defaults := DefaultUI()
 	if saved.Version != currentUIVersion || saved.Theme != defaults.Theme ||
-		saved.ShowTimestamps != defaults.ShowTimestamps || saved.ConfirmQuit != defaults.ConfirmQuit {
+		saved.ShowTimestamps != defaults.ShowTimestamps || saved.ConfirmQuit != defaults.ConfirmQuit || !saved.SendReadReceipts {
 		t.Fatalf("created config=%+v defaults=%+v", saved, defaults)
+	}
+}
+
+func TestReadReceiptPreferenceMigrationAndExplicitOff(t *testing.T) {
+	for _, value := range []struct {
+		data string
+		want bool
+	}{
+		{`{"version":1,"theme":"default"}`, true},
+		{`{"version":1,"theme":"default","send_read_receipts":false}`, false},
+		{`{"version":1,"theme":"default","send_read_receipts":true}`, true},
+	} {
+		path := filepath.Join(t.TempDir(), "config.json")
+		if err := os.WriteFile(path, []byte(value.data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		store := NewUIFileStore(path)
+		loaded, err := store.Load()
+		if err != nil || loaded.SendReadReceipts != value.want {
+			t.Fatalf("loaded=%+v err=%v", loaded, err)
+		}
+		if err := store.Save(loaded); err != nil {
+			t.Fatal(err)
+		}
+		restarted, err := NewUIFileStore(path).Load()
+		if err != nil || restarted != loaded {
+			t.Fatalf("restart=%+v err=%v", restarted, err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil || len(data) > 512 {
+			t.Fatalf("save is not bounded: bytes=%d err=%v", len(data), err)
+		}
+	}
+}
+
+func TestUIConfigRejectsOversizedAndMalformedReceiptPreference(t *testing.T) {
+	for _, data := range []string{strings.Repeat(" ", maxUIConfigBytes+1), `{"version":1,"send_read_receipts":"off"}`} {
+		path := filepath.Join(t.TempDir(), "config.json")
+		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := NewUIFileStore(path).Load(); !errors.Is(err, ErrInvalidUI) {
+			t.Fatalf("error=%v", err)
+		}
 	}
 }
 
@@ -86,7 +131,7 @@ func TestValidUIConfigLoads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := UI{Theme: ThemeDefault, ShowTimestamps: false, ConfirmQuit: true}
+	want := UI{Theme: ThemeDefault, ShowTimestamps: false, ConfirmQuit: true, SendReadReceipts: true}
 	if got != want {
 		t.Fatalf("Load()=%+v want=%+v", got, want)
 	}

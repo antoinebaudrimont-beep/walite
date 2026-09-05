@@ -49,7 +49,7 @@ func TestSettingsPopupDisplaysConfiguration(t *testing.T) {
 	draw(screen, &model)
 	screen.Show()
 	text := screenText(screen)
-	for _, want := range []string{"Settings", "Theme: default", "Time: disabled", "Confirm quit: yes", "Esc close"} {
+	for _, want := range []string{"Settings", "Theme: default", "Timestamps: Off", "Confirm quit: On", "Esc/Ctrl-P cancel"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("settings popup missing %q:\n%s", want, text)
 		}
@@ -68,7 +68,7 @@ func TestResizePreservesSettingsPopupState(t *testing.T) {
 		if !model.settingsOpen {
 			t.Fatalf("%dx%d resize closed settings", size[0], size[1])
 		}
-		if text := screenText(screen); !strings.Contains(text, "Settings") || !strings.Contains(text, "Theme: default") {
+		if text := screenText(screen); !strings.Contains(text, "Settings") || !strings.Contains(text, "Timestamps: On") {
 			t.Fatalf("%dx%d settings content missing:\n%s", size[0], size[1], text)
 		}
 	}
@@ -132,12 +132,12 @@ func TestRunUsesSuppliedOptions(t *testing.T) {
 	screen.InjectKey(tcell.KeyCtrlP, 0, tcell.ModNone)
 	<-screen.shown
 	text := screenText(screen)
-	if !strings.Contains(text, "Time: disabled") || !strings.Contains(text, "Confirm quit: yes") {
+	if !strings.Contains(text, "Timestamps: Off") || !strings.Contains(text, "Confirm quit: On") {
 		t.Fatalf("supplied options missing from popup:\n%s", text)
 	}
 	screen.InjectKey(tcell.KeyEscape, 0, tcell.ModNone)
 	<-screen.shown
-	screen.InjectKey(tcell.KeyEscape, 0, tcell.ModNone)
+	screen.InjectKey(tcell.KeyCtrlC, 0, tcell.ModNone)
 	if err := <-result; err != nil {
 		t.Fatalf("runWithDependencies=%v", err)
 	}

@@ -9,6 +9,11 @@ type readReceiptIntent struct {
 }
 
 func prepareReadReceipt(model *viewModel, chat *chatView) {
+	if model != nil && !model.options.SendReadReceipts {
+		model.readIntent = readReceiptIntent{}
+		model.readRequest = ReadReceiptRequest{}
+		return
+	}
 	if model == nil || chat == nil || model.readIntent.chatID != chat.id || model.readIntent.unreadCount == 0 {
 		return
 	}
@@ -51,7 +56,7 @@ func requestPendingReadReceipt(model *viewModel, send func(ReadReceiptRequest) b
 	}
 	request := model.readRequest
 	model.readRequest = ReadReceiptRequest{}
-	if send != nil {
+	if send != nil && model.options.SendReadReceipts {
 		send(request)
 	}
 }

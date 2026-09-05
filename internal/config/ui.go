@@ -26,9 +26,10 @@ const (
 // UI contains user-configurable terminal preferences. It does not contain
 // chat data, emoji recents, or transient rendering state.
 type UI struct {
-	Theme          Theme
-	ShowTimestamps bool
-	ConfirmQuit    bool
+	Theme            Theme
+	ShowTimestamps   bool
+	ConfirmQuit      bool
+	SendReadReceipts bool
 }
 
 // UIStore separates configuration consumers from its storage format.
@@ -44,18 +45,20 @@ type UIFileStore struct {
 }
 
 type uiFile struct {
-	Version        int   `json:"version"`
-	Theme          Theme `json:"theme"`
-	ShowTimestamps bool  `json:"show_timestamps"`
-	ConfirmQuit    bool  `json:"confirm_quit"`
+	Version          int   `json:"version"`
+	Theme            Theme `json:"theme"`
+	ShowTimestamps   bool  `json:"show_timestamps"`
+	ConfirmQuit      bool  `json:"confirm_quit"`
+	SendReadReceipts bool  `json:"send_read_receipts"`
 }
 
 // DefaultUI returns the initial user-facing configuration.
 func DefaultUI() UI {
 	return UI{
-		Theme:          ThemeDefault,
-		ShowTimestamps: true,
-		ConfirmQuit:    false,
+		Theme:            ThemeDefault,
+		ShowTimestamps:   true,
+		ConfirmQuit:      false,
+		SendReadReceipts: true,
 	}
 }
 
@@ -117,9 +120,10 @@ func (store *UIFileStore) Load() (UI, error) {
 	}
 	defaults := DefaultUI()
 	saved := uiFile{
-		Theme:          defaults.Theme,
-		ShowTimestamps: defaults.ShowTimestamps,
-		ConfirmQuit:    defaults.ConfirmQuit,
+		Theme:            defaults.Theme,
+		ShowTimestamps:   defaults.ShowTimestamps,
+		ConfirmQuit:      defaults.ConfirmQuit,
+		SendReadReceipts: defaults.SendReadReceipts,
 	}
 	if err := json.Unmarshal(data, &saved); err != nil {
 		return UI{}, fmt.Errorf("%w: %v", ErrInvalidUI, err)
@@ -128,9 +132,10 @@ func (store *UIFileStore) Load() (UI, error) {
 		return UI{}, fmt.Errorf("%w: unsupported version %d", ErrInvalidUI, saved.Version)
 	}
 	settings := UI{
-		Theme:          saved.Theme,
-		ShowTimestamps: saved.ShowTimestamps,
-		ConfirmQuit:    saved.ConfirmQuit,
+		Theme:            saved.Theme,
+		ShowTimestamps:   saved.ShowTimestamps,
+		ConfirmQuit:      saved.ConfirmQuit,
+		SendReadReceipts: saved.SendReadReceipts,
 	}
 	if err := settings.Validate(); err != nil {
 		return UI{}, err
@@ -147,10 +152,11 @@ func (store *UIFileStore) Save(settings UI) error {
 		return err
 	}
 	saved := uiFile{
-		Version:        currentUIVersion,
-		Theme:          settings.Theme,
-		ShowTimestamps: settings.ShowTimestamps,
-		ConfirmQuit:    settings.ConfirmQuit,
+		Version:          currentUIVersion,
+		Theme:            settings.Theme,
+		ShowTimestamps:   settings.ShowTimestamps,
+		ConfirmQuit:      settings.ConfirmQuit,
+		SendReadReceipts: settings.SendReadReceipts,
 	}
 	data, err := json.MarshalIndent(saved, "", "  ")
 	if err != nil {

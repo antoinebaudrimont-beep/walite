@@ -146,14 +146,18 @@ func runApplication(ctx context.Context, screen tcell.Screen, dependencies appli
 	if serviceCore == nil {
 		return errors.New("construct service: no service")
 	}
-	return runStartedApplication(ctx, screen, optionsFromConfig(settings), serviceCore, dependencies.runTUI)
+	return runStartedApplication(ctx, screen, optionsFromConfig(settings), serviceCore,
+		func(ctx context.Context, screen tcell.Screen, input tui.Input) error {
+			return runConfiguredTUI(ctx, screen, input, dependencies.configuration, dependencies.runTUI)
+		})
 }
 
 func optionsFromConfig(settings config.UI) tui.Options {
 	return tui.Options{
-		Theme:          string(settings.Theme),
-		ShowTimestamps: settings.ShowTimestamps,
-		ConfirmQuit:    settings.ConfirmQuit,
+		Theme:            string(settings.Theme),
+		ShowTimestamps:   settings.ShowTimestamps,
+		ConfirmQuit:      settings.ConfirmQuit,
+		SendReadReceipts: settings.SendReadReceipts,
 	}
 }
 

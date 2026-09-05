@@ -7,7 +7,7 @@ import (
 )
 
 func TestDefaultOptions(t *testing.T) {
-	want := Options{Theme: ThemeDefault, ShowTimestamps: true, ConfirmQuit: false}
+	want := Options{Theme: ThemeDefault, ShowTimestamps: true, ConfirmQuit: false, SendReadReceipts: true}
 	if got := DefaultOptions(); got != want {
 		t.Fatalf("DefaultOptions()=%+v want=%+v", got, want)
 	}

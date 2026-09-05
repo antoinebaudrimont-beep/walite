@@ -87,6 +87,10 @@ type Input struct {
 	LoadChat         func(ChatLoadRequest) bool
 	PersistLocalRead func(LocalReadRequest) bool
 	SendReadReceipt  func(ReadReceiptRequest) bool
+	// SaveOptions admits one explicit save without performing I/O. OptionsResults
+	// completes it; options become active only after successful persistence.
+	SaveOptions    func(Options) bool
+	OptionsResults <-chan error
 }
 
 // LocalReadRequest clears cached unread state only through the activity that

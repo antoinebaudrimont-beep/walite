@@ -9,20 +9,22 @@ const ThemeDefault = "default"
 
 var ErrInvalidOptions = errors.New("invalid TUI options")
 
-// Options contains immutable user-facing values supplied by application
+// Options contains user-facing values supplied by application
 // wiring. It owns no persistence and performs no I/O.
 type Options struct {
-	Theme          string
-	ShowTimestamps bool
-	ConfirmQuit    bool
+	Theme            string
+	ShowTimestamps   bool
+	ConfirmQuit      bool
+	SendReadReceipts bool
 }
 
 // DefaultOptions returns the initial terminal preferences.
 func DefaultOptions() Options {
 	return Options{
-		Theme:          ThemeDefault,
-		ShowTimestamps: true,
-		ConfirmQuit:    false,
+		Theme:            ThemeDefault,
+		ShowTimestamps:   true,
+		ConfirmQuit:      false,
+		SendReadReceipts: true,
 	}
 }
 

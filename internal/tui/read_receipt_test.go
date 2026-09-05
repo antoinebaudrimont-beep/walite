@@ -22,7 +22,7 @@ func readReceiptView(t *testing.T) viewModel {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return viewModel{chats: state}
+	return viewModel{chats: state, options: DefaultOptions()}
 }
 
 func TestExplicitUnreadSelectionBuildsOneIncomingReadFrontier(t *testing.T) {
@@ -109,7 +109,7 @@ func TestUnreadSelectionWaitsForBoundedChatLoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	model := viewModel{chats: state}
+	model := viewModel{chats: state, options: DefaultOptions()}
 	moveChatSelection(&model, 1)
 	if model.readRequest.ChatID != "" || model.readIntent.chatID != "loaded@lid" {
 		t.Fatal("receipt did not wait for cache page")
@@ -139,7 +139,7 @@ func TestGroupReadFrontierPreservesParticipants(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	model := viewModel{chats: state}
+	model := viewModel{chats: state, options: DefaultOptions()}
 	moveChatSelection(&model, 1)
 	if !model.readRequest.IsGroup || len(model.readRequest.Messages) != 2 ||
 		model.readRequest.Messages[0].SenderID != "111@s.whatsapp.net" || model.readRequest.Messages[1].SenderID != "222@lid" {
