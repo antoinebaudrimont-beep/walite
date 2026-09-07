@@ -1,31 +1,35 @@
 # walite
 
-walite is a lightweight, keyboard-driven WhatsApp client for Linux terminals, written in Go. It connects as a linked device through [whatsmeow](https://github.com/tulir/whatsmeow) and uses a bounded SQLite cache for responsive startup and modest resource use.
+walite is a lightweight, keyboard-driven WhatsApp client for the terminal. Written in Go, it connects as a linked device through [whatsmeow](https://github.com/tulir/whatsmeow) and uses a bounded SQLite cache for fast startup and predictable resource use.
 
-walite is an unofficial, deliberately text-focused client. It is not intended to replace every feature of the official WhatsApp applications.
+The project was developed and tested on an old Core 2 Duo MacBook Pro running Linux, but it is designed as a general terminal-native client rather than for one machine. walite is unofficial and is not affiliated with WhatsApp or Meta.
 
-Current release target: **v0.2**.
+## Why walite?
+
+walite began as an experiment to make WhatsApp usable on an older Linux laptop without keeping a heavyweight browser client open. Its priorities are keyboard-first interaction, fast cached startup, bounded queues and working sets, modest resource use, and a workflow that feels at home in a terminal.
 
 ## Screenshot
 
-Screenshots have not been added to the repository yet.
+No public screenshot has been added yet. Any future screenshot should use sanitized or synthetic conversations so private names, phone numbers, and messages are not exposed.
 
 ## Features
 
-- WhatsApp linked-device QR pairing and persistent reconnects
-- A one-time dedicated pairing window on the current Linux/XFCE target
-- Broad HistorySync-backed conversation bootstrap
-- Persistent, pure-Go SQLite chat and message cache—no CGO required
-- Up to 10,000 lightweight chat summaries with bounded recent message history
+- Linked-device QR pairing and persistent reconnects
+- A one-time dedicated pairing window on the validated Linux/XFCE setup
+- Broad HistorySync conversation bootstrap
+- Persistent pure-Go SQLite cache with no CGO requirement
+- Up to 10,000 lightweight chat summaries and bounded recent message history
 - Cached startup without waiting for a complete HistorySync
 - Incoming and outgoing text messages
-- One-to-one quoted replies and incoming quoted-reply rendering
-- Saved contact, business, push, and group names from the linked WhatsApp session, including group participant labels, with readable phone-number fallbacks for unresolved PN contacts
-- PN/LID alias handling and message deduplication
-- Directional incoming/outgoing layout, date separators, and group sender labels when metadata is available
-- Persistent local unread state and real WhatsApp read receipts when an unread chat is opened
-- Unicode-safe composition and rendering, including an emoji picker with persistent recent emoji
-- Four persistent terminal themes: Terminal, Dark, Light, and High contrast
+- One-to-one quoted replies and incoming quote rendering
+- Contact, group, and group-participant names when authoritative local metadata is available
+- Readable phone-number fallbacks plus PN/LID identity handling and deduplication
+- Directional incoming/outgoing layout and date separators
+- Persistent local unread state and WhatsApp read receipts
+- Unicode-safe composition and rendering
+- Emoji picker with persistent recent emoji
+- Functional `Ctrl-P` settings with four themes: Terminal, Dark, Light, and High contrast
+- Toggles for timestamps, quit confirmation, and read receipts
 
 ## Installation and build
 
@@ -35,15 +39,10 @@ Building walite requires Go 1.26.0 or newer. Linux/amd64 is the currently valida
 git clone https://github.com/antoinebaudrimont-beep/walite.git
 cd walite
 go build ./cmd/walite
-```
-
-Run the built binary:
-
-```sh
 ./walite
 ```
 
-Or run directly from the source tree:
+You can also run it directly from the source tree:
 
 ```sh
 go run ./cmd/walite
@@ -51,11 +50,11 @@ go run ./cmd/walite
 
 ## First pairing
 
-The first launch links walite to WhatsApp using a QR code. On the current Linux/XFCE implementation, walite opens a temporary `xfce4-terminal` window sized so the QR code can be rendered without distortion. On your phone, open **WhatsApp → Linked devices → Link a device**, then scan the code.
+On first launch, walite links to WhatsApp using a QR code. On the current Linux/XFCE implementation, it opens a temporary `xfce4-terminal` window sized to render the QR code without distortion. On your phone, open **WhatsApp → Linked devices → Link a device**, then scan the code.
 
-The pairing window closes after a successful link. Later launches reuse the persisted session and reconnect without showing another QR code. If the helper window cannot be launched, walite prints a manual `walite --pair` fallback instruction.
+The pairing window closes after a successful link. Later launches reuse the persisted session and reconnect without another QR code. If the helper cannot be launched, walite prints a manual `walite --pair` fallback command.
 
-## Usage and keybindings
+## Usage
 
 ### Chat navigation
 
@@ -68,7 +67,8 @@ The pairing window closes after a successful link. Later launches reuse the pers
 | `Enter` | Start composing |
 | `Ctrl-R` | Select a message to reply to |
 | `Ctrl-P` | Open settings |
-| `Esc` or `Ctrl-C` | Quit |
+| `Esc` | Quit, or ask for confirmation when enabled |
+| `Ctrl-C` | Quit immediately |
 
 ### Composing and popups
 
@@ -84,23 +84,28 @@ The pairing window closes after a successful link. Later launches reuse the pers
 
 In reply selection, use `↑`/`↓` or `j`/`k`, then `Enter` to confirm. In the emoji picker, use the arrow keys or `h`/`j`/`k`/`l`; `Tab` and `Shift-Tab` switch categories, and `Enter` inserts the selected emoji.
 
-### Settings
+## Settings
 
-Press `Ctrl-P` to edit **Theme**, **Timestamps**, **Confirm quit**, or **Send read receipts**. Move with `↑`/`↓` or `j`/`k`; `Enter` or `Space` cycles the theme or toggles a switch. The theme choices are **Terminal** (the default, using terminal-defined colors), **Dark**, **Light**, and **High contrast**. Select **Save and close** to persist and apply changes immediately. `Esc` or `Ctrl-P` discards unsaved edits; once Save has been submitted, closing the panel does not cancel that write. Saves run in the background, and a failure leaves the previous settings active with an error in the panel.
+Press `Ctrl-P` to configure:
 
-Preferences are stored in `$XDG_CONFIG_HOME/walite/config.json` (normally `~/.config/walite/config.json`) using atomic replacement, a private directory (`0700`), and a private file (`0600`). Missing files receive defaults; malformed configuration produces a controlled startup error. Timestamps and read receipts default to On; quit confirmation defaults to Off. With confirmation enabled, `Esc` in navigation asks before quitting; `Ctrl-C` remains an immediate exit.
+- **Theme:** Terminal, Dark, Light, or High contrast
+- **Timestamps:** show or hide message times
+- **Confirm quit:** require confirmation when quitting with `Esc`
+- **Send read receipts:** enable or suppress new remote read receipts
 
-Turning read receipts Off still clears and persists the local unread badge when you open a chat, but suppresses new remote read requests. Turning them back On applies to future unread selections without sending receipts retroactively. Requests already admitted before disabling may finish.
+Use `↑`/`↓` or `j`/`k` to move between settings. `Enter` or `Space` changes the selected value. Choose **Save and close** to persist and apply the changes; `Esc` or `Ctrl-P` closes the panel and discards unsaved edits.
+
+Settings are stored in `$XDG_CONFIG_HOME/walite/config.json`—normally `~/.config/walite/config.json`. Timestamps and read receipts default to On; quit confirmation defaults to Off. Disabling read receipts does not stop walite from clearing its own local unread badge when you open a chat.
 
 ## Chat history and cache
 
-HistorySync seeds a broad conversation list on initial setup. Chat summaries and bounded message pages are stored in SQLite, so later launches can show cached conversations immediately instead of waiting for another complete sync.
+HistorySync seeds a broad conversation list during initial setup. Chat summaries and bounded message pages are stored in SQLite, allowing later launches to display cached conversations immediately.
 
-The cache is intentionally bounded: walite keeps at most 10,000 chat summaries, while selected or loaded chats use a fixed 32-message presentation window. Browsing the chat list does not allocate or load a full message history for every conversation.
+The cache keeps at most 10,000 chat summaries. Selected or loaded chats use a fixed 32-message presentation window, so browsing the chat list does not allocate a full history buffer for every conversation.
 
 ## Performance
 
-walite is designed to remain usable on older hardware, including the project's Intel Core 2 Duo T9900 MacBook Pro running Linux/amd64. Current measurements on that target are:
+These development measurements were recorded on an Intel Core 2 Duo T9900 MacBook Pro running Linux/amd64. They are target-machine observations, not universal benchmarks.
 
 | Operation | Time |
 | --- | ---: |
@@ -109,7 +114,7 @@ walite is designed to remain usable on older hardware, including the project's I
 | Load the newest 50-message page | 0.761 ms |
 | Build and draw the first frame from 10,000 cached summaries | 14.94 ms |
 
-These figures are development measurements, not cross-system guarantees. Predictable resource use comes from bounded chat/message working sets, fixed-capacity asynchronous workers and queues, and SQLite-backed persistence—there is no 10,000-chats-by-message-buffer allocation.
+Bounded chat/message working sets, fixed-capacity asynchronous workers and queues, and SQLite-backed persistence keep resource use predictable.
 
 ## Architecture
 
@@ -121,35 +126,64 @@ service/core
     └── WhatsApp adapter (whatsmeow)
 ```
 
-The TUI and service use transport-neutral application data. WhatsApp-specific types stay inside the adapter, while bounded workers keep network and storage operations out of the terminal event loop.
+The UI and service use transport-neutral application data. WhatsApp-specific types stay inside the adapter, and bounded workers keep network and storage operations out of the terminal event loop.
 
 ## Current limitations
 
-- The client is text-focused; media, reactions, typing indicators, and presence are not implemented.
-- Sending quoted replies is currently supported for one-to-one chats, not groups.
-- On-demand paging of history older than the bounded recent window is not implemented.
-- Status/broadcast filtering and presentation are still limited.
-- Contacts may still appear with opaque identifiers when neither saved, business, push, nor validated PN metadata is available in the linked session.
-- Linux/amd64 is the validated platform. The dedicated pairing-window helper is currently specific to XFCE's `xfce4-terminal`.
+- walite is text-focused; media is not yet displayed or downloaded.
+- Reactions, typing indicators, and presence are not implemented.
+- Quoted-reply sending is supported for one-to-one chats, not groups.
+- On-demand paging for history older than the bounded recent window is not implemented.
+- Status and broadcast handling remains limited.
+- Some identities remain opaque when WhatsApp provides no usable authoritative local metadata.
+- Linux/amd64 is the validated platform.
+- Automatic pairing-window launch is currently specific to XFCE and `xfce4-terminal`.
 - macOS is not yet officially supported.
 
 ## Roadmap
 
+### v0.3
+
+- Media placeholders in conversation history
+- Image download and decryption
+- External high-resolution image previews using `nsxiv`
 - On-demand older-history paging
-- Media and reaction support
-- Improved group and status handling
+
+Planned image flow:
+
+```text
+image message
+  → visible media placeholder in walite
+  → user requests preview
+  → walite downloads and decrypts the image
+  → lightweight external nsxiv window opens
+```
+
+### v0.4
+
+- Reactions
+- Improved group behavior
+- Better status and broadcast handling
+- Additional media and document support
+
+### v0.5
+
 - macOS portability
-- Packaged releases
+- Linux and macOS release binaries
+- Packaging and installation improvements
 
-No release dates are currently promised.
+### v1.0
 
-## Platform support
+- Stable, documented release
+- Dependable core messaging and cache behavior
+- Easy installation
+- Clearly defined supported and unsupported features
 
-Linux/amd64 is the currently validated environment. Most of walite is portable Go, but macOS support still needs platform-specific pairing, path, and terminal validation.
+No release dates are promised.
 
-## Development and validation
+## Development
 
-The SQLite backend is pure Go and does not require CGO. Before review, changes are formatted with `gofmt` and checked with:
+The SQLite backend is pure Go and does not require CGO. The main validation commands are:
 
 ```sh
 go vet ./...
