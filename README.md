@@ -8,9 +8,17 @@ The project was developed and tested on an old Core 2 Duo MacBook Pro running Li
 
 walite began as an experiment to make WhatsApp usable on an older Linux laptop without keeping a heavyweight browser client open. Its priorities are keyboard-first interaction, fast cached startup, bounded queues and working sets, modest resource use, and a workflow that feels at home in a terminal.
 
-## Screenshot
+## Screenshots
 
-No public screenshot has been added yet. Any future screenshot should use sanitized or synthetic conversations so private names, phone numbers, and messages are not exposed.
+Four themes, with settings available through `Ctrl-P`. Click an image to view it at full size.
+
+| Terminal (default) | Dark |
+| --- | --- |
+| [![walite Terminal theme with a demo conversation](docs/screenshots/walite-terminal.png)](docs/screenshots/walite-terminal.png) | [![walite Dark theme with the settings popup](docs/screenshots/walite-dark.png)](docs/screenshots/walite-dark.png) |
+| **Light** | **High contrast** |
+| [![walite Light theme with the settings popup](docs/screenshots/walite-light.png)](docs/screenshots/walite-light.png) | [![walite High contrast theme with the settings popup](docs/screenshots/walite-high-contrast.png)](docs/screenshots/walite-high-contrast.png) |
+
+These screenshots were AI-edited for privacy using demo names and messages. Text rendering and spacing may differ from the application.
 
 ## Features
 
