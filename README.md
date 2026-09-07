@@ -4,6 +4,8 @@ walite is a lightweight, keyboard-driven WhatsApp client for Linux terminals, wr
 
 walite is an unofficial, deliberately text-focused client. It is not intended to replace every feature of the official WhatsApp applications.
 
+Current release target: **v0.2**.
+
 ## Screenshot
 
 Screenshots have not been added to the repository yet.
@@ -18,11 +20,12 @@ Screenshots have not been added to the repository yet.
 - Cached startup without waiting for a complete HistorySync
 - Incoming and outgoing text messages
 - One-to-one quoted replies and incoming quoted-reply rendering
-- Contact and group names when available, with readable phone-number fallbacks for unresolved PN contacts
+- Saved contact, business, push, and group names from the linked WhatsApp session, including group participant labels, with readable phone-number fallbacks for unresolved PN contacts
 - PN/LID alias handling and message deduplication
 - Directional incoming/outgoing layout, date separators, and group sender labels when metadata is available
 - Persistent local unread state and real WhatsApp read receipts when an unread chat is opened
 - Unicode-safe composition and rendering, including an emoji picker with persistent recent emoji
+- Four persistent terminal themes: Terminal, Dark, Light, and High contrast
 
 ## Installation and build
 
@@ -83,7 +86,7 @@ In reply selection, use `↑`/`↓` or `j`/`k`, then `Enter` to confirm. In the 
 
 ### Settings
 
-Press `Ctrl-P` to edit **Timestamps**, **Confirm quit**, or **Send read receipts**. Move with `↑`/`↓` or `j`/`k`, and toggle with `Enter` or `Space`. Select **Save and close** to persist and apply changes. `Esc` or `Ctrl-P` discards unsaved edits; once Save has been submitted, closing the panel does not cancel that write. Saves run in the background, and a failure leaves the previous settings active with an error in the panel. Theme is informational and currently supports only `default`.
+Press `Ctrl-P` to edit **Theme**, **Timestamps**, **Confirm quit**, or **Send read receipts**. Move with `↑`/`↓` or `j`/`k`; `Enter` or `Space` cycles the theme or toggles a switch. The theme choices are **Terminal** (the default, using terminal-defined colors), **Dark**, **Light**, and **High contrast**. Select **Save and close** to persist and apply changes immediately. `Esc` or `Ctrl-P` discards unsaved edits; once Save has been submitted, closing the panel does not cancel that write. Saves run in the background, and a failure leaves the previous settings active with an error in the panel.
 
 Preferences are stored in `$XDG_CONFIG_HOME/walite/config.json` (normally `~/.config/walite/config.json`) using atomic replacement, a private directory (`0700`), and a private file (`0600`). Missing files receive defaults; malformed configuration produces a controlled startup error. Timestamps and read receipts default to On; quit confirmation defaults to Off. With confirmation enabled, `Esc` in navigation asks before quitting; `Ctrl-C` remains an immediate exit.
 
@@ -126,7 +129,7 @@ The TUI and service use transport-neutral application data. WhatsApp-specific ty
 - Sending quoted replies is currently supported for one-to-one chats, not groups.
 - On-demand paging of history older than the bounded recent window is not implemented.
 - Status/broadcast filtering and presentation are still limited.
-- Some LID-only contacts may still appear with opaque identifiers when no usable metadata is available.
+- Contacts may still appear with opaque identifiers when neither saved, business, push, nor validated PN metadata is available in the linked session.
 - Linux/amd64 is the validated platform. The dedicated pairing-window helper is currently specific to XFCE's `xfce4-terminal`.
 - macOS is not yet officially supported.
 

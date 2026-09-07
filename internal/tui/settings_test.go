@@ -49,7 +49,7 @@ func TestSettingsPopupDisplaysConfiguration(t *testing.T) {
 	draw(screen, &model)
 	screen.Show()
 	text := screenText(screen)
-	for _, want := range []string{"Settings", "Theme: default", "Timestamps: Off", "Confirm quit: On", "Esc/Ctrl-P cancel"} {
+	for _, want := range []string{"Settings", "Theme: Terminal", "Timestamps: Off", "Confirm quit: On", "Esc/Ctrl-P cancel"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("settings popup missing %q:\n%s", want, text)
 		}
@@ -68,7 +68,7 @@ func TestResizePreservesSettingsPopupState(t *testing.T) {
 		if !model.settingsOpen {
 			t.Fatalf("%dx%d resize closed settings", size[0], size[1])
 		}
-		if text := screenText(screen); !strings.Contains(text, "Settings") || !strings.Contains(text, "Timestamps: On") {
+		if text := screenText(screen); !strings.Contains(text, "Settings") || !strings.Contains(text, "Theme: Terminal") {
 			t.Fatalf("%dx%d settings content missing:\n%s", size[0], size[1], text)
 		}
 	}

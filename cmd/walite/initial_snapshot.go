@@ -98,6 +98,28 @@ func buildChatLoadResult(ctx context.Context, source applicationService, request
 	if len(messages) > tui.MaxInitialMessagesPerChat {
 		return tui.ChatLoadResult{}, errors.New("chat message snapshot exceeded bound")
 	}
+	if requester, ok := source.(displayMetadataRequester); ok {
+		// Include the selected chat itself so a cached direct PN/LID fallback can
+		// improve even when its current page contains no incoming messages. The
+		// transport boundary rejects group IDs and keeps this local lookup batch
+		// bounded to one chat plus the fixed message-page size.
+		people := make([]model.ChatID, 0, len(messages)+1)
+		people = append(people, id)
+		seen := make(map[model.ChatID]struct{}, len(messages))
+		seen[id] = struct{}{}
+		for _, message := range messages {
+			person := model.ChatID(message.SenderID())
+			if person.String() == "" {
+				continue
+			}
+			if _, duplicate := seen[person]; duplicate {
+				continue
+			}
+			seen[person] = struct{}{}
+			people = append(people, person)
+		}
+		requester.RequestDisplayMetadata(people)
+	}
 	sort.Slice(messages, func(i, j int) bool {
 		if messages[i].SentAt().Equal(messages[j].SentAt()) {
 			return messages[i].MessageID().String() < messages[j].MessageID().String()

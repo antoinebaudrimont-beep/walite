@@ -1,6 +1,7 @@
 package wa
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -63,6 +64,44 @@ func TestHistorySyncConversationMetadataAndNewestFiftyTextMessages(t *testing.T)
 		first.Text() != "history-10 Café 👋" || last.Text() != "history-59 Café 👋" ||
 		!first.FromMe() || second.FromMe() || second.SenderID().String() != "22222@s.whatsapp.net" || !first.IsGroup() {
 		t.Fatalf("bounded history first=%+v last=%+v", first, last)
+	}
+}
+
+func TestHistorySyncGroupSenderRequestsLocalContactName(t *testing.T) {
+	now := time.Date(2100, 9, 1, 12, 0, 0, 0, time.UTC)
+	client := bootstrapTestClient(now)
+	pn := types.NewJID("22222", types.DefaultUserServer)
+	lid := types.NewJID("98765", types.HiddenUserServer)
+	client.realtime.display = newDisplayResolver(client.realtime.aliases, func(_ context.Context, jid types.JID) (types.JID, error) {
+		if jid != lid {
+			t.Fatalf("alternate lookup=%s", jid)
+		}
+		return pn, nil
+	}, func(_ context.Context, jid types.JID) (types.ContactInfo, error) {
+		if jid == pn {
+			return types.ContactInfo{Found: true, FirstName: "Elena 日本 👋", BusinessName: "lower business", PushName: "lower push"}, nil
+		}
+		return types.ContactInfo{}, nil
+	}, nil)
+	body := "cached group history"
+	record, ok := client.adaptBootstrapConversation(model.BootstrapFull, &waHistorySync.Conversation{
+		ID: stringPointer("family@g.us"), Messages: []*waHistorySync.HistorySyncMsg{{Message: bootstrapWebMessage(
+			"family@g.us", "group-history", now, false, lid.String(), &waE2E.Message{Conversation: &body},
+		)}},
+	}, now)
+	if !ok || record.Len() != 1 || client.realtime.display.count != 1 {
+		t.Fatalf("record=%t messages=%d lookups=%d", ok, record.Len(), client.realtime.display.count)
+	}
+	message, _ := record.At(0)
+	if message.SenderID().String() != lid.String() {
+		t.Fatalf("sender=%q", message.SenderID().String())
+	}
+	request := client.realtime.display.requests[client.realtime.display.head]
+	client.realtime.display.lookup(context.Background(), request)
+	for _, id := range []model.ChatID{aliasID(t, lid.String()), aliasID(t, pn.String())} {
+		if got := client.realtime.display.cached(id); got.Name() != "Elena 日本 👋" || got.Quality() != model.DisplaySaved {
+			t.Fatalf("group sender metadata=%+v", got)
+		}
 	}
 }
 

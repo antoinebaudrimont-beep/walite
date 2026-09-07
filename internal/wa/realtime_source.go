@@ -176,7 +176,19 @@ func (source *RealtimeSource) SeedChatIDs(ids []model.ChatID) error {
 			return err
 		}
 	}
+	if source.display != nil {
+		source.display.requestPeople(ids)
+	}
 	return nil
+}
+
+// RequestDisplayMetadata schedules local contact-store resolution for a
+// bounded presentation page. It does not perform network I/O or change IDs.
+func (source *RealtimeSource) RequestDisplayMetadata(ids []model.ChatID) {
+	if source == nil || source.display == nil || len(ids) > model.MaxBootstrapMessagesPerChat+1 {
+		return
+	}
+	source.display.requestPeople(ids)
 }
 
 func (source *RealtimeSource) admitBootstrap(record model.BootstrapRecord) bool {

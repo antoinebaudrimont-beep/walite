@@ -76,6 +76,14 @@ func (application *connectedApplicationService) DisplayUpdates() <-chan model.Di
 	return application.display.DisplayUpdates()
 }
 
+func (application *connectedApplicationService) RequestDisplayMetadata(ids []model.ChatID) {
+	if application != nil {
+		if requester, ok := application.display.(displayMetadataRequester); ok {
+			requester.RequestDisplayMetadata(ids)
+		}
+	}
+}
+
 func (application *connectedApplicationService) ApplyDisplayMetadata(ctx context.Context, metadata model.DisplayMetadata) (model.DisplayMetadata, error) {
 	return application.store.ApplyDisplayMetadata(ctx, metadata)
 }

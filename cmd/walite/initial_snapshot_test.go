@@ -19,6 +19,7 @@ type snapshotStub struct {
 	messages           map[string][]model.Message
 	chatLimit          int
 	messageLimits      []int
+	displayRequests    [][]model.ChatID
 	ignoreMessageLimit bool
 }
 
@@ -41,6 +42,10 @@ func (stub *snapshotStub) InitialMessages(_ context.Context, chatID model.ChatID
 		messages = messages[:limit]
 	}
 	return append([]model.Message(nil), messages...), nil
+}
+
+func (stub *snapshotStub) RequestDisplayMetadata(ids []model.ChatID) {
+	stub.displayRequests = append(stub.displayRequests, append([]model.ChatID(nil), ids...))
 }
 
 func TestInitialSnapshotAdapterOrdersAndPreservesFidelity(t *testing.T) {
@@ -132,6 +137,17 @@ func TestInitialSnapshotUsesReadablePNFallbackForExistingCache(t *testing.T) {
 	}
 	if initial.Chats[0].Title != "+12086708856" || initial.Chats[1].Title != "218699835404531@lid" || initial.Chats[2].Title != "Saved Name" {
 		t.Fatalf("fallback titles=%q/%q/%q", initial.Chats[0].Title, initial.Chats[1].Title, initial.Chats[2].Title)
+	}
+}
+
+func TestSelectedCachedDirectChatRequestsNameUpgradeWithoutMessages(t *testing.T) {
+	id := "218699835404531@lid"
+	stub := &snapshotStub{chats: []model.Chat{mustSnapshotChat(t, id, "", false, 0, time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC))}}
+	if _, err := buildChatLoadResult(context.Background(), stub, tui.ChatLoadRequest{ChatID: id}); err != nil {
+		t.Fatal(err)
+	}
+	if len(stub.displayRequests) != 1 || len(stub.displayRequests[0]) != 1 || stub.displayRequests[0][0].String() != id {
+		t.Fatalf("selected cached chat metadata requests=%v", stub.displayRequests)
 	}
 }
 

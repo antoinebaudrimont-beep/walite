@@ -45,12 +45,17 @@ func draw(screen tcell.Screen, model *viewModel) {
 	width, height := screen.Size()
 	model.terminalWidth = width
 	model.terminalHeight = height
+	styles := model.styles()
+	screen.SetStyle(styles.normal)
 	screen.Clear()
+	// Clear may retain the previous style for already-blank cells. Refill the
+	// bounded terminal grid so a live theme switch repaints the whole frame.
+	screen.Fill(' ', styles.normal)
 	screen.HideCursor()
 	if width <= 0 || height <= 0 {
 		return
 	}
-	clearMessagePane(screen, width, height)
+	clearMessagePane(screen, width, height, styles.normal)
 	drawBase(screen, model, width, height)
 	if model.sendStatus != "" {
 		y := height - 1
@@ -58,8 +63,8 @@ func draw(screen tcell.Screen, model *viewModel) {
 			y = height - 2
 		}
 		if y >= 0 {
-			fillMessageRow(screen, 0, y, width, tcell.StyleDefault)
-			putText(screen, 0, y, width, model.sendStatus, tcell.StyleDefault)
+			fillMessageRow(screen, 0, y, width, styles.status)
+			putText(screen, 0, y, width, model.sendStatus, styles.status)
 		}
 	}
 	if model.emojiPicker.open {
@@ -71,7 +76,7 @@ func draw(screen tcell.Screen, model *viewModel) {
 	}
 	if model.quitConfirm {
 		screen.HideCursor()
-		drawQuitConfirmation(screen, width, height)
+		drawQuitConfirmation(screen, model, width, height)
 	}
 }
 
@@ -81,7 +86,7 @@ func draw(screen tcell.Screen, model *viewModel) {
 // buffer already considers blank. In tcell v2.13.10 unlocking a region also
 // marks every cell dirty, forcing those blanks into the same changed-frame
 // flush. Walite does not use locked terminal graphics in this region.
-func clearMessagePane(screen tcell.Screen, width, height int) {
+func clearMessagePane(screen tcell.Screen, width, height int, style tcell.Style) {
 	left, top, right, bottom := 0, 2, width, height-1
 	if height < shortHeight {
 		left, top, right, bottom = 0, 0, width, height
@@ -89,7 +94,7 @@ func clearMessagePane(screen tcell.Screen, width, height int) {
 		left, top, right, bottom = paneSeparator(width)+1, 1, width-1, height-3
 	}
 	for y := top; y < bottom; y++ {
-		fillMessageRow(screen, left, y, right, tcell.StyleDefault)
+		fillMessageRow(screen, left, y, right, style)
 	}
 	screen.LockRegion(left, top, right-left, bottom-top, false)
 }
@@ -105,9 +110,10 @@ func drawBase(screen tcell.Screen, model *viewModel, width, height int) {
 }
 
 func drawCompact(screen tcell.Screen, model *viewModel, width, height int) {
-	putText(screen, 0, 0, width, title, tcell.StyleDefault.Bold(true))
+	styles := model.styles()
+	putText(screen, 0, 0, width, title, styles.normal.Bold(true))
 	if height > 2 {
-		putText(screen, 0, 2, width, "terminal too small", tcell.StyleDefault)
+		putText(screen, 0, 2, width, "terminal too small", styles.warning)
 	}
 	if height > 4 {
 		escapeAction := "Esc quit"
@@ -116,17 +122,18 @@ func drawCompact(screen tcell.Screen, model *viewModel, width, height int) {
 		} else if model.mode == modeCompose || model.replySelect.valid {
 			escapeAction = "Esc cancel"
 		}
-		putText(screen, 0, height-2, width, escapeAction, tcell.StyleDefault.Dim(true))
+		putText(screen, 0, height-2, width, escapeAction, styles.status.Dim(true))
 	}
 }
 
 func drawNarrow(screen tcell.Screen, model *viewModel, width, height int) {
-	putText(screen, 0, 0, width, title, tcell.StyleDefault.Bold(true))
+	styles := model.styles()
+	putText(screen, 0, 0, width, title, styles.normal.Bold(true))
 	selectedIndex := model.chats.selectedIndex()
 	chat, ok := model.chats.selectedChat()
 	if !ok {
-		putText(screen, 0, 2, width, "No chats — syncing…", tcell.StyleDefault.Dim(true))
-		putText(screen, 0, height-1, width, narrowNavigationFooter(model, width), tcell.StyleDefault.Dim(true))
+		putText(screen, 0, 2, width, "No chats — syncing…", styles.status.Dim(true))
+		putText(screen, 0, height-1, width, narrowNavigationFooter(model, width), styles.status.Dim(true))
 		return
 	}
 	replyRows := 0
@@ -134,11 +141,11 @@ func drawNarrow(screen tcell.Screen, model *viewModel, width, height int) {
 		replyRows = 1
 	}
 	composeSeparator := height - 3 - replyRows
-	putText(screen, 0, 2, width, chat.title, tcell.StyleDefault.Bold(true))
+	putText(screen, 0, 2, width, chat.title, styles.normal.Bold(true))
 	drawNewerMessagesIndicator(screen, model, width, height, 0, 3, width)
 	start, end := visibleMessageRange(model, width, height)
 	drawMessages(screen, model, selectedIndex, chat, start, end, 0, 4, width, composeSeparator)
-	drawHorizontal(screen, 0, width-1, composeSeparator, '─')
+	drawHorizontalStyle(screen, 0, width-1, composeSeparator, '─', styles.border)
 	if replyRows > 0 {
 		drawReplyPreview(screen, model, selectedIndex, 0, composeSeparator+1, width, replyRows)
 	}
@@ -149,10 +156,11 @@ func drawNarrow(screen tcell.Screen, model *viewModel, width, height int) {
 	} else if model.mode == modeCompose {
 		footer = narrowComposeFooter(width)
 	}
-	putText(screen, 0, height-1, width, footer, tcell.StyleDefault.Dim(true))
+	putText(screen, 0, height-1, width, footer, styles.status.Dim(true))
 }
 
 func drawTwoPane(screen tcell.Screen, model *viewModel, width, height int) {
+	styles := model.styles()
 	footerTop := height - 3
 	replyRows := 0
 	if model.replyTarget.valid {
@@ -162,36 +170,36 @@ func drawTwoPane(screen tcell.Screen, model *viewModel, width, height int) {
 	composeRow := footerTop - 1
 	separator := paneSeparator(width)
 
-	drawHorizontal(screen, 1, width-2, 0, '─')
-	drawHorizontal(screen, 1, width-2, footerTop, '─')
-	drawHorizontal(screen, 1, width-2, height-1, '─')
-	drawVertical(screen, 1, footerTop-1, 0, '│')
-	drawVertical(screen, 1, footerTop-1, separator, '│')
-	drawVertical(screen, 1, footerTop-1, width-1, '│')
-	drawVertical(screen, footerTop+1, height-2, 0, '│')
-	drawVertical(screen, footerTop+1, height-2, width-1, '│')
+	drawHorizontalStyle(screen, 1, width-2, 0, '─', styles.border)
+	drawHorizontalStyle(screen, 1, width-2, footerTop, '─', styles.border)
+	drawHorizontalStyle(screen, 1, width-2, height-1, '─', styles.border)
+	drawVerticalStyle(screen, 1, footerTop-1, 0, '│', styles.border)
+	drawVerticalStyle(screen, 1, footerTop-1, separator, '│', styles.border)
+	drawVerticalStyle(screen, 1, footerTop-1, width-1, '│', styles.border)
+	drawVerticalStyle(screen, footerTop+1, height-2, 0, '│', styles.border)
+	drawVerticalStyle(screen, footerTop+1, height-2, width-1, '│', styles.border)
 
-	setRune(screen, 0, 0, '┌')
-	setRune(screen, separator, 0, '┬')
-	setRune(screen, width-1, 0, '┐')
-	setRune(screen, 0, footerTop, '├')
-	setRune(screen, separator, footerTop, '┴')
-	setRune(screen, width-1, footerTop, '┤')
-	drawHorizontal(screen, separator+1, width-2, composeSeparator, '─')
-	setRune(screen, separator, composeSeparator, '├')
-	setRune(screen, width-1, composeSeparator, '┤')
-	setRune(screen, 0, height-1, '└')
-	setRune(screen, width-1, height-1, '┘')
+	setRuneStyle(screen, 0, 0, '┌', styles.border)
+	setRuneStyle(screen, separator, 0, '┬', styles.border)
+	setRuneStyle(screen, width-1, 0, '┐', styles.border)
+	setRuneStyle(screen, 0, footerTop, '├', styles.border)
+	setRuneStyle(screen, separator, footerTop, '┴', styles.border)
+	setRuneStyle(screen, width-1, footerTop, '┤', styles.border)
+	drawHorizontalStyle(screen, separator+1, width-2, composeSeparator, '─', styles.border)
+	setRuneStyle(screen, separator, composeSeparator, '├', styles.border)
+	setRuneStyle(screen, width-1, composeSeparator, '┤', styles.border)
+	setRuneStyle(screen, 0, height-1, '└', styles.border)
+	setRuneStyle(screen, width-1, height-1, '┘', styles.border)
 
 	selectedIndex := model.chats.selectedIndex()
 	chat, ok := model.chats.selectedChat()
-	putText(screen, 2, 1, separator-2, title, tcell.StyleDefault.Bold(true))
+	putText(screen, 2, 1, separator-2, title, styles.normal.Bold(true))
 	if !ok {
-		putText(screen, 2, 3, separator-2, "No chats — syncing…", tcell.StyleDefault.Dim(true))
-		putText(screen, 2, footerTop+1, width-3, navigationFooter(model, false), tcell.StyleDefault.Dim(true))
+		putText(screen, 2, 3, separator-2, "No chats — syncing…", styles.status.Dim(true))
+		putText(screen, 2, footerTop+1, width-3, navigationFooter(model, false), styles.status.Dim(true))
 		return
 	}
-	putText(screen, separator+2, 1, width-2, chat.title, tcell.StyleDefault.Bold(true))
+	putText(screen, separator+2, 1, width-2, chat.title, styles.normal.Bold(true))
 	drawNewerMessagesIndicator(screen, model, width, height, separator+2, 2, width-2)
 
 	chatY := 3
@@ -207,7 +215,16 @@ func drawTwoPane(screen tcell.Screen, model *viewModel, width, height int) {
 			break
 		}
 		selected := index == selectedIndex
-		style := tcell.StyleDefault.Bold(chat.unreadCount > 0).Reverse(selected)
+		style := styles.normal
+		if chat.unreadCount > 0 {
+			style = styles.unreadChat
+		}
+		if selected {
+			style = styles.selectedChat
+			if chat.unreadCount > 0 {
+				style = style.Bold(true)
+			}
+		}
 		if selected {
 			for x := 1; x < separator; x++ {
 				screen.SetContent(x, y, ' ', nil, style)
@@ -229,23 +246,24 @@ func drawTwoPane(screen tcell.Screen, model *viewModel, width, height int) {
 	} else if model.mode == modeCompose {
 		footer = "↑/↓ scroll  Enter send  Ctrl-R reply  Ctrl-E emoji  Ctrl-P settings  Esc cancel"
 	}
-	putText(screen, 2, height-2, width-2, footer, tcell.StyleDefault.Dim(true))
+	putText(screen, 2, height-2, width-2, footer, styles.status.Dim(true))
 }
 
 func drawComposer(screen tcell.Screen, model *viewModel, x, y, limit int) {
+	styles := model.styles()
 	if x >= limit {
 		return
 	}
-	putText(screen, x, y, limit, "> ", tcell.StyleDefault)
+	putText(screen, x, y, limit, "> ", styles.composer)
 	inputX := x + 2
 	if model.mode != modeCompose {
-		putText(screen, inputX, y, limit, "Write a message…", tcell.StyleDefault.Dim(true))
+		putText(screen, inputX, y, limit, "Write a message…", styles.composer.Dim(true))
 		return
 	}
 	model.composer.normalize()
 	available := limit - inputX
 	start, end, cursorOffset := visibleDraftSpan(&model.composer, available)
-	putText(screen, inputX, y, limit, string(model.composer.data[start:end]), tcell.StyleDefault)
+	putText(screen, inputX, y, limit, string(model.composer.data[start:end]), styles.composer)
 	if model.replySelect.valid {
 		return
 	}
@@ -328,6 +346,7 @@ func visibleDraftSpan(composer *composerState, width int) (start, end, cursorCel
 }
 
 func drawReplyPreview(screen tcell.Screen, model *viewModel, chatIndex, x, y, limit, rows int) {
+	style := model.styles().replyQuote
 	reference := "original message unavailable"
 	if original, ok := model.chats.findMessageByID(chatIndex, model.replyTarget.id); ok {
 		reference = original.text
@@ -336,24 +355,24 @@ func drawReplyPreview(screen tcell.Screen, model *viewModel, chatIndex, x, y, li
 		}
 	}
 	if rows == 1 {
-		putText(screen, x, y, limit, truncateDisplayWidth("Replying to: "+reference, limit-x), tcell.StyleDefault.Bold(true))
+		putText(screen, x, y, limit, truncateDisplayWidth("Replying to: "+reference, limit-x), style.Bold(true))
 		return
 	}
-	putText(screen, x, y, limit, "Replying to:", tcell.StyleDefault.Bold(true))
-	putText(screen, x, y+1, limit, truncateDisplayWidth(reference, limit-x), tcell.StyleDefault)
+	putText(screen, x, y, limit, "Replying to:", style.Bold(true))
+	putText(screen, x, y+1, limit, truncateDisplayWidth(reference, limit-x), style)
 }
 
 func drawMessages(screen tcell.Screen, model *viewModel, chatIndex int, chat *chatView, start, end, x, y, limit, bottom int) {
 	for index := start; index < end && y < bottom; index++ {
 		if messageStartsVisibleDay(chat, index, start) {
-			drawDateSeparator(screen, x, y, limit, chat.messages[index].sentAt)
+			drawDateSeparatorStyle(screen, x, y, limit, chat.messages[index].sentAt, model.styles())
 			y++
 			if y >= bottom {
 				break
 			}
 		}
 		if model.chatView.hasUnreadBoundary(chat.messages[index]) && y+1 < bottom {
-			drawUnreadSeparator(screen, x, y, limit, model.chatView.unreadBoundary.count)
+			drawUnreadSeparatorStyle(screen, x, y, limit, model.chatView.unreadBoundary.count, model.styles())
 			y++
 			if y >= bottom {
 				break
@@ -368,7 +387,14 @@ func drawMessage(screen tcell.Screen, model *viewModel, chatIndex int, message m
 	if y >= bottom || x >= limit {
 		return 0
 	}
-	style := tcell.StyleDefault.Reverse(selected)
+	styles := model.styles()
+	style := styles.incoming
+	if message.fromMe {
+		style = styles.outgoing
+	}
+	if selected {
+		style = styles.popupSelected
+	}
 	paneLeft := x
 	bodyWidth, timestampPrefix := messageWrapWidth(message, limit-x, model.options.ShowTimestamps)
 	showTimestamp := timestampPrefix > 0
@@ -384,7 +410,11 @@ func drawMessage(screen tcell.Screen, model *viewModel, chatIndex int, message m
 		if showTimestamp {
 			putText(screen, x, y, x+timestampTextWidth, timestampText(message.time), style)
 		}
-		putText(screen, bodyX, y, limit, truncateDisplayWidth(senderLabel(message), limit-bodyX), style.Bold(true))
+		senderStyle := styles.groupSender
+		if selected {
+			senderStyle = style.Bold(true)
+		}
+		putText(screen, bodyX, y, limit, truncateDisplayWidth(senderLabel(message), limit-bodyX), senderStyle)
 		rows++
 	}
 	if message.hasReply && y+rows < bottom {
@@ -392,7 +422,11 @@ func drawMessage(screen tcell.Screen, model *viewModel, chatIndex int, message m
 		if showTimestamp && rows == 0 {
 			putText(screen, x, y+rows, x+timestampTextWidth, timestampText(message.time), style)
 		}
-		putText(screen, bodyX, y+rows, limit, quoteLine, style)
+		quoteStyle := styles.replyQuote
+		if selected {
+			quoteStyle = style
+		}
+		putText(screen, bodyX, y+rows, limit, quoteLine, quoteStyle)
 		rows++
 	}
 	remaining := message.text
@@ -440,10 +474,14 @@ func timestampText(value string) string {
 }
 
 func drawUnreadSeparator(screen tcell.Screen, x, y, limit int, count uint32) {
+	drawUnreadSeparatorStyle(screen, x, y, limit, count, stylesFor(ThemeTerminal))
+}
+
+func drawUnreadSeparatorStyle(screen tcell.Screen, x, y, limit int, count uint32, styles semanticStyles) {
 	if x >= limit || count == 0 {
 		return
 	}
-	lineStyle := tcell.StyleDefault.Dim(true)
+	lineStyle := styles.unreadSeparator.Dim(true)
 	for column := x; column < limit; column++ {
 		screen.SetContent(column, y, '─', nil, lineStyle)
 	}
@@ -458,7 +496,7 @@ func drawUnreadSeparator(screen tcell.Screen, x, y, limit int, count uint32) {
 	if labelWidth < limit-x {
 		labelX += (limit - x - labelWidth) / 2
 	}
-	putText(screen, labelX, y, limit, label, tcell.StyleDefault.Bold(true))
+	putText(screen, labelX, y, limit, label, styles.unreadSeparator)
 }
 
 func fillMessageRow(screen tcell.Screen, x, y, limit int, style tcell.Style) {
@@ -661,17 +699,29 @@ func putText(screen tcell.Screen, x, y, limit int, value string, style tcell.Sty
 }
 
 func drawHorizontal(screen tcell.Screen, from, to, y int, character rune) {
+	drawHorizontalStyle(screen, from, to, y, character, tcell.StyleDefault)
+}
+
+func drawHorizontalStyle(screen tcell.Screen, from, to, y int, character rune, style tcell.Style) {
 	for x := from; x <= to; x++ {
-		setRune(screen, x, y, character)
+		setRuneStyle(screen, x, y, character, style)
 	}
 }
 
 func drawVertical(screen tcell.Screen, from, to, x int, character rune) {
+	drawVerticalStyle(screen, from, to, x, character, tcell.StyleDefault)
+}
+
+func drawVerticalStyle(screen tcell.Screen, from, to, x int, character rune, style tcell.Style) {
 	for y := from; y <= to; y++ {
-		setRune(screen, x, y, character)
+		setRuneStyle(screen, x, y, character, style)
 	}
 }
 
 func setRune(screen tcell.Screen, x, y int, character rune) {
-	screen.SetContent(x, y, character, nil, tcell.StyleDefault)
+	setRuneStyle(screen, x, y, character, tcell.StyleDefault)
+}
+
+func setRuneStyle(screen tcell.Screen, x, y int, character rune, style tcell.Style) {
+	screen.SetContent(x, y, character, nil, style)
 }

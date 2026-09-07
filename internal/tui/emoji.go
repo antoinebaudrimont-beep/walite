@@ -278,50 +278,55 @@ func emojiGridColumnsForSize(width, height int) int {
 
 func drawEmojiPicker(screen tcell.Screen, model *viewModel, width, height int) {
 	screen.HideCursor()
+	styles := model.styles()
 	model.emojiPicker.clamp()
 	layout := emojiLayout(width, height)
 	if layout.compact {
-		drawCompactEmojiPicker(screen, width, height)
+		drawCompactEmojiPickerStyle(screen, width, height, styles)
 		return
 	}
-	clearEmojiRegion(screen, layout.left, layout.top, layout.right+1, layout.bottom+1)
-	drawHorizontal(screen, layout.left+1, layout.right-1, layout.top, '─')
-	drawHorizontal(screen, layout.left+1, layout.right-1, layout.bottom, '─')
-	drawVertical(screen, layout.top+1, layout.bottom-1, layout.left, '│')
-	drawVertical(screen, layout.top+1, layout.bottom-1, layout.right, '│')
-	setRune(screen, layout.left, layout.top, '┌')
-	setRune(screen, layout.right, layout.top, '┐')
-	setRune(screen, layout.left, layout.bottom, '└')
-	setRune(screen, layout.right, layout.bottom, '┘')
-	putText(screen, layout.left+2, layout.top, layout.right-1, " Emoji ", tcell.StyleDefault.Bold(true))
+	clearEmojiRegionStyle(screen, layout.left, layout.top, layout.right+1, layout.bottom+1, styles.popup)
+	drawHorizontalStyle(screen, layout.left+1, layout.right-1, layout.top, '─', styles.border)
+	drawHorizontalStyle(screen, layout.left+1, layout.right-1, layout.bottom, '─', styles.border)
+	drawVerticalStyle(screen, layout.top+1, layout.bottom-1, layout.left, '│', styles.border)
+	drawVerticalStyle(screen, layout.top+1, layout.bottom-1, layout.right, '│', styles.border)
+	setRuneStyle(screen, layout.left, layout.top, '┌', styles.border)
+	setRuneStyle(screen, layout.right, layout.top, '┐', styles.border)
+	setRuneStyle(screen, layout.left, layout.bottom, '└', styles.border)
+	setRuneStyle(screen, layout.right, layout.bottom, '┘', styles.border)
+	putText(screen, layout.left+2, layout.top, layout.right-1, " Emoji ", styles.popup.Bold(true))
 
 	contentLeft := layout.left + 2
 	contentRight := layout.right - 1
 	recentX := contentLeft + len("Recent: ")
-	putText(screen, contentLeft, layout.top+1, recentX, "Recent: ", tcell.StyleDefault.Bold(true))
+	putText(screen, contentLeft, layout.top+1, recentX, "Recent: ", styles.popup.Bold(true))
 	if model.emojiPicker.recentCount == 0 {
-		putText(screen, recentX, layout.top+1, contentRight, "(none)", tcell.StyleDefault.Dim(true))
+		putText(screen, recentX, layout.top+1, contentRight, "(none)", styles.popup.Dim(true))
 	} else {
-		drawEmojiRowWindow(screen, model.emojiPicker.recent[:model.emojiPicker.recentCount],
+		drawEmojiRowWindowStyle(screen, model.emojiPicker.recent[:model.emojiPicker.recentCount],
 			model.emojiPicker.recentCursor, model.emojiPicker.focus == emojiFocusRecent,
-			recentX, layout.top+1, contentRight)
+			recentX, layout.top+1, contentRight, styles)
 	}
 
 	category := emojiCategories[model.emojiPicker.category]
 	categoryLabel := category.name + "  " + strconv.Itoa(model.emojiPicker.category+1) + "/" + strconv.Itoa(len(emojiCategories)) + "  Tab category"
-	putText(screen, contentLeft, layout.top+2, contentRight, categoryLabel, tcell.StyleDefault.Bold(true))
-	drawEmojiCategoryGrid(screen, category.values, model.emojiPicker.categoryCursor,
+	putText(screen, contentLeft, layout.top+2, contentRight, categoryLabel, styles.popup.Bold(true))
+	drawEmojiCategoryGridStyle(screen, category.values, model.emojiPicker.categoryCursor,
 		model.emojiPicker.focus == emojiFocusCategory, contentLeft, layout.top+3,
-		contentRight, layout.gridRows, layout.columns)
+		contentRight, layout.gridRows, layout.columns, styles)
 	footer := "arrows  Tab category  Enter  Esc close"
 	if contentRight-contentLeft < uniseg.StringWidth(footer) {
 		footer = "arrows  Tab category  Enter  Esc"
 	}
-	putText(screen, contentLeft, layout.bottom-1, contentRight, footer, tcell.StyleDefault.Dim(true))
+	putText(screen, contentLeft, layout.bottom-1, contentRight, footer, styles.popup.Dim(true))
 }
 
 func drawEmojiRowWindow(screen tcell.Screen, values []string, selected int, active bool, x, y, limit int) {
-	clearEmojiRegion(screen, x, y, limit, y+1)
+	drawEmojiRowWindowStyle(screen, values, selected, active, x, y, limit, stylesFor(ThemeTerminal))
+}
+
+func drawEmojiRowWindowStyle(screen tcell.Screen, values []string, selected int, active bool, x, y, limit int, styles semanticStyles) {
+	clearEmojiRegionStyle(screen, x, y, limit, y+1, styles.popup)
 	capacity := (limit - x) / emojiCellWidth
 	if capacity < 1 {
 		return
@@ -336,16 +341,20 @@ func drawEmojiRowWindow(screen tcell.Screen, values []string, selected int, acti
 		end = len(values)
 	}
 	for index := start; index < end; index++ {
-		drawEmojiCell(screen, values[index], active && selected == index,
-			x+(index-start)*emojiCellWidth, y, limit)
+		drawEmojiCellStyle(screen, values[index], active && selected == index,
+			x+(index-start)*emojiCellWidth, y, limit, styles)
 	}
 }
 
 func drawEmojiCategoryGrid(screen tcell.Screen, values []string, selected int, active bool, x, y, limit, rows, columns int) {
+	drawEmojiCategoryGridStyle(screen, values, selected, active, x, y, limit, rows, columns, stylesFor(ThemeTerminal))
+}
+
+func drawEmojiCategoryGridStyle(screen tcell.Screen, values []string, selected int, active bool, x, y, limit, rows, columns int, styles semanticStyles) {
 	if rows < 1 || columns < 1 {
 		return
 	}
-	clearEmojiRegion(screen, x, y, limit, y+rows)
+	clearEmojiRegionStyle(screen, x, y, limit, y+rows, styles.popup)
 	selected = clampIndex(selected, len(values))
 	startRow := 0
 	if selected/columns >= rows {
@@ -358,23 +367,31 @@ func drawEmojiCategoryGrid(screen tcell.Screen, values []string, selected int, a
 	}
 	for index := start; index < end; index++ {
 		position := index - start
-		drawEmojiCell(screen, values[index], active && selected == index,
-			x+(position%columns)*emojiCellWidth, y+position/columns, limit)
+		drawEmojiCellStyle(screen, values[index], active && selected == index,
+			x+(position%columns)*emojiCellWidth, y+position/columns, limit, styles)
 	}
 }
 
 func clearEmojiRegion(screen tcell.Screen, left, top, right, bottom int) {
+	clearEmojiRegionStyle(screen, left, top, right, bottom, tcell.StyleDefault)
+}
+
+func clearEmojiRegionStyle(screen tcell.Screen, left, top, right, bottom int, style tcell.Style) {
 	for y := top; y < bottom; y++ {
 		for x := left; x < right; x++ {
-			screen.SetContent(x, y, ' ', nil, tcell.StyleDefault)
+			screen.SetContent(x, y, ' ', nil, style)
 		}
 	}
 }
 
 func drawEmojiCell(screen tcell.Screen, value string, selected bool, x, y, limit int) {
-	style := tcell.StyleDefault
+	drawEmojiCellStyle(screen, value, selected, x, y, limit, stylesFor(ThemeTerminal))
+}
+
+func drawEmojiCellStyle(screen tcell.Screen, value string, selected bool, x, y, limit int, styles semanticStyles) {
+	style := styles.popup
 	if selected {
-		style = style.Bold(true).Reverse(true)
+		style = styles.popupSelected
 	}
 	for offset := 0; offset < emojiCellWidth && x+offset < limit; offset++ {
 		screen.SetContent(x+offset, y, ' ', nil, style)
@@ -399,15 +416,21 @@ func drawEmojiCell(screen tcell.Screen, value string, selected bool, x, y, limit
 }
 
 func drawCompactEmojiPicker(screen tcell.Screen, width, height int) {
+	drawCompactEmojiPickerStyle(screen, width, height, stylesFor(ThemeTerminal))
+}
+
+func drawCompactEmojiPickerStyle(screen tcell.Screen, width, height int, styles semanticStyles) {
+	screen.SetStyle(styles.popup)
 	screen.Clear()
+	screen.Fill(' ', styles.popup)
 	if width <= 0 || height <= 0 {
 		return
 	}
-	putText(screen, 0, 0, width, "Emoji", tcell.StyleDefault.Bold(true))
+	putText(screen, 0, 0, width, "Emoji", styles.popup.Bold(true))
 	if height > 2 {
-		putText(screen, 0, 2, width, "terminal too small", tcell.StyleDefault)
+		putText(screen, 0, 2, width, "terminal too small", styles.warning)
 	}
 	if height > 4 {
-		putText(screen, 0, height-2, width, "Esc close", tcell.StyleDefault.Dim(true))
+		putText(screen, 0, height-2, width, "Esc close", styles.popup.Dim(true))
 	}
 }

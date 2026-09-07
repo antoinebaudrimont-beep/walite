@@ -64,6 +64,137 @@ func TestDisplayLocalContactPriorityAndAliases(t *testing.T) {
 	}
 }
 
+func TestCachedDirectChatSeedRequestsBoundedLocalContactUpgrade(t *testing.T) {
+	pn := types.NewJID("12345", types.DefaultUserServer)
+	lid := types.NewJID("98765", types.HiddenUserServer)
+	source := newRealtimeSource()
+	source.display = newDisplayResolver(source.aliases, func(_ context.Context, jid types.JID) (types.JID, error) {
+		if jid != lid {
+			t.Fatalf("alternate lookup=%s", jid)
+		}
+		return pn, nil
+	}, func(_ context.Context, jid types.JID) (types.ContactInfo, error) {
+		if jid == pn {
+			return types.ContactInfo{Found: true, FullName: "Saved Café 👋", PushName: "lower push"}, nil
+		}
+		return types.ContactInfo{}, nil
+	}, nil)
+	lidID := aliasID(t, lid.String())
+	if err := source.SeedChatIDs([]model.ChatID{lidID}); err != nil {
+		t.Fatal(err)
+	}
+	if source.display.count != 1 {
+		t.Fatalf("queued lookups=%d", source.display.count)
+	}
+	request := source.display.requests[source.display.head]
+	source.display.lookup(context.Background(), request)
+	for _, id := range []model.ChatID{lidID, aliasID(t, pn.String())} {
+		if got := source.display.cached(id); got.Name() != "Saved Café 👋" || got.Quality() != model.DisplaySaved {
+			t.Fatalf("cached chat metadata=%+v", got)
+		}
+	}
+	if source.aliases.count != 1 {
+		t.Fatal("presentation lookup consumed another stable chat identity")
+	}
+}
+
+func TestResolvedContactSurvivesPresentationSlotEviction(t *testing.T) {
+	pn := types.NewJID("12345", types.DefaultUserServer)
+	lid := types.NewJID("98765", types.HiddenUserServer)
+	alternateCalls, contactCalls := 0, 0
+	resolver := newDisplayResolver(&chatAliases{}, func(_ context.Context, jid types.JID) (types.JID, error) {
+		alternateCalls++
+		if jid != lid {
+			t.Fatalf("alternate lookup=%s", jid)
+		}
+		return pn, nil
+	}, func(_ context.Context, jid types.JID) (types.ContactInfo, error) {
+		contactCalls++
+		if jid == pn {
+			return types.ContactInfo{Found: true, FullName: "Saved after eviction 👋"}, nil
+		}
+		return types.ContactInfo{}, nil
+	}, nil)
+	lidID, pnID := aliasID(t, lid.String()), aliasID(t, pn.String())
+	resolver.lookup(context.Background(), displayRequest{id: lidID})
+	for index := 0; index < model.DisplayMetadataCapacity; index++ {
+		value, _ := model.NewDisplayMetadata(fmt.Sprintf("eviction-%03d", index), "Synthetic", model.DisplayPush, false)
+		resolver.offer(value, false)
+	}
+	if resolver.cached(lidID).Name() != "" || resolver.cached(pnID).Name() != "" {
+		t.Fatal("fixture did not evict both alias presentation slots")
+	}
+	resolver.lookup(context.Background(), displayRequest{id: lidID})
+	for _, id := range []model.ChatID{lidID, pnID} {
+		if got := resolver.cached(id); got.Name() != "Saved after eviction 👋" || got.Quality() != model.DisplaySaved {
+			t.Fatalf("restored metadata=%+v", got)
+		}
+	}
+	if alternateCalls != 1 || contactCalls != 2 {
+		t.Fatalf("local store was reread after eviction: alternate=%d contacts=%d", alternateCalls, contactCalls)
+	}
+}
+
+func TestRealtimeNameImprovesRetainedPhoneFallbackAfterEviction(t *testing.T) {
+	pn := types.NewJID("22222", types.DefaultUserServer)
+	contactCalls := 0
+	resolver := newDisplayResolver(&chatAliases{}, nil, func(context.Context, types.JID) (types.ContactInfo, error) {
+		contactCalls++
+		return types.ContactInfo{}, nil
+	}, nil)
+	id := aliasID(t, pn.String())
+	resolver.lookup(context.Background(), displayRequest{id: id})
+	if got := resolver.cached(id); got.Name() != "+22222" || got.Quality() != model.DisplayPhone {
+		t.Fatalf("initial fallback=%+v", got)
+	}
+	resolver.observePerson(pn, types.EmptyJID, "Later push name", model.DisplayPush)
+	for index := 0; index < model.DisplayMetadataCapacity; index++ {
+		value, _ := model.NewDisplayMetadata(fmt.Sprintf("realtime-eviction-%03d", index), "Synthetic", model.DisplayPush, false)
+		resolver.offer(value, false)
+	}
+	if resolver.cached(id).Name() != "" {
+		t.Fatal("fixture did not evict improved presentation slot")
+	}
+	resolver.lookup(context.Background(), displayRequest{id: id})
+	if got := resolver.cached(id); got.Name() != "Later push name" || got.Quality() != model.DisplayPush {
+		t.Fatalf("restored realtime metadata=%+v", got)
+	}
+	if contactCalls != 1 {
+		t.Fatalf("contact store reread %d times", contactCalls)
+	}
+}
+
+func TestDisplayWorkerDrainsNamesBeforePresentationSlotReuse(t *testing.T) {
+	resolver := newDisplayResolver(&chatAliases{}, nil, func(_ context.Context, jid types.JID) (types.ContactInfo, error) {
+		return types.ContactInfo{Found: true, PushName: "Name " + jid.User}, nil
+	}, nil)
+	ids := make([]model.ChatID, model.DisplayMetadataCapacity+1)
+	for index := range ids {
+		ids[index] = aliasID(t, fmt.Sprintf("%d@s.whatsapp.net", 10000+index))
+	}
+	resolver.requestPeople(ids)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	done := make(chan struct{})
+	go func() {
+		resolver.run(ctx)
+		close(done)
+	}()
+	seen := make(map[model.ChatID]struct{}, len(ids))
+	for len(seen) < len(ids) {
+		select {
+		case value := <-resolver.updates:
+			seen[value.ID()] = struct{}{}
+		case <-ctx.Done():
+			t.Fatalf("received %d/%d metadata updates", len(seen), len(ids))
+		}
+	}
+	cancel()
+	<-done
+	if len(seen) != len(ids) {
+		t.Fatalf("metadata updates=%d want=%d", len(seen), len(ids))
+	}
+}
+
 func TestDisplayLookupBoundsAndUnknownFallback(t *testing.T) {
 	contacts, groups := 0, 0
 	resolver := newDisplayResolver(&chatAliases{}, nil, func(context.Context, types.JID) (types.ContactInfo, error) {
@@ -81,8 +212,9 @@ func TestDisplayLookupBoundsAndUnknownFallback(t *testing.T) {
 	if contacts != DisplayContactLookupLimit || groups != DisplayGroupLookupLimit || resolver.aliases.count != 0 {
 		t.Fatal("lookups unbounded or consumed identity registry")
 	}
-	if len(resolver.slots) != model.DisplayMetadataCapacity || resolver.cached(aliasID(t, "10000@lid")).Name() != "" {
-		t.Fatal("unknown LID invented a name")
+	if len(resolver.slots) != model.DisplayMetadataCapacity || cap(resolver.updates) != model.DisplayMetadataCapacity ||
+		len(resolver.contacts) != DisplayContactLookupLimit || resolver.cached(aliasID(t, "10000@lid")).Name() != "" {
+		t.Fatal("resolver bounds changed or unknown LID invented a name")
 	}
 	queue := newDisplayResolver(nil, nil, nil, nil)
 	for i := 0; i < DisplayRequestCapacity+10; i++ {
@@ -254,6 +386,36 @@ func TestDisplayLocalAlternatePhoneAndOpaqueFallbacks(t *testing.T) {
 	resolver.lookup(context.Background(), displayRequest{id: aliasID(t, unknown.String())})
 	if resolver.cached(aliasID(t, unknown.String())).Name() != "" {
 		t.Fatal("LID digits treated as phone number")
+	}
+}
+
+func TestGroupParticipantDisplayUsesPushPhoneAndOpaqueFallbacks(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		id      string
+		contact types.ContactInfo
+		want    string
+		quality model.DisplayQuality
+	}{
+		{name: "push name", id: "11111@s.whatsapp.net", contact: types.ContactInfo{Found: true, PushName: "Push Person 👋"}, want: "Push Person 👋", quality: model.DisplayPush},
+		{name: "PN phone", id: "22222@s.whatsapp.net", contact: types.ContactInfo{}, want: "+22222", quality: model.DisplayPhone},
+		{name: "opaque LID", id: "33333@lid", contact: types.ContactInfo{}, want: "", quality: model.DisplayOpaque},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			resolver := newDisplayResolver(nil, nil, func(context.Context, types.JID) (types.ContactInfo, error) {
+				return test.contact, nil
+			}, nil)
+			id := aliasID(t, test.id)
+			resolver.requestPeople([]model.ChatID{id, id, id})
+			if resolver.count != 1 {
+				t.Fatalf("repeated participant queued %d lookups", resolver.count)
+			}
+			resolver.lookup(context.Background(), resolver.requests[resolver.head])
+			got := resolver.cached(id)
+			if got.Name() != test.want || got.Quality() != test.quality {
+				t.Fatalf("participant metadata=%+v want name=%q quality=%d", got, test.want, test.quality)
+			}
+		})
 	}
 }
 

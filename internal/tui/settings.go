@@ -5,7 +5,7 @@ import "github.com/gdamore/tcell/v2"
 const (
 	settingsPopupWidth  = 44
 	settingsPopupHeight = 11
-	settingsSaveRow     = 3
+	settingsSaveRow     = 4
 )
 
 type settingsState struct {
@@ -51,10 +51,12 @@ func handleSettingsKey(model *viewModel, event *tcell.EventKey) bool {
 		state.status = ""
 		switch state.selected {
 		case 0:
-			state.draft.ShowTimestamps = !state.draft.ShowTimestamps
+			state.draft.Theme = nextTheme(state.draft.Theme)
 		case 1:
-			state.draft.ConfirmQuit = !state.draft.ConfirmQuit
+			state.draft.ShowTimestamps = !state.draft.ShowTimestamps
 		case 2:
+			state.draft.ConfirmQuit = !state.draft.ConfirmQuit
+		case 3:
 			state.draft.SendReadReceipts = !state.draft.SendReadReceipts
 		case settingsSaveRow:
 			if state.draft == model.options {
@@ -66,6 +68,32 @@ func handleSettingsKey(model *viewModel, event *tcell.EventKey) bool {
 		return true
 	}
 	return false
+}
+
+func nextTheme(theme string) string {
+	switch theme {
+	case ThemeTerminal:
+		return ThemeDark
+	case ThemeDark:
+		return ThemeLight
+	case ThemeLight:
+		return ThemeHighContrast
+	default:
+		return ThemeTerminal
+	}
+}
+
+func themeLabel(theme string) string {
+	switch theme {
+	case ThemeDark:
+		return "Dark"
+	case ThemeLight:
+		return "Light"
+	case ThemeHighContrast:
+		return "High contrast"
+	default:
+		return "Terminal"
+	}
 }
 
 func requestSettingsSave(model *viewModel, save func(Options) bool) {
@@ -115,11 +143,14 @@ func drawSettingsPopup(screen tcell.Screen, model *viewModel, width, height int)
 		return
 	}
 	options := model.options
+	styles := stylesFor(options.Theme)
 	if model.settings.initialized {
 		options = model.settings.draft
+		styles = stylesFor(options.Theme)
 	}
-	left, top, right, bottom := popupInterior(screen, width, height, settingsPopupWidth, settingsPopupHeight)
+	left, top, right, bottom := popupInterior(screen, width, height, settingsPopupWidth, settingsPopupHeight, styles.popup, styles.border)
 	rows := []string{
+		settingsTextValueLabel("Theme", themeLabel(options.Theme), right-left-2),
 		settingsValueLabel("Timestamps", options.ShowTimestamps, right-left-2),
 		settingsValueLabel("Confirm quit", options.ConfirmQuit, right-left-2),
 		settingsValueLabel("Send read receipts", options.SendReadReceipts, right-left-2),
@@ -133,67 +164,72 @@ func drawSettingsPopup(screen tcell.Screen, model *viewModel, width, height int)
 	if bottom-top < 8 {
 		// Tiny grids always retain the selected row; navigating scrolls this
 		// one-row viewport instead of hiding keyboard focus below the screen.
-		putText(screen, left, top, right, "> "+rows[selected], tcell.StyleDefault.Reverse(true).Bold(true))
+		putText(screen, left, top, right, "> "+rows[selected], styles.popupSelected)
 		if bottom-top > 1 {
-			putText(screen, left, top+1, right, "Settings · ↑↓/jk move", tcell.StyleDefault.Bold(true))
+			putText(screen, left, top+1, right, "Settings · ↑↓/jk move", styles.popup.Bold(true))
 		}
 		if bottom-top > 2 {
-			putText(screen, left, top+2, right, status, tcell.StyleDefault)
+			putText(screen, left, top+2, right, status, styles.popup)
 		}
 		return
 	}
-	putText(screen, left, top, right, "Settings · Theme: "+options.Theme, tcell.StyleDefault.Bold(true))
+	putText(screen, left, top, right, "Settings", styles.popup.Bold(true))
 	for index, row := range rows {
-		style := tcell.StyleDefault
+		style := styles.popup
 		prefix := "  "
 		if index == selected {
 			prefix = "> "
-			style = style.Reverse(true).Bold(true)
+			style = styles.popupSelected
 		}
 		fillMessageRow(screen, left, top+1+index, right, style)
 		putText(screen, left, top+1+index, right, prefix+row, style)
 	}
-	putText(screen, left, top+6, right, "↑/↓ or j/k move · Save applies changes", tcell.StyleDefault)
-	putText(screen, left, top+7, right, status, tcell.StyleDefault)
+	putText(screen, left, top+6, right, "↑/↓ or j/k move · Save applies changes", styles.popup)
+	putText(screen, left, top+7, right, status, styles.popup)
 }
 
 // Preserve the value when a narrow panel needs to shorten a setting's name.
 func settingsValueLabel(name string, value bool, width int) string {
-	suffix := ": " + onOffLabel(value)
+	return settingsTextValueLabel(name, onOffLabel(value), width)
+}
+
+func settingsTextValueLabel(name, value string, width int) string {
+	suffix := ": " + value
 	if width <= len(suffix) {
-		return truncateDisplayWidth(onOffLabel(value), width)
+		return truncateDisplayWidth(value, width)
 	}
 	return truncateDisplayWidth(name, width-len(suffix)) + suffix
 }
 
 // popupInterior clears all cells, then returns exclusive content bounds. A
 // very small screen uses a borderless fallback with the same cell clipping.
-func popupInterior(screen tcell.Screen, width, height, desiredWidth, desiredHeight int) (left, top, right, bottom int) {
+func popupInterior(screen tcell.Screen, width, height, desiredWidth, desiredHeight int, fill, border tcell.Style) (left, top, right, bottom int) {
 	w, h := min(width, desiredWidth), min(height, desiredHeight)
 	left, top = (width-w)/2, (height-h)/2
 	right, bottom = left+w, top+h
 	for y := top; y < bottom; y++ {
-		fillMessageRow(screen, left, y, right, tcell.StyleDefault)
+		fillMessageRow(screen, left, y, right, fill)
 	}
 	screen.LockRegion(left, top, w, h, false)
 	if w < 6 || h < 5 {
 		return
 	}
-	drawHorizontal(screen, left+1, right-2, top, '─')
-	drawHorizontal(screen, left+1, right-2, bottom-1, '─')
-	drawVertical(screen, top+1, bottom-2, left, '│')
-	drawVertical(screen, top+1, bottom-2, right-1, '│')
-	setRune(screen, left, top, '┌')
-	setRune(screen, right-1, top, '┐')
-	setRune(screen, left, bottom-1, '└')
-	setRune(screen, right-1, bottom-1, '┘')
+	drawHorizontalStyle(screen, left+1, right-2, top, '─', border)
+	drawHorizontalStyle(screen, left+1, right-2, bottom-1, '─', border)
+	drawVerticalStyle(screen, top+1, bottom-2, left, '│', border)
+	drawVerticalStyle(screen, top+1, bottom-2, right-1, '│', border)
+	setRuneStyle(screen, left, top, '┌', border)
+	setRuneStyle(screen, right-1, top, '┐', border)
+	setRuneStyle(screen, left, bottom-1, '└', border)
+	setRuneStyle(screen, right-1, bottom-1, '┘', border)
 	return left + 1, top + 1, right - 1, bottom - 1
 }
 
-func drawQuitConfirmation(screen tcell.Screen, width, height int) {
-	left, top, right, bottom := popupInterior(screen, width, height, 34, 5)
-	putText(screen, left, top, right, "Quit walite?", tcell.StyleDefault.Bold(true))
+func drawQuitConfirmation(screen tcell.Screen, model *viewModel, width, height int) {
+	styles := model.styles()
+	left, top, right, bottom := popupInterior(screen, width, height, 34, 5, styles.popup, styles.border)
+	putText(screen, left, top, right, "Quit walite?", styles.popup.Bold(true))
 	if bottom-top > 1 {
-		putText(screen, left, top+1, right, "Enter quit · Esc cancel", tcell.StyleDefault.Reverse(true))
+		putText(screen, left, top+1, right, "Enter quit · Esc cancel", styles.popupSelected)
 	}
 }

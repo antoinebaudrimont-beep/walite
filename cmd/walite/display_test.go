@@ -21,7 +21,7 @@ type namedApplication struct {
 func TestDisplayGroupSenderSurvivesSnapshotAdapter(t *testing.T) {
 	now := time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)
 	chat := mustSnapshotChat(t, "group", "Family 家族", true, 2, now)
-	message, err := model.NewMessage(model.MessageInput{ChatID: "group", MessageID: "m", SenderID: "opaque-person", IsGroup: true, SentAt: now, Text: "body é 👋"})
+	message, err := model.NewMessage(model.MessageInput{ChatID: "group", MessageID: "m", SenderID: "98765@lid", IsGroup: true, SentAt: now, Text: "body é 👋"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,6 +40,15 @@ func TestDisplayGroupSenderSurvivesSnapshotAdapter(t *testing.T) {
 	got := loaded.Messages[0]
 	if got.SenderID != message.SenderID().String() || !got.IsGroup || got.Text != message.Text() || state.Chats[0].Title != chat.DisplayName() {
 		t.Fatal("snapshot lost group/sender display data")
+	}
+	if len(source.displayRequests) != 1 || len(source.displayRequests[0]) != 2 || source.displayRequests[0][0].String() != "group" || source.displayRequests[0][1].String() != "98765@lid" {
+		t.Fatalf("selected cached group did not request its bounded sender metadata: %v", source.displayRequests)
+	}
+	if _, err := buildChatLoadResult(context.Background(), source, tui.ChatLoadRequest{ChatID: "group", Revision: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if len(source.displayRequests) != 2 || len(source.displayRequests[1]) != 2 || source.displayRequests[1][0].String() != "group" || source.displayRequests[1][1].String() != "98765@lid" {
+		t.Fatalf("reloaded cached group did not request its sender metadata again: %v", source.displayRequests)
 	}
 }
 

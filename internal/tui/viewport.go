@@ -97,7 +97,7 @@ func drawNewerMessagesIndicator(screen tcell.Screen, model *viewModel, width, he
 	if count != 1 {
 		label += "s"
 	}
-	putText(screen, x, y, limit, label, tcell.StyleDefault.Dim(true))
+	putText(screen, x, y, limit, label, model.styles().status.Dim(true))
 }
 
 // recordIncomingMessage applies synthetic incoming activity while keeping the

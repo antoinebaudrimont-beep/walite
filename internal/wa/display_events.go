@@ -23,9 +23,21 @@ func (resolver *displayResolver) observePerson(jid, alternate types.JID, name st
 	}
 	value, _ := model.NewDisplayMetadata(id.String(), name, quality, false)
 	resolver.offer(value, false)
+	rememberedAlternate := types.EmptyJID
+	if altJID, valid := directChatJID(alt); valid {
+		rememberedAlternate = altJID
+	}
+	resolver.mu.Lock()
+	resolver.rememberContactLocked(jid.ToNonAD(), rememberedAlternate, value, false)
+	resolver.mu.Unlock()
 	if alt.String() != "" {
 		other, _ := model.NewDisplayMetadata(alt.String(), name, quality, false)
 		resolver.offer(other, false)
+		if altJID, valid := directChatJID(alt); valid {
+			resolver.mu.Lock()
+			resolver.rememberContactLocked(altJID, jid.ToNonAD(), other, false)
+			resolver.mu.Unlock()
+		}
 	}
 	resolver.request(displayRequest{id: id, alternate: alt})
 }

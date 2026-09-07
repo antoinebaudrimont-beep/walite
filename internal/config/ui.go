@@ -20,7 +20,11 @@ var ErrInvalidUI = errors.New("invalid UI configuration")
 type Theme string
 
 const (
-	ThemeDefault Theme = "default"
+	ThemeTerminal     Theme = "terminal"
+	ThemeDark         Theme = "dark"
+	ThemeLight        Theme = "light"
+	ThemeHighContrast Theme = "high_contrast"
+	ThemeDefault            = ThemeTerminal
 )
 
 // UI contains user-configurable terminal preferences. It does not contain
@@ -64,10 +68,21 @@ func DefaultUI() UI {
 
 // Validate rejects unsupported user-facing configuration values.
 func (settings UI) Validate() error {
-	if settings.Theme != ThemeDefault {
+	if !validTheme(settings.Theme) {
 		return fmt.Errorf("%w: unsupported theme %q", ErrInvalidUI, settings.Theme)
 	}
 	return nil
+}
+
+func validTheme(theme Theme) bool {
+	return theme == ThemeTerminal || theme == ThemeDark || theme == ThemeLight || theme == ThemeHighContrast
+}
+
+func normalizeLoadedTheme(theme Theme) Theme {
+	if theme == "default" || !validTheme(theme) {
+		return ThemeTerminal
+	}
+	return theme
 }
 
 // DefaultUIPath returns the user configuration file location.
@@ -131,6 +146,7 @@ func (store *UIFileStore) Load() (UI, error) {
 	if saved.Version != currentUIVersion {
 		return UI{}, fmt.Errorf("%w: unsupported version %d", ErrInvalidUI, saved.Version)
 	}
+	saved.Theme = normalizeLoadedTheme(saved.Theme)
 	settings := UI{
 		Theme:            saved.Theme,
 		ShowTimestamps:   saved.ShowTimestamps,

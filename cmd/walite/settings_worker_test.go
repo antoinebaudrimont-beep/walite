@@ -119,6 +119,7 @@ func TestSettingsDiskWriteDoesNotBlockTerminal(t *testing.T) {
 	<-screen.shown
 	press := func(key tcell.Key, r rune) { screen.InjectKey(key, r, tcell.ModNone); <-screen.shown }
 	press(tcell.KeyCtrlP, 0)
+	press(tcell.KeyDown, 0)
 	press(tcell.KeyEnter, 0)
 	for i := 0; i < 3; i++ {
 		press(tcell.KeyDown, 0)
@@ -173,6 +174,7 @@ func TestSavedReadPreferenceOffPreventsMarkReadAndSettingsCauseNoNetwork(t *test
 	<-screen.shown
 	press := func(key tcell.Key, r rune) { screen.InjectKey(key, r, tcell.ModNone); <-screen.shown }
 	press(tcell.KeyCtrlP, 0)
+	press(tcell.KeyDown, 0)
 	press(tcell.KeyDown, 0)
 	press(tcell.KeyDown, 0)
 	press(tcell.KeyRune, ' ')

@@ -5,7 +5,13 @@ import (
 	"fmt"
 )
 
-const ThemeDefault = "default"
+const (
+	ThemeTerminal     = "terminal"
+	ThemeDark         = "dark"
+	ThemeLight        = "light"
+	ThemeHighContrast = "high_contrast"
+	ThemeDefault      = ThemeTerminal
+)
 
 var ErrInvalidOptions = errors.New("invalid TUI options")
 
@@ -29,7 +35,7 @@ func DefaultOptions() Options {
 }
 
 func (options Options) validate() error {
-	if options.Theme != ThemeDefault {
+	if options.Theme != ThemeTerminal && options.Theme != ThemeDark && options.Theme != ThemeLight && options.Theme != ThemeHighContrast {
 		return fmt.Errorf("%w: unsupported theme %q", ErrInvalidOptions, options.Theme)
 	}
 	return nil

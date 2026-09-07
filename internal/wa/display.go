@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	DisplayRequestCapacity    = 32
+	DisplayRequestCapacity    = DisplayContactLookupLimit
 	DisplayGroupLookupLimit   = 32
 	DisplayContactLookupLimit = 256
 	displayLookupTimeout      = 3 * time.Second
@@ -22,9 +22,28 @@ type displaySlot struct {
 	dirty    bool
 	revision uint64
 }
+
+// requestPeople admits only transport-valid direct identities. It is used for
+// cached summaries and bounded selected-chat pages; rendering never performs a
+// lookup and overflow remains advisory.
+func (resolver *displayResolver) requestPeople(ids []model.ChatID) {
+	for _, id := range ids {
+		if _, direct := directChatJID(id); direct {
+			resolver.request(displayRequest{id: id})
+		}
+	}
+}
+
 type groupLookupRecord struct {
 	id          model.ChatID
 	liveSubject bool
+}
+
+type contactLookupRecord struct {
+	jid       types.JID
+	alternate types.JID
+	name      string
+	quality   model.DisplayQuality
 }
 
 // displayResolver is a single owned worker, a fixed coalescing request ring,
@@ -41,7 +60,7 @@ type displayResolver struct {
 	updates          chan model.DisplayMetadata
 	groups           [DisplayGroupLookupLimit]groupLookupRecord
 	groupCount       int
-	contacts         [DisplayContactLookupLimit]types.JID // worker-owned, no eviction
+	contacts         [DisplayContactLookupLimit]contactLookupRecord // fixed, no eviction
 	contactCount     int
 	aliases          *chatAliases
 	alternate        alternateJIDLookup
@@ -50,7 +69,10 @@ type displayResolver struct {
 }
 
 func newDisplayResolver(aliases *chatAliases, alternate alternateJIDLookup, contact func(context.Context, types.JID) (types.ContactInfo, error), group func(context.Context, types.JID) (string, error)) *displayResolver {
-	return &displayResolver{aliases: aliases, alternate: alternate, contact: contact, group: group, wake: make(chan struct{}, 1), updates: make(chan model.DisplayMetadata, 1)}
+	return &displayResolver{
+		aliases: aliases, alternate: alternate, contact: contact, group: group,
+		wake: make(chan struct{}, 1), updates: make(chan model.DisplayMetadata, model.DisplayMetadataCapacity),
+	}
 }
 
 func (resolver *displayResolver) offer(value model.DisplayMetadata, liveSubject bool) {
@@ -165,16 +187,27 @@ func (resolver *displayResolver) run(ctx context.Context) {
 			slot = resolver.slots[index]
 		}
 		resolver.mu.Unlock()
+		// Drain discovered metadata before starting another local lookup. The
+		// fixed presentation slots are intentionally smaller than the fixed
+		// contact-read registry; prioritizing output prevents a one-shot startup
+		// name from being overwritten before the application can persist it.
+		if out != nil {
+			select {
+			case out <- slot.value:
+				resolver.mu.Lock()
+				if resolver.slots[index].revision == slot.revision {
+					resolver.slots[index].dirty = false
+				}
+				resolver.outputNext = (index + 1) % len(resolver.slots)
+				resolver.mu.Unlock()
+			case <-ctx.Done():
+				return
+			}
+			continue
+		}
 		select {
 		case <-ctx.Done():
 			return
-		case out <- slot.value:
-			resolver.mu.Lock()
-			if resolver.slots[index].revision == slot.revision {
-				resolver.slots[index].dirty = false
-			}
-			resolver.outputNext = (index + 1) % len(resolver.slots)
-			resolver.mu.Unlock()
 		case <-resolver.wake:
 			resolver.mu.Lock()
 			if resolver.count == 0 {
@@ -198,13 +231,48 @@ func (resolver *displayResolver) run(ctx context.Context) {
 	}
 }
 
-func (resolver *displayResolver) contactSeen(jid types.JID) bool {
+func (resolver *displayResolver) contactRecord(jid types.JID) (contactLookupRecord, bool) {
+	resolver.mu.Lock()
+	defer resolver.mu.Unlock()
 	for i := 0; i < resolver.contactCount; i++ {
-		if resolver.contacts[i] == jid {
-			return true
+		if resolver.contacts[i].jid == jid {
+			return resolver.contacts[i], true
 		}
 	}
-	return false
+	return contactLookupRecord{}, false
+}
+
+func (resolver *displayResolver) contactCapacityAvailable() bool {
+	resolver.mu.Lock()
+	defer resolver.mu.Unlock()
+	return resolver.contactCount < len(resolver.contacts)
+}
+
+func (resolver *displayResolver) rememberContactLocked(jid, alternate types.JID, value model.DisplayMetadata, add bool) bool {
+	index := -1
+	for i := 0; i < resolver.contactCount; i++ {
+		if resolver.contacts[i].jid == jid {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		if !add || resolver.contactCount == len(resolver.contacts) {
+			return false
+		}
+		index = resolver.contactCount
+		resolver.contactCount++
+		resolver.contacts[index].jid = jid
+	}
+	record := &resolver.contacts[index]
+	if !alternate.IsEmpty() {
+		record.alternate = alternate
+	}
+	current, _ := model.NewDisplayMetadata(jid.ToNonAD().String(), record.name, record.quality, false)
+	next, _ := model.NewDisplayMetadata(jid.ToNonAD().String(), value.Name(), value.Quality(), false)
+	merged := current.Merge(next)
+	record.name, record.quality = merged.Name(), merged.Quality()
+	return true
 }
 
 func (resolver *displayResolver) lookup(parent context.Context, request displayRequest) {
@@ -228,7 +296,11 @@ func (resolver *displayResolver) lookup(parent context.Context, request displayR
 	if alt.String() == "" {
 		alt = resolver.aliases.alternateFor(request.id)
 	}
-	if alt.String() == "" && !resolver.contactSeen(jid) && resolver.contactCount < len(resolver.contacts) {
+	record, seen := resolver.contactRecord(jid)
+	if alt.String() == "" && seen && !record.alternate.IsEmpty() {
+		alt, _ = model.NewChatID(record.alternate.ToNonAD().String())
+	}
+	if alt.String() == "" && !seen && resolver.contactCapacityAvailable() {
 		alt, _ = lookupAlternate(ctx, request.id, alt, resolver.alternate)
 	}
 	ids := [2]model.ChatID{request.id, alt}
@@ -254,11 +326,21 @@ func (resolver *displayResolver) lookup(parent context.Context, request displayR
 			candidate, _ = model.NewDisplayMetadata(request.id.String(), fallback, model.DisplayPhone, false)
 			best = best.Merge(candidate)
 		}
-		if resolver.contact == nil || resolver.contactSeen(person) || resolver.contactCount == len(resolver.contacts) {
+		record, seen := resolver.contactRecord(person)
+		if seen {
+			candidate, _ = model.NewDisplayMetadata(request.id.String(), record.name, record.quality, false)
+			best = best.Merge(candidate)
 			continue
 		}
-		resolver.contacts[resolver.contactCount] = person
-		resolver.contactCount++
+		if resolver.contact == nil || !resolver.contactCapacityAvailable() {
+			continue
+		}
+		resolver.mu.Lock()
+		reserved := resolver.rememberContactLocked(person, types.EmptyJID, model.DisplayMetadata{}, true)
+		resolver.mu.Unlock()
+		if !reserved {
+			continue
+		}
 		contact, err := resolver.contact(ctx, person)
 		if err != nil {
 			continue
@@ -266,6 +348,9 @@ func (resolver *displayResolver) lookup(parent context.Context, request displayR
 		name, quality := contactDisplayName(contact)
 		candidate, _ = model.NewDisplayMetadata(request.id.String(), name, quality, false)
 		best = best.Merge(candidate)
+		resolver.mu.Lock()
+		resolver.rememberContactLocked(person, types.EmptyJID, candidate, false)
+		resolver.mu.Unlock()
 	}
 	// Publish labels for both authoritative spellings, not another alias
 	// registry. This also updates existing group messages carrying either ID.
@@ -281,6 +366,19 @@ func (resolver *displayResolver) lookup(parent context.Context, request displayR
 			current := resolver.slots[i].value
 			value, _ := model.NewDisplayMetadata(request.id.String(), current.Name(), current.Quality(), false)
 			best = best.Merge(value)
+		}
+	}
+	if resolver.contact != nil {
+		for index, id := range ids {
+			person, valid := directChatJID(id)
+			if !valid {
+				continue
+			}
+			alternate := types.EmptyJID
+			if other, valid := directChatJID(ids[1-index]); valid {
+				alternate = other
+			}
+			resolver.rememberContactLocked(person, alternate, best, false)
 		}
 	}
 	for _, id := range ids {

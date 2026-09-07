@@ -34,11 +34,15 @@ func messageDateLabel(at time.Time) string {
 }
 
 func drawDateSeparator(screen tcell.Screen, x, y, limit int, at time.Time) {
+	drawDateSeparatorStyle(screen, x, y, limit, at, stylesFor(ThemeTerminal))
+}
+
+func drawDateSeparatorStyle(screen tcell.Screen, x, y, limit int, at time.Time, styles semanticStyles) {
 	label := messageDateLabel(at)
 	if x >= limit || label == "" {
 		return
 	}
-	lineStyle := tcell.StyleDefault.Dim(true)
+	lineStyle := styles.dateSeparator.Dim(true)
 	for column := x; column < limit; column++ {
 		screen.SetContent(column, y, '─', nil, lineStyle)
 	}
@@ -48,5 +52,5 @@ func drawDateSeparator(screen tcell.Screen, x, y, limit int, at time.Time) {
 	if labelWidth < limit-x {
 		labelX += (limit - x - labelWidth) / 2
 	}
-	putText(screen, labelX, y, limit, label, tcell.StyleDefault.Bold(true))
+	putText(screen, labelX, y, limit, label, styles.dateSeparator.Bold(true).Dim(false))
 }

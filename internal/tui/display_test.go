@@ -2,12 +2,146 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gdamore/tcell/v2"
 )
+
+func TestGroupParticipantNamesSurviveRepeatedChatReload(t *testing.T) {
+	base := time.Date(2100, 2, 3, 10, 0, 0, 0, time.UTC)
+	state, err := chatStateFromInitial(InitialState{Chats: []InitialChat{
+		{ID: "group-a", Title: "Group A", IsGroup: true, ActivityTime: base},
+		{ID: "chat-b", Title: "Chat B", ActivityTime: base.Add(-time.Minute)},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := viewModel{chats: state, options: DefaultOptions(), terminalWidth: 100, terminalHeight: 24}
+
+	messages := []InitialMessage{
+		{ID: "message-1", SentAt: base, Text: "one", BodyRetained: true, SenderID: "participant-1@lid", IsGroup: true},
+		{ID: "message-2", SentAt: base.Add(time.Minute), Text: "two", BodyRetained: true, SenderID: "participant-2@lid", IsGroup: true},
+		{ID: "message-3", SentAt: base.Add(2 * time.Minute), Text: "unknown", BodyRetained: true, SenderID: "unknown@lid", IsGroup: true},
+	}
+	request, _ := selectedChatLoadRequest(&model)
+	if !applyChatLoad(&model, ChatLoadResult{ChatID: request.ChatID, Revision: request.Revision, Messages: messages}) {
+		t.Fatal("initial group page rejected")
+	}
+	for _, value := range []DisplayMetadata{
+		{ID: "participant-1@lid", Name: "Léa Baudrimont", Quality: 4},
+		{ID: "participant-2@lid", Name: "Marine 👋", Quality: 4},
+	} {
+		if !applyDisplayMetadata(&model, value) {
+			t.Fatalf("initial metadata did not enrich %q", value.ID)
+		}
+	}
+	assertGroupSenderNames(t, &model, "Léa Baudrimont", "Marine 👋", "unknown@lid")
+
+	for cycle := 0; cycle < 3; cycle++ {
+		if !moveChatSelection(&model, 1) || !moveChatSelection(&model, -1) {
+			t.Fatalf("cycle %d selection failed", cycle)
+		}
+		request, _ = selectedChatLoadRequest(&model)
+		// A retained resolver response is commonly delivered before the much
+		// faster second page replaces the already-enriched in-memory page.
+		for _, value := range []DisplayMetadata{
+			{ID: "participant-1@lid", Name: "Léa Baudrimont", Quality: 4},
+			{ID: "participant-2@lid", Name: "Marine 👋", Quality: 4},
+		} {
+			if applyDisplayMetadata(&model, value) {
+				t.Fatalf("cycle %d retained metadata unexpectedly changed old page", cycle)
+			}
+		}
+		if !applyChatLoad(&model, ChatLoadResult{ChatID: request.ChatID, Revision: request.Revision, Messages: messages}) {
+			t.Fatalf("cycle %d reloaded page rejected", cycle)
+		}
+		assertGroupSenderNames(t, &model, "Léa Baudrimont", "Marine 👋", "unknown@lid")
+	}
+}
+
+func TestGroupParticipantNameRehydratesAfterPresentationCacheEviction(t *testing.T) {
+	base := time.Date(2100, 2, 4, 10, 0, 0, 0, time.UTC)
+	state, err := chatStateFromInitial(InitialState{Chats: []InitialChat{
+		{ID: "group-a", Title: "Group A", IsGroup: true, ActivityTime: base},
+		{ID: "chat-b", Title: "Chat B", ActivityTime: base.Add(-time.Minute)},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := viewModel{chats: state, options: DefaultOptions(), terminalWidth: 100, terminalHeight: 24}
+	message := InitialMessage{ID: "message", SentAt: base, Text: "body", BodyRetained: true, SenderID: "participant@lid", IsGroup: true}
+	request, _ := selectedChatLoadRequest(&model)
+	applyChatLoad(&model, ChatLoadResult{ChatID: request.ChatID, Revision: request.Revision, Messages: []InitialMessage{message}})
+	applyDisplayMetadata(&model, DisplayMetadata{ID: "participant@lid", Name: "Dominique", Quality: 4})
+	for index := 0; index < displayMetadataCapacity; index++ {
+		applyDisplayMetadata(&model, DisplayMetadata{ID: fmt.Sprintf("eviction-%03d", index), Name: "Synthetic", Quality: 2})
+	}
+	if model.display.lookup("participant@lid").Name != "" {
+		t.Fatal("fixture did not evict participant presentation metadata")
+	}
+	if !moveChatSelection(&model, 1) || !moveChatSelection(&model, -1) {
+		t.Fatal("selection failed")
+	}
+	request, _ = selectedChatLoadRequest(&model)
+	// This models the retained 256-contact registry re-emitting its result.
+	applyDisplayMetadata(&model, DisplayMetadata{ID: "participant@lid", Name: "Dominique", Quality: 4})
+	if !applyChatLoad(&model, ChatLoadResult{ChatID: request.ChatID, Revision: request.Revision, Messages: []InitialMessage{message}}) {
+		t.Fatal("reloaded page rejected")
+	}
+	assertGroupSenderNames(t, &model, "Dominique")
+}
+
+func TestStaleGroupPageCannotApplyNamesToSelectedChat(t *testing.T) {
+	base := time.Date(2100, 2, 5, 10, 0, 0, 0, time.UTC)
+	state, err := chatStateFromInitial(InitialState{Chats: []InitialChat{
+		{ID: "group-a", Title: "Group A", IsGroup: true, ActivityTime: base},
+		{ID: "group-b", Title: "Group B", IsGroup: true, ActivityTime: base.Add(-time.Minute)},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := viewModel{chats: state, options: DefaultOptions(), terminalWidth: 100, terminalHeight: 24}
+	stale, _ := selectedChatLoadRequest(&model)
+	applyDisplayMetadata(&model, DisplayMetadata{ID: "participant-a@lid", Name: "Participant A", Quality: 4})
+	if !moveChatSelection(&model, 1) {
+		t.Fatal("selection failed")
+	}
+	if applyChatLoad(&model, ChatLoadResult{ChatID: stale.ChatID, Revision: stale.Revision, Messages: []InitialMessage{{
+		ID: "stale", SentAt: base, Text: "wrong chat", BodyRetained: true, SenderID: "participant-a@lid", IsGroup: true,
+	}}}) {
+		t.Fatal("stale group page was accepted")
+	}
+	selected, _ := model.chats.selectedChat()
+	if selected.id != "group-b" || selected.messageCount != 0 {
+		t.Fatal("stale group page corrupted selected chat")
+	}
+}
+
+func assertGroupSenderNames(t *testing.T, model *viewModel, want ...string) {
+	t.Helper()
+	chat, ok := model.chats.selectedChat()
+	if !ok || chat.messageCount != len(want) {
+		t.Fatalf("selected messages=%d want=%d", chat.messageCount, len(want))
+	}
+	for index, name := range want {
+		if got := senderLabel(chat.messages[index]); got != name {
+			t.Fatalf("message %d sender=%q want=%q", index, got, name)
+		}
+	}
+	screen := initializedSimulationScreen(t, 100, 24)
+	draw(screen, model)
+	screen.Show()
+	text := replyScreenText(screen)
+	for _, name := range want {
+		if !strings.Contains(text, name) {
+			t.Fatalf("rendered sender %q missing:\n%s", name, text)
+		}
+	}
+}
 
 func TestRunDisplayUpdatesRedrawOnlyChangedFrames(t *testing.T) {
 	screen := newObservedScreen(100, 30)

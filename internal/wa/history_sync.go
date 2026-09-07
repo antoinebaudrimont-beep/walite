@@ -116,6 +116,15 @@ func (client *whatsmeowConnectionClient) adaptBootstrapConversation(category mod
 		}
 		return messages[i].SentAt().Before(messages[j].SentAt())
 	})
+	if client.realtime.display != nil {
+		people := make([]model.ChatID, 0, len(messages))
+		for _, message := range messages {
+			if id := message.SenderID(); id.String() != "" {
+				people = append(people, model.ChatID(id))
+			}
+		}
+		client.realtime.display.requestPeople(people)
+	}
 	record, err := model.NewBootstrapRecord(category, chat, messages)
 	record = record.WithUnreadAuthoritative(conversation.UnreadCount != nil)
 	return record, err == nil

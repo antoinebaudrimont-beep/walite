@@ -48,6 +48,10 @@ func applyChatLoad(model *viewModel, result ChatLoadResult) bool {
 		}
 	}
 	chat.messages, chat.messageCount = loadedChat.messages, loadedChat.messageCount
+	// Display metadata can arrive before this asynchronous page. Reapply the
+	// bounded presentation cache after replacing the raw persisted messages so
+	// every accepted page gets the same sender-name enrichment.
+	enrichChatDisplay(chat, &model.display)
 	chat.revision++
 	model.chatView.reset()
 	model.chatView.unreadBoundary = unreadBoundaryForChat(chat)

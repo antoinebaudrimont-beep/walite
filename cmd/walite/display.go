@@ -14,6 +14,10 @@ type displayApplication interface {
 	ApplyDisplayMetadata(context.Context, model.DisplayMetadata) (model.DisplayMetadata, error)
 }
 
+type displayMetadataRequester interface {
+	RequestDisplayMetadata([]model.ChatID)
+}
+
 func forwardDisplayMetadata(ctx context.Context, application displayApplication, destination chan<- tui.DisplayMetadata) {
 	defer close(destination)
 	source := application.DisplayUpdates()

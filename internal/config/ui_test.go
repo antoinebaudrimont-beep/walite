@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -137,6 +138,49 @@ func TestValidUIConfigLoads(t *testing.T) {
 	}
 }
 
+func TestUIConfigThemeCompatibilityAndFallback(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		theme string
+		want  Theme
+	}{
+		{name: "legacy default", theme: "default", want: ThemeTerminal},
+		{name: "terminal", theme: "terminal", want: ThemeTerminal},
+		{name: "dark", theme: "dark", want: ThemeDark},
+		{name: "light", theme: "light", want: ThemeLight},
+		{name: "high contrast", theme: "high_contrast", want: ThemeHighContrast},
+		{name: "unsupported falls back", theme: "neon", want: ThemeTerminal},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			data := []byte(fmt.Sprintf(`{"version":1,"theme":%q,"show_timestamps":true,"confirm_quit":false}`, test.theme))
+			if err := os.WriteFile(path, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got, err := NewUIFileStore(path).Load()
+			if err != nil || got.Theme != test.want {
+				t.Fatalf("theme=%q err=%v want=%q", got.Theme, err, test.want)
+			}
+		})
+	}
+}
+
+func TestEverySupportedThemePersistsAcrossRestart(t *testing.T) {
+	for _, theme := range []Theme{ThemeTerminal, ThemeDark, ThemeLight, ThemeHighContrast} {
+		path := filepath.Join(t.TempDir(), "config.json")
+		want := DefaultUI()
+		want.Theme = theme
+		store := NewUIFileStore(path)
+		if err := store.Save(want); err != nil {
+			t.Fatalf("save %q: %v", theme, err)
+		}
+		got, err := NewUIFileStore(path).Load()
+		if err != nil || got != want {
+			t.Fatalf("load %q=%+v err=%v want=%+v", theme, got, err, want)
+		}
+	}
+}
+
 func TestInvalidUIConfigJSONReturnsControlledError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(path, []byte(`{"version":1,"theme":`), 0o600); err != nil {
@@ -153,10 +197,6 @@ func TestInvalidUIConfigValuesReturnControlledError(t *testing.T) {
 		name string
 		data string
 	}{
-		{
-			name: "unsupported theme",
-			data: `{"version":1,"theme":"neon","show_timestamps":true,"confirm_quit":false}`,
-		},
 		{
 			name: "unsupported version",
 			data: `{"version":2,"theme":"default","show_timestamps":true,"confirm_quit":false}`,

@@ -29,13 +29,14 @@ func TestSettingsKeyboardFocusToggleAndCancelPreserveInteraction(t *testing.T) {
 	before := model
 	beforeChats := *model.chats
 	settingsKey(t, &model, tcell.KeyCtrlP, 0)
+	settingsKey(t, &model, tcell.KeyDown, 0)
 	settingsKey(t, &model, tcell.KeyEnter, 0)
 	settingsKey(t, &model, tcell.KeyDown, 0)
 	settingsKey(t, &model, tcell.KeyRune, ' ')
 	settingsKey(t, &model, tcell.KeyRune, 'j')
 	settingsKey(t, &model, tcell.KeyRune, 'k')
 	settingsKey(t, &model, tcell.KeyUp, 0)
-	if model.settings.selected != 0 || model.settings.draft.ShowTimestamps || !model.settings.draft.ConfirmQuit {
+	if model.settings.selected != 1 || model.settings.draft.ShowTimestamps || !model.settings.draft.ConfirmQuit {
 		t.Fatalf("settings=%+v", model.settings)
 	}
 	if model.options != before.options {
@@ -87,6 +88,7 @@ func TestSettingsSaveAppliesOnlyOnSuccessAndFailureIsControlled(t *testing.T) {
 			model.emojiPicker.prepareOpen()
 			beforeView, beforeComposer, beforeReply, beforeEmoji, beforeChats := model.chatView, model.composer, model.replyTarget, model.emojiPicker, *model.chats
 			openSettings(&model)
+			settingsKey(t, &model, tcell.KeyDown, 0)
 			settingsKey(t, &model, tcell.KeyEnter, 0)
 			model.settings.selected = settingsSaveRow
 			settingsKey(t, &model, tcell.KeyEnter, 0)
@@ -140,13 +142,13 @@ func TestSettingsResizesAndClosesWithoutStaleCells(t *testing.T) {
 	model := defaultDemoView()
 	screen := initializedSimulationScreen(t, 80, 24)
 	openSettings(&model)
-	model.settings.selected = 2
+	model.settings.selected = 3
 	for _, size := range [][2]int{{80, 24}, {40, 12}, {24, 8}, {18, 6}, {8, 3}, {1, 1}, {80, 24}} {
 		screen.SetSize(size[0], size[1])
 		clampView(&model, size[0], size[1])
 		draw(screen, &model)
 		screen.Show()
-		if model.settings.selected != 2 || !model.settingsOpen {
+		if model.settings.selected != 3 || !model.settingsOpen {
 			t.Fatal("resize changed selection")
 		}
 		if !strings.Contains(screenText(screen), ">") {
@@ -223,7 +225,7 @@ func TestReadReceiptsOffClearLocallyAndEnablingIsNotRetroactive(t *testing.T) {
 		t.Fatal("Off did not preserve local clear while suppressing remote receipt")
 	}
 	openSettings(&model)
-	model.settings.selected = 2
+	model.settings.selected = 3
 	settingsKey(t, &model, tcell.KeyEnter, 0)
 	model.settings.pending = true
 	finishSettingsSave(&model, nil)
