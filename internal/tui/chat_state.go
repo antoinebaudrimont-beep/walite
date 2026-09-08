@@ -20,6 +20,8 @@ type messageView struct {
 	sentAt        time.Time
 	time          string
 	text          string
+	mediaKind     string
+	mediaName     string
 	fromMe        bool
 	bodyRetained  bool
 	replyToID     messageID

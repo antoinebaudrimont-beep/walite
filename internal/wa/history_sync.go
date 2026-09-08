@@ -97,7 +97,7 @@ func (client *whatsmeowConnectionClient) adaptBootstrapConversation(category mod
 		}
 		owned := *parsed
 		owned.SourceWebMsg = nil // history remains excluded from realtime admission
-		event, recognized := adaptTextMessage(&owned, receivedAt, client.client.Store.GetJID(), client.client.Store.GetLID())
+		event, recognized := adaptMessage(&owned, receivedAt, client.client.Store.GetJID(), client.client.Store.GetLID())
 		if !recognized {
 			continue
 		}

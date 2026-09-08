@@ -349,7 +349,7 @@ func drawReplyPreview(screen tcell.Screen, model *viewModel, chatIndex, x, y, li
 	style := model.styles().replyQuote
 	reference := "original message unavailable"
 	if original, ok := model.chats.findMessageByID(chatIndex, model.replyTarget.id); ok {
-		reference = original.text
+		reference = messageDisplayText(original)
 		if model.options.ShowTimestamps {
 			reference = timestampText(original.time) + "  " + reference
 		}
@@ -429,7 +429,7 @@ func drawMessage(screen tcell.Screen, model *viewModel, chatIndex int, message m
 		putText(screen, bodyX, y+rows, limit, quoteLine, quoteStyle)
 		rows++
 	}
-	remaining := message.text
+	remaining := messageDisplayText(message)
 	for remaining != "" && y+rows < bottom {
 		fillMessageRow(screen, paneLeft, y+rows, limit, style)
 		if rows == 0 && showTimestamp {
@@ -455,7 +455,7 @@ func messageQuoteLine(model *viewModel, chatIndex int, message messageView, widt
 	}
 	if original, ok := model.chats.findMessageByID(chatIndex, message.replyToID); ok {
 		if message.replyText == "" {
-			reference = original.text
+			reference = messageDisplayText(original)
 		}
 		if model.options.ShowTimestamps {
 			reference = timestampText(original.time) + " " + reference
@@ -598,14 +598,15 @@ func wrappedMessageLines(message messageView, width int, showTimestamps bool) in
 	if message.isGroup && !message.fromMe {
 		extra = 1
 	}
-	if message.text == "" {
+	displayText := messageDisplayText(message)
+	if displayText == "" {
 		if message.hasReply {
 			return 1 + extra
 		}
 		return 1
 	}
 	lines := 0
-	remaining := message.text
+	remaining := displayText
 	for remaining != "" {
 		_, remaining = nextWrappedLine(remaining, bodyWidth)
 		lines++

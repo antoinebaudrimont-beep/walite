@@ -54,7 +54,7 @@ func TestAdaptTextMessageIgnoresUnsupportedAndSystemMessages(t *testing.T) {
 	sentAt := time.Date(2026, 8, 30, 10, 11, 12, 0, time.UTC)
 	text := "must not escape protocol wrapper"
 	tests := map[string]*waEvents.Message{
-		"image": upstreamTextMessage("12345", "image-id", sentAt, false, &waE2E.Message{ImageMessage: &waE2E.ImageMessage{}}),
+		"contact": upstreamTextMessage("12345", "contact-id", sentAt, false, &waE2E.Message{ContactMessage: &waE2E.ContactMessage{}}),
 		"protocol": upstreamTextMessage("12345", "protocol-id", sentAt, false, &waE2E.Message{
 			Conversation: &text, ProtocolMessage: &waE2E.ProtocolMessage{},
 		}),

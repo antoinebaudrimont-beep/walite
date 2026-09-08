@@ -205,6 +205,22 @@ func (memory *Memory) writeBatch(ctx context.Context, batch model.WriteBatch, em
 			if prior.Quote() != (model.TextQuote{}) {
 				message = message.WithQuote(prior.Quote())
 			}
+			priorMedia, media := prior.Media(), message.Media()
+			if priorMedia.Kind() != 0 {
+				if media.Kind() != priorMedia.Kind() {
+					message = message.WithMedia(priorMedia)
+				} else {
+					name, mimeType := media.Name(), media.MIMEType()
+					if name == "" {
+						name = priorMedia.Name()
+					}
+					if mimeType == "" {
+						mimeType = priorMedia.MIMEType()
+					}
+					merged, _ := model.NewMedia(priorMedia.Kind(), name, mimeType)
+					message = message.WithMedia(merged)
+				}
+			}
 			sender := message.SenderID()
 			if prior.SenderID().String() != "" {
 				sender = prior.SenderID()

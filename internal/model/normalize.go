@@ -99,6 +99,10 @@ func NewMessage(input MessageInput) (Message, error) {
 	if err != nil {
 		return Message{}, err
 	}
+	media, err := cloneMedia(input.Media)
+	if err != nil {
+		return Message{}, err
+	}
 	var senderID ContactID
 	if input.SenderID != "" {
 		senderID, err = NewContactID(input.SenderID)
@@ -106,7 +110,7 @@ func NewMessage(input MessageInput) (Message, error) {
 			return Message{}, err
 		}
 	}
-	byteSize, ok := messageByteSize(chatID.value, messageID.value, text, quote, senderID)
+	byteSize, ok := messageByteSize(chatID.value, messageID.value, text, quote, media, senderID)
 	if !ok {
 		return Message{}, newValidationError(
 			SizeExceeded,
@@ -122,6 +126,7 @@ func NewMessage(input MessageInput) (Message, error) {
 		fromMe:        input.FromMe,
 		text:          text,
 		quote:         quote,
+		media:         media,
 		senderID:      senderID,
 		isGroup:       input.IsGroup,
 		bodyTruncated: truncated || input.BodyTruncated,
@@ -231,6 +236,9 @@ func validateMessage(message Message) (int, error) {
 	if _, err := cloneTextQuote(message.quote); err != nil {
 		return 0, err
 	}
+	if err := validateMedia(message.media); err != nil {
+		return 0, err
+	}
 	if message.senderID.value != "" {
 		if err := validateIdentifier(message.senderID.value, "sender_id"); err != nil {
 			return 0, err
@@ -242,6 +250,7 @@ func validateMessage(message Message) (int, error) {
 		message.messageID.value,
 		message.text,
 		message.quote,
+		message.media,
 		message.senderID,
 	)
 	if !ok {
@@ -254,8 +263,8 @@ func validateMessage(message Message) (int, error) {
 	return byteSize, nil
 }
 
-func messageByteSize(chatID, messageID, text string, quote TextQuote, sender ContactID) (int, bool) {
-	return checkedByteSum(len(chatID), len(messageID), len(text), len(quote.id.value), len(quote.text), len(sender.value))
+func messageByteSize(chatID, messageID, text string, quote TextQuote, media Media, sender ContactID) (int, bool) {
+	return checkedByteSum(len(chatID), len(messageID), len(text), len(quote.id.value), len(quote.text), len(media.name), len(media.mimeType), len(sender.value))
 }
 
 func normalizedEventByteSize(messageBytes int) (int, error) {

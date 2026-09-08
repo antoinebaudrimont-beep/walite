@@ -572,10 +572,10 @@ func assertMessagesEqual(t *testing.T, got, want model.Message) {
 	if got.ChatID().String() != want.ChatID().String() ||
 		got.MessageID().String() != want.MessageID().String() ||
 		!got.SentAt().Equal(want.SentAt()) || got.FromMe() != want.FromMe() ||
-		got.Text() != want.Text() || got.BodyRetained() != want.BodyRetained() {
-		t.Fatalf("message round trip got=(%q,%q,%v,%t,%q,%t) want=(%q,%q,%v,%t,%q,%t)",
-			got.ChatID().String(), got.MessageID().String(), got.SentAt(), got.FromMe(), got.Text(), got.BodyRetained(),
-			want.ChatID().String(), want.MessageID().String(), want.SentAt(), want.FromMe(), want.Text(), want.BodyRetained())
+		got.Text() != want.Text() || got.Media() != want.Media() || got.BodyRetained() != want.BodyRetained() {
+		t.Fatalf("message round trip got=(%q,%q,%v,%t,%q,%+v,%t) want=(%q,%q,%v,%t,%q,%+v,%t)",
+			got.ChatID().String(), got.MessageID().String(), got.SentAt(), got.FromMe(), got.Text(), got.Media(), got.BodyRetained(),
+			want.ChatID().String(), want.MessageID().String(), want.SentAt(), want.FromMe(), want.Text(), want.Media(), want.BodyRetained())
 	}
 }
 

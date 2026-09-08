@@ -343,6 +343,7 @@ func adaptLiveMessage(event model.LiveEvent) (tui.LiveMessage, bool) {
 	return tui.LiveMessage{
 		ChatID: chatID, MessageID: messageID, SentAt: message.SentAt(), FromMe: message.FromMe(),
 		Text: text, BodyRetained: message.BodyRetained(), UnreadCount: event.UnreadCount(), ActivityTime: event.ActivityTime(),
+		MediaKind: message.Media().Kind().String(), MediaName: message.Media().Name(),
 		ReplyToID: message.Quote().MessageID().String(), ReplyToText: message.Quote().Text(), ReplyToFromMe: message.Quote().FromMe(),
 		SenderID: message.SenderID().String(), IsGroup: message.IsGroup(),
 	}, true

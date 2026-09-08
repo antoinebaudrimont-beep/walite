@@ -16,7 +16,7 @@ const (
 
 	writeBatchRecordBytes = 32
 	maxWriteBatchBytes    = MaxWriteBatchMessages *
-		(4*MaxIdentifierBytes + MaxRetainedTextBytes + MaxQuoteTextBytes + writeBatchRecordBytes)
+		(4*MaxIdentifierBytes + MaxRetainedTextBytes + MaxQuoteTextBytes + MaxMediaNameBytes + MaxMediaMIMEBytes + writeBatchRecordBytes)
 )
 
 // ContactInput is the unvalidated input accepted by NewContact.
@@ -241,6 +241,7 @@ func (message Message) WithoutBody() Message {
 		withoutBody.messageID.value,
 		withoutBody.text,
 		withoutBody.quote,
+		withoutBody.media,
 		withoutBody.senderID,
 	)
 	if !ok {
@@ -464,6 +465,10 @@ func cloneNormalizedMessage(message Message) (Message, int, error) {
 	if err != nil {
 		return Message{}, 0, err
 	}
+	media, err := cloneMedia(message.media)
+	if err != nil {
+		return Message{}, 0, err
+	}
 	return Message{
 		chatID:        chatID,
 		messageID:     messageID,
@@ -471,6 +476,7 @@ func cloneNormalizedMessage(message Message) (Message, int, error) {
 		fromMe:        message.fromMe,
 		text:          strings.Clone(message.text),
 		quote:         quote,
+		media:         media,
 		senderID:      ContactID{value: strings.Clone(message.senderID.value)},
 		isGroup:       message.isGroup,
 		bodyTruncated: message.bodyTruncated,

@@ -96,6 +96,8 @@ func (application *liveApplicationService) InitialMessages(_ context.Context, ch
 func TestLiveEventAdapterPreservesFidelityAndBodylessState(t *testing.T) {
 	now := time.Date(2100, 8, 9, 10, 11, 12, 0, time.UTC)
 	message := mustSnapshotMessage(t, "adapter-chat", "adapter-message", now, true, "Café 東京 ❤️ 👍🏽 👨‍👩‍👧‍👦")
+	media, _ := model.NewMedia(model.MediaImage, "", "image/jpeg")
+	message = message.WithMedia(media)
 	event, err := model.NewLiveMessageCommitted(message, 7, now.Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
@@ -103,12 +105,13 @@ func TestLiveEventAdapterPreservesFidelityAndBodylessState(t *testing.T) {
 	presentation, ok := adaptLiveMessage(event)
 	if !ok || presentation.ChatID != "adapter-chat" || presentation.MessageID != "adapter-message" ||
 		presentation.Text != message.Text() || !presentation.FromMe || !presentation.BodyRetained || presentation.UnreadCount != 7 ||
+		presentation.MediaKind != "image" || presentation.MediaName != "" ||
 		!presentation.SentAt.Equal(now) || !presentation.ActivityTime.Equal(now.Add(time.Minute)) {
 		t.Fatalf("presentation=%+v open=%t", presentation, ok)
 	}
 	bodylessEvent, _ := model.NewLiveMessageCommitted(message.WithoutBody(), 7, now.Add(time.Minute))
 	bodyless, ok := adaptLiveMessage(bodylessEvent)
-	if !ok || bodyless.BodyRetained || bodyless.Text != "" {
+	if !ok || bodyless.BodyRetained || bodyless.Text != "" || bodyless.MediaKind != "image" {
 		t.Fatalf("bodyless=%+v open=%t", bodyless, ok)
 	}
 	if livePresentationCapacity != 64 || service.LiveEventCapacity != 64 {

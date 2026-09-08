@@ -37,6 +37,8 @@ type InitialMessage struct {
 	FromMe        bool
 	Text          string
 	BodyRetained  bool
+	MediaKind     string
+	MediaName     string
 	ReplyToID     string
 	ReplyToText   string
 	ReplyToFromMe bool
@@ -53,6 +55,8 @@ type LiveMessage struct {
 	FromMe        bool
 	Text          string
 	BodyRetained  bool
+	MediaKind     string
+	MediaName     string
 	ReplyToID     string
 	ReplyToText   string
 	ReplyToFromMe bool
@@ -157,7 +161,9 @@ func chatStateFromInitial(initial InitialState) (*chatState, error) {
 		}
 		seenMessages := make(map[string]struct{}, len(sourceChat.Messages))
 		for messageIndex, sourceMessage := range sourceChat.Messages {
-			if len(sourceMessage.SenderID) > 512 || !utf8.ValidString(sourceMessage.SenderID) {
+			if len(sourceMessage.SenderID) > 512 || !utf8.ValidString(sourceMessage.SenderID) ||
+				!utf8.ValidString(sourceMessage.MediaKind) || !utf8.ValidString(sourceMessage.MediaName) ||
+				!validMediaPresentation(sourceMessage.MediaKind, sourceMessage.MediaName) {
 				return nil, errors.New("tui initial state rejected")
 			}
 			if !validReplyMetadata(sourceMessage.ReplyToID, sourceMessage.ReplyToText, sourceMessage.ReplyToFromMe) {
@@ -179,6 +185,8 @@ func chatStateFromInitial(initial InitialState) (*chatState, error) {
 				sentAt:       sourceMessage.SentAt,
 				time:         localMessageTime(sourceMessage.SentAt),
 				text:         text,
+				mediaKind:    sourceMessage.MediaKind,
+				mediaName:    sourceMessage.MediaName,
 				fromMe:       sourceMessage.FromMe,
 				bodyRetained: sourceMessage.BodyRetained,
 				replyText:    sourceMessage.ReplyToText,

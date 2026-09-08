@@ -191,7 +191,7 @@ func (client *whatsmeowConnectionClient) handleEvent(raw any) {
 			// lookup or infer authorship from a contact name in the callback.
 			ownPN, ownLID = client.client.Store.GetJID(), client.client.Store.GetLID()
 		}
-		if event, recognized := adaptTextMessage(message, now().UTC(), ownPN, ownLID); recognized && client.realtime != nil {
+		if event, recognized := adaptMessage(message, now().UTC(), ownPN, ownLID); recognized && client.realtime != nil {
 			client.realtime.display.observeMessage(message.Info)
 			client.realtime.admitWithAlternate(event, messageChatAlternate(message.Info))
 		}
@@ -216,8 +216,8 @@ func (client *whatsmeowConnectionClient) handleEvent(raw any) {
 		client.textReady.Store(false)
 		event = protocolEvent{kind: protocolLoggedOut, cause: ErrConnectionFailed}
 	default:
-		// Receipt, media, typing, and all other protocol events are not
-		// part of the Milestone 4A realtime text boundary.
+		// Receipt, typing, and all other protocol events are outside the
+		// committed message boundary.
 		return
 	}
 	client.eventMu.Lock()
@@ -249,26 +249,16 @@ func messageChatAlternate(info types.MessageInfo) model.ChatID {
 	return model.ChatID{}
 }
 
-func adaptTextMessage(incoming *events.Message, receivedAt time.Time, ownIDs ...types.JID) (model.Event, bool) {
+func adaptMessage(incoming *events.Message, receivedAt time.Time, ownIDs ...types.JID) (model.Event, bool) {
 	if incoming == nil || incoming.Message == nil || incoming.SourceWebMsg != nil ||
 		incoming.IsEphemeral || incoming.IsViewOnce || incoming.IsViewOnceV2 ||
-		incoming.IsViewOnceV2Extension || incoming.IsDocumentWithCaption ||
-		incoming.IsLottieSticker || incoming.IsBotInvoke || incoming.IsEdit ||
+		incoming.IsViewOnceV2Extension || incoming.IsBotInvoke || incoming.IsEdit ||
 		incoming.NewsletterMeta != nil || incoming.Message.GetProtocolMessage() != nil {
 		return model.Event{}, false
 	}
 
-	text := ""
-	var quote model.TextQuote
-	if incoming.Message.Conversation != nil {
-		text = incoming.Message.GetConversation()
-	} else if extended := incoming.Message.GetExtendedTextMessage(); extended != nil && extended.Text != nil {
-		text = extended.GetText()
-		quote = incomingTextQuote(extended.GetContextInfo(), ownIDs)
-	} else {
-		return model.Event{}, false
-	}
-	if text == "" {
+	text, quote, media, recognized := adaptMessageContent(incoming.Message, ownIDs)
+	if !recognized {
 		return model.Event{}, false
 	}
 	senderID := ""
@@ -283,6 +273,7 @@ func adaptTextMessage(incoming *events.Message, receivedAt time.Time, ownIDs ...
 		FromMe:    incoming.Info.IsFromMe,
 		Text:      text,
 		Quote:     quote,
+		Media:     media,
 		SenderID:  senderID,
 		IsGroup:   group,
 	})
@@ -294,6 +285,58 @@ func adaptTextMessage(incoming *events.Message, receivedAt time.Time, ownIDs ...
 		return model.Event{}, false
 	}
 	return event, true
+}
+
+// adaptTextMessage is retained for the focused text/reply tests. Production
+// uses adaptMessage, whose boundary now also recognizes bounded media metadata.
+func adaptTextMessage(incoming *events.Message, receivedAt time.Time, ownIDs ...types.JID) (model.Event, bool) {
+	return adaptMessage(incoming, receivedAt, ownIDs...)
+}
+
+func adaptMessageContent(message *waE2E.Message, ownIDs []types.JID) (string, model.TextQuote, model.Media, bool) {
+	if message == nil {
+		return "", model.TextQuote{}, model.Media{}, false
+	}
+	if message.Conversation != nil {
+		text := message.GetConversation()
+		return text, model.TextQuote{}, model.Media{}, text != ""
+	}
+	if extended := message.GetExtendedTextMessage(); extended != nil && extended.Text != nil {
+		text := extended.GetText()
+		return text, incomingTextQuote(extended.GetContextInfo(), ownIDs), model.Media{}, text != ""
+	}
+	var kind model.MediaKind
+	var name, mimeType, caption string
+	var contextInfo *waE2E.ContextInfo
+	switch {
+	case message.GetImageMessage() != nil:
+		value := message.GetImageMessage()
+		kind, mimeType, caption, contextInfo = model.MediaImage, value.GetMimetype(), value.GetCaption(), value.GetContextInfo()
+	case message.GetVideoMessage() != nil:
+		value := message.GetVideoMessage()
+		kind, mimeType, caption, contextInfo = model.MediaVideo, value.GetMimetype(), value.GetCaption(), value.GetContextInfo()
+	case message.GetDocumentMessage() != nil:
+		value := message.GetDocumentMessage()
+		name = value.GetFileName()
+		if name == "" {
+			name = value.GetTitle()
+		}
+		kind, mimeType, caption, contextInfo = model.MediaDocument, value.GetMimetype(), value.GetCaption(), value.GetContextInfo()
+	case message.GetAudioMessage() != nil:
+		value := message.GetAudioMessage()
+		kind, mimeType, contextInfo = model.MediaAudio, value.GetMimetype(), value.GetContextInfo()
+	case message.GetStickerMessage() != nil:
+		value := message.GetStickerMessage()
+		kind, mimeType, contextInfo = model.MediaSticker, value.GetMimetype(), value.GetContextInfo()
+	default:
+		return "", model.TextQuote{}, model.Media{}, false
+	}
+	media, err := model.NewMedia(kind, name, mimeType)
+	if err != nil {
+		return "", model.TextQuote{}, model.Media{}, false
+	}
+	caption, _ = model.NormalizeText(caption)
+	return caption, incomingTextQuote(contextInfo, ownIDs), media, true
 }
 
 // incomingTextQuote maps only supported text excerpts into the existing bounded

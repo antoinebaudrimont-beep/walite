@@ -106,6 +106,7 @@ func scanSQLitePageMessage(scanner sqliteScanner) (model.Message, error) {
 		&values.bodyTruncated,
 		&values.retainedBody,
 		&values.senderID, &values.isGroup, &values.quoteID, &values.quoteText, &values.quoteFromMe,
+		&values.mediaKind, &values.mediaName, &values.mediaMIME,
 	); err != nil {
 		return model.Message{}, sqliteOperationError(err)
 	}
@@ -113,7 +114,15 @@ func scanSQLitePageMessage(scanner sqliteScanner) (model.Message, error) {
 }
 
 const sqliteMessageValueColumns = `sent_at, from_me, body, body_truncated, retained_body,
-sender_id, is_group, quote_id, quote_text, quote_from_me`
+sender_id, is_group, quote_id, quote_text, quote_from_me, kind,
+COALESCE((SELECT display_name FROM attachments AS media_attachment
+    WHERE media_attachment.chat_id = messages.chat_id
+      AND media_attachment.message_id = messages.message_id
+      AND media_attachment.attachment_id = 'primary'), ''),
+COALESCE((SELECT mime_type FROM attachments AS media_attachment
+    WHERE media_attachment.chat_id = messages.chat_id
+      AND media_attachment.message_id = messages.message_id
+      AND media_attachment.attachment_id = 'primary'), '')`
 
 const sqliteMessagePageColumns = `chat_id, message_id, ` + sqliteMessageValueColumns
 

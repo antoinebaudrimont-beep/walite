@@ -39,6 +39,7 @@ type MessageInput struct {
 	FromMe            bool
 	Text              string
 	Quote             TextQuote
+	Media             Media
 	SenderID          string
 	IsGroup           bool
 	// BodyTruncated preserves an existing normalization marker when restoring
@@ -54,6 +55,7 @@ type Message struct {
 	fromMe        bool
 	text          string
 	quote         TextQuote
+	media         Media
 	senderID      ContactID
 	isGroup       bool
 	bodyTruncated bool
@@ -78,7 +80,7 @@ func (message Message) WithChatID(id ChatID) (Message, error) {
 		return Message{}, err
 	}
 	message.chatID = ownedID
-	message.byteSize, _ = messageByteSize(id.String(), message.messageID.String(), message.text, message.quote, message.senderID)
+	message.byteSize, _ = messageByteSize(id.String(), message.messageID.String(), message.text, message.quote, message.media, message.senderID)
 	return message, nil
 }
 
@@ -104,13 +106,14 @@ func (message Message) Text() string {
 
 // Quote returns the bounded same-chat reply reference, or zero for plain text.
 func (message Message) Quote() TextQuote { return message.quote }
+func (message Message) Media() Media     { return message.media }
 
 func (message Message) SenderID() ContactID { return message.senderID }
 func (message Message) IsGroup() bool       { return message.isGroup }
 
 func (message Message) WithSender(sender ContactID, group bool) Message {
 	message.senderID, message.isGroup = sender, group
-	message.byteSize, _ = messageByteSize(message.chatID.value, message.messageID.value, message.text, message.quote, sender)
+	message.byteSize, _ = messageByteSize(message.chatID.value, message.messageID.value, message.text, message.quote, message.media, sender)
 	return message
 }
 
@@ -119,7 +122,18 @@ func (message Message) WithSender(sender ContactID, group bool) Message {
 // and batch constructors still validate and charge the complete message.
 func (message Message) WithQuote(quote TextQuote) Message {
 	message.quote = quote
-	message.byteSize, _ = messageByteSize(message.chatID.value, message.messageID.value, message.text, quote, message.senderID)
+	message.byteSize, _ = messageByteSize(message.chatID.value, message.messageID.value, message.text, quote, message.media, message.senderID)
+	return message
+}
+
+// WithMedia returns a validated immutable copy with bounded media metadata.
+func (message Message) WithMedia(media Media) Message {
+	owned, err := cloneMedia(media)
+	if err != nil {
+		return message
+	}
+	message.media = owned
+	message.byteSize, _ = messageByteSize(message.chatID.value, message.messageID.value, message.text, message.quote, owned, message.senderID)
 	return message
 }
 

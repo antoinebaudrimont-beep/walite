@@ -29,6 +29,7 @@ These screenshots were AI-edited for privacy using demo names and messages. Text
 - Up to 10,000 lightweight chat summaries and bounded recent message history
 - Cached startup without waiting for a complete HistorySync
 - Incoming and outgoing text messages
+- Image, video, document, audio, and sticker messages shown as lightweight placeholders
 - One-to-one quoted replies and incoming quote rendering
 - Contact, group, and group-participant names when authoritative local metadata is available
 - Readable phone-number fallbacks plus PN/LID identity handling and deduplication
@@ -138,7 +139,7 @@ The UI and service use transport-neutral application data. WhatsApp-specific typ
 
 ## Current limitations
 
-- walite is text-focused; media is not yet displayed or downloaded.
+- Media messages are visible as placeholders; media download and preview are not yet implemented.
 - Reactions, typing indicators, and presence are not implemented.
 - Quoted-reply sending is supported for one-to-one chats, not groups.
 - On-demand paging for history older than the bounded recent window is not implemented.
@@ -152,7 +153,6 @@ The UI and service use transport-neutral application data. WhatsApp-specific typ
 
 ### v0.3
 
-- Media placeholders in conversation history
 - Image download and decryption
 - External high-resolution image previews using `nsxiv`
 - On-demand older-history paging

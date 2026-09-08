@@ -96,6 +96,7 @@ func (state *chatState) admitLiveChat(event LiveMessage) (int, bool) {
 func validLiveMessage(event LiveMessage) bool {
 	return event.ChatID != "" && event.MessageID != "" &&
 		utf8.ValidString(event.ChatID) && utf8.ValidString(event.MessageID) && utf8.ValidString(event.Text) &&
+		utf8.ValidString(event.MediaKind) && utf8.ValidString(event.MediaName) && validMediaPresentation(event.MediaKind, event.MediaName) &&
 		validReplyMetadata(event.ReplyToID, event.ReplyToText, event.ReplyToFromMe) &&
 		len(event.SenderID) <= 512 && utf8.ValidString(event.SenderID) &&
 		!event.SentAt.IsZero() && !event.ActivityTime.IsZero() && !event.ActivityTime.Before(event.SentAt)
@@ -128,6 +129,8 @@ func (state *chatState) applyLiveMessage(chatIndex int, event LiveMessage) liveM
 		sentAt:       event.SentAt,
 		time:         localMessageTime(event.SentAt),
 		text:         text,
+		mediaKind:    event.MediaKind,
+		mediaName:    event.MediaName,
 		fromMe:       event.FromMe,
 		bodyRetained: event.BodyRetained,
 		replyText:    event.ReplyToText,

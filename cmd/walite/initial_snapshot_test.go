@@ -57,6 +57,8 @@ func TestInitialSnapshotAdapterOrdersAndPreservesFidelity(t *testing.T) {
 	bodyless := mustSnapshotMessage(t, "a-group", "bodyless", equal.Add(-time.Minute), false, "must disappear").WithoutBody()
 	older := mustSnapshotMessage(t, "a-group", "m-a", equal.Add(-time.Minute), false, "ASCII")
 	equalID := mustSnapshotMessage(t, "a-group", "m-b", equal.Add(-time.Minute), true, "👨‍👩‍👧‍👦")
+	document, _ := model.NewMedia(model.MediaDocument, "résumé 日本語.pdf", "application/pdf")
+	equalID = equalID.WithMedia(document)
 	stub := &snapshotStub{
 		chats: []model.Chat{chatB, chatNew, chatA},
 		messages: map[string][]model.Message{
@@ -94,7 +96,8 @@ func TestInitialSnapshotAdapterOrdersAndPreservesFidelity(t *testing.T) {
 	if loaded.Messages[0].BodyRetained || loaded.Messages[0].Text != "" {
 		t.Fatalf("bodyless message=%+v", loaded.Messages[0])
 	}
-	if !loaded.Messages[2].FromMe || loaded.Messages[2].Text != "👨‍👩‍👧‍👦" {
+	if !loaded.Messages[2].FromMe || loaded.Messages[2].Text != "👨‍👩‍👧‍👦" ||
+		loaded.Messages[2].MediaKind != "document" || loaded.Messages[2].MediaName != "résumé 日本語.pdf" {
 		t.Fatalf("direction/unicode lost=%+v", loaded.Messages[2])
 	}
 }

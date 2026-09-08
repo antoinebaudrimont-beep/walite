@@ -46,7 +46,7 @@ func TestHistorySyncConversationMetadataAndNewestFiftyTextMessages(t *testing.T)
 		)})
 	}
 	conversation.Messages = append(conversation.Messages, &waHistorySync.HistorySyncMsg{Message: bootstrapWebMessage(
-		"family@g.us", "unsupported", now, false, "22222@s.whatsapp.net", &waE2E.Message{ImageMessage: &waE2E.ImageMessage{}},
+		"family@g.us", "unsupported", now, false, "22222@s.whatsapp.net", &waE2E.Message{ContactMessage: &waE2E.ContactMessage{}},
 	)})
 	record, ok := client.adaptBootstrapConversation(model.BootstrapInitial, conversation, now)
 	if !ok || record.Len() != model.MaxBootstrapMessagesPerChat {
