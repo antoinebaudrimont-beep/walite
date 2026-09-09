@@ -76,6 +76,7 @@ func run(ctx context.Context, screen tcell.Screen) error {
 			var textSender wa.TextSender
 			var readReceiptSender wa.ReadReceiptSender
 			var mediaDownloader wa.MediaDownloader
+			var historyRequester wa.HistoryRequester
 			return runAuthenticatedApplication(ctx, screen, authenticatedApplicationDependencies{
 				configuration: configurationStore,
 				newConnection: func(ctx context.Context) (applicationConnection, error) {
@@ -91,6 +92,7 @@ func run(ctx context.Context, screen tcell.Screen) error {
 					textSender = connection.TextSender()
 					readReceiptSender = connection.ReadReceiptSender()
 					mediaDownloader = connection.MediaDownloader()
+					historyRequester = connection.HistoryRequester()
 					if realtimeSource == nil {
 						_ = connection.Close()
 						return nil, errors.New("WhatsApp realtime source unavailable")
@@ -111,7 +113,7 @@ func run(ctx context.Context, screen tcell.Screen) error {
 					return connection, nil
 				},
 				newService: func() (applicationService, error) {
-					return newConnectedApplicationServiceWithMedia(realtimeSource, textSender, readReceiptSender, mediaDownloader, cache)
+					return newConnectedApplicationServiceWithCapabilities(realtimeSource, textSender, readReceiptSender, mediaDownloader, historyRequester, cache)
 				},
 				runConnection: tui.RunConnectionInitialized,
 				runTUI:        tui.RunInitialized,
@@ -237,6 +239,8 @@ func runStartedApplication(
 	defer sender.stop()
 	readReceipts := newReadReceiptWorker(runCtx, serviceCore)
 	defer readReceipts.stop()
+	olderHistory := newOlderHistoryWorker(runCtx, serviceCore)
+	defer olderHistory.stop()
 	var displayUpdates chan tui.DisplayMetadata
 	if display, ok := serviceCore.(displayApplication); ok {
 		displayUpdates = make(chan tui.DisplayMetadata, 1)
@@ -251,6 +255,7 @@ func runStartedApplication(
 			Send: sender.admit, SendResults: sender.results,
 			DisplayUpdates: displayUpdates,
 			SummaryUpdates: loader.summaries, ChatLoads: loader.chats, LoadChat: loader.requestChat,
+			OlderHistory: olderHistory.admit, OlderResults: olderHistory.results,
 			PersistLocalRead: loader.requestLocalRead,
 			SendReadReceipt:  readReceipts.admit,
 			Media:            media.admit, MediaResults: media.results, CloseMedia: media.close,

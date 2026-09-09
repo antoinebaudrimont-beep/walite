@@ -16,9 +16,13 @@ func applyLiveMessage(model *viewModel, event LiveMessage) bool {
 	}
 	chatIndex, ok := model.chats.chatIndexByID(event.ChatID)
 	if !ok {
+		wasEmpty := model.chats.chatCount == 0
 		chatIndex, ok = model.chats.admitLiveChat(event)
 		if !ok {
 			return false
+		}
+		if wasEmpty {
+			model.selectionEpoch++
 		}
 	}
 	selectedChat, selected := model.chats.selectedChat()
@@ -27,6 +31,14 @@ func applyLiveMessage(model *viewModel, event LiveMessage) bool {
 		selectedID = selectedChat.id
 	}
 	selectedEvent := selectedID == event.ChatID
+	if selectedEvent {
+		chat, _ := model.chats.chatAt(chatIndex)
+		if chat.messages == nil {
+			chat.messages = make([]messageView, SelectedChatHistoryCapacity)
+		} else {
+			model.chats.expandMessageBuffer(chatIndex)
+		}
+	}
 	readingOlder := selectedEvent && model.chatView.scrollOffset > 0
 	oldVisibleEnd := 0
 	if readingOlder {

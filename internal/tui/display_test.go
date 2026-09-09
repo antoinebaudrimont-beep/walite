@@ -271,7 +271,7 @@ func TestDisplayUpdatePreservesInteractionAndIdentity(t *testing.T) {
 	if !applyDisplayMetadata(&view, DisplayMetadata{ID: "a", Name: "Jean 👋", Quality: 4}) {
 		t.Fatal("no visible update")
 	}
-	if view.chats.chats[0].id != "a" || view.chats.selectedIndex() != chatBefore.selected || view.chats.chats[0].unreadCount != chatBefore.chats[0].unreadCount || view.chats.chats[0].activityTime != chatBefore.chats[0].activityTime || view.chats.chats[0].messages != chatBefore.chats[0].messages {
+	if view.chats.chats[0].id != "a" || view.chats.selectedIndex() != chatBefore.selected || view.chats.chats[0].unreadCount != chatBefore.chats[0].unreadCount || view.chats.chats[0].activityTime != chatBefore.chats[0].activityTime || !reflect.DeepEqual(view.chats.chats[0].messages, chatBefore.chats[0].messages) {
 		t.Fatal("metadata changed chat/message state")
 	}
 	before.chats = view.chats

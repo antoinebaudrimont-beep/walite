@@ -7,10 +7,12 @@ import (
 )
 
 const (
-	maxChats          = ChatWorkingSetCapacity
-	maxMessages       = MaxInitialMessagesPerChat
-	maxReplyIDBytes   = 512
-	maxReplyTextBytes = 1024
+	maxChats    = ChatWorkingSetCapacity
+	maxMessages = MaxInitialMessagesPerChat
+	// SelectedChatHistoryCapacity bounds the only expanded in-memory chat.
+	SelectedChatHistoryCapacity = 256
+	maxReplyIDBytes             = 512
+	maxReplyTextBytes           = 1024
 )
 
 type messageID string
@@ -54,7 +56,7 @@ type chatView struct {
 	title        string
 	titleQuality uint8
 	isGroup      bool
-	messages     *[maxMessages]messageView
+	messages     []messageView
 	messageCount int
 	unreadCount  uint32
 	activityTime time.Time
@@ -113,7 +115,9 @@ func (state *chatState) moveSelection(delta int) bool {
 	if next < 0 || next >= state.chatCount {
 		return false
 	}
+	state.compactMessageBuffer(state.selected)
 	state.selected = next
+	state.expandMessageBuffer(next)
 	state.chats[next].revision++
 	state.chats[next].unreadCount = 0
 	return true
@@ -143,7 +147,11 @@ func (state *chatState) appendMessage(chatIndex int, message messageView) bool {
 	if message.id == "" {
 		message.id = state.allocateMessageID()
 	}
-	chat.ensureMessages()
+	if chat.messages == nil && chatIndex == state.selectedIndex() {
+		chat.messages = make([]messageView, SelectedChatHistoryCapacity)
+	} else {
+		chat.ensureMessages()
+	}
 	if chat.messageCount < len(chat.messages) {
 		chat.messages[chat.messageCount] = message
 		chat.messageCount++
@@ -156,8 +164,38 @@ func (state *chatState) appendMessage(chatIndex int, message messageView) bool {
 
 func (chat *chatView) ensureMessages() {
 	if chat != nil && chat.messages == nil {
-		chat.messages = new([maxMessages]messageView)
+		chat.messages = make([]messageView, maxMessages)
 	}
+}
+
+func (state *chatState) expandMessageBuffer(chatIndex int) {
+	chat, ok := state.chatAt(chatIndex)
+	if !ok || len(chat.messages) == SelectedChatHistoryCapacity || chat.messageCount == 0 && chat.messages == nil {
+		return
+	}
+	expanded := make([]messageView, SelectedChatHistoryCapacity)
+	if chat.messages != nil {
+		copy(expanded, chat.messages[:chat.messageCount])
+	}
+	chat.messages = expanded
+}
+
+func (state *chatState) compactMessageBuffer(chatIndex int) {
+	chat, ok := state.chatAt(chatIndex)
+	if !ok || len(chat.messages) <= maxMessages {
+		return
+	}
+	if chat.messageCount == 0 {
+		chat.messages = nil
+		return
+	}
+	start := 0
+	if chat.messageCount > maxMessages {
+		start = chat.messageCount - maxMessages
+	}
+	compact := make([]messageView, maxMessages)
+	chat.messageCount = copy(compact, chat.messages[start:chat.messageCount])
+	chat.messages = compact
 }
 
 func (state *chatState) findMessageByID(chatIndex int, id messageID) (messageView, bool) {

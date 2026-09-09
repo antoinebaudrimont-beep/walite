@@ -24,17 +24,23 @@ type connectedApplicationService struct {
 	sender       wa.TextSender
 	readReceipts wa.ReadReceiptSender
 	media        wa.MediaDownloader
+	history      wa.HistoryRequester
 	display      displaySource
 	source       service.EventSource
 	policy       service.RetentionPolicy
 	cacheUpdates chan struct{}
+	onDemandDone chan struct{}
 }
 
 func newConnectedApplicationService(source service.EventSource, sender wa.TextSender, readReceipts wa.ReadReceiptSender, cache *store.SQLiteStore) (applicationService, error) {
-	return newConnectedApplicationServiceWithMedia(source, sender, readReceipts, nil, cache)
+	return newConnectedApplicationServiceWithCapabilities(source, sender, readReceipts, nil, nil, cache)
 }
 
 func newConnectedApplicationServiceWithMedia(source service.EventSource, sender wa.TextSender, readReceipts wa.ReadReceiptSender, media wa.MediaDownloader, cache *store.SQLiteStore) (applicationService, error) {
+	return newConnectedApplicationServiceWithCapabilities(source, sender, readReceipts, media, nil, cache)
+}
+
+func newConnectedApplicationServiceWithCapabilities(source service.EventSource, sender wa.TextSender, readReceipts wa.ReadReceiptSender, media wa.MediaDownloader, history wa.HistoryRequester, cache *store.SQLiteStore) (applicationService, error) {
 	if source == nil || sender == nil || readReceipts == nil || cache == nil {
 		return nil, errors.New("connected event source rejected")
 	}
@@ -64,7 +70,56 @@ func newConnectedApplicationServiceWithMedia(source service.EventSource, sender 
 		return nil, err
 	}
 	display, _ := source.(displaySource)
-	return &connectedApplicationService{core: core, store: cache, sender: sender, readReceipts: readReceipts, media: media, display: display, source: source, policy: policy, cacheUpdates: make(chan struct{}, 1)}, nil
+	return &connectedApplicationService{
+		core: core, store: cache, sender: sender, readReceipts: readReceipts, media: media, history: history,
+		display: display, source: source, policy: policy,
+		cacheUpdates: make(chan struct{}, 1), onDemandDone: make(chan struct{}, 1),
+	}, nil
+}
+
+// LoadOlderMessages first consumes any already-cached rows before asking the
+// linked primary device for exactly one bounded ON_DEMAND page. Completion is
+// signaled only after the existing bootstrap path has committed that delivery.
+func (application *connectedApplicationService) LoadOlderMessages(
+	ctx context.Context,
+	chatID model.ChatID,
+	oldestID model.MessageID,
+	oldestAt time.Time,
+	oldestFromMe bool,
+	count int,
+) ([]model.Message, error) {
+	if application == nil || application.store == nil || ctx == nil || count < 1 || count > wa.MaxOlderHistoryMessages {
+		return nil, wa.ErrHistoryRequestRejected
+	}
+	cursor, err := model.NewCursor(oldestAt, oldestID)
+	if err != nil {
+		return nil, wa.ErrHistoryRequestRejected
+	}
+	page, _, err := application.store.Page(ctx, chatID, cursor, count)
+	if err != nil || len(page) > 0 {
+		return page, err
+	}
+	if application.history == nil {
+		return nil, wa.ErrHistoryRequestUnavailable
+	}
+	for {
+		select {
+		case <-application.onDemandDone:
+			continue
+		default:
+		}
+		break
+	}
+	if err := application.history.RequestOlderHistory(ctx, chatID, oldestID, oldestAt, oldestFromMe, count); err != nil {
+		return nil, err
+	}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-application.onDemandDone:
+	}
+	page, _, err = application.store.Page(ctx, chatID, cursor, count)
+	return page, err
 }
 
 func (application *connectedApplicationService) MediaMessage(ctx context.Context, chatID model.ChatID, messageID model.MessageID) (model.Message, error) {
@@ -173,6 +228,16 @@ func (application *connectedApplicationService) runBootstrap(ctx context.Context
 				select {
 				case application.cacheUpdates <- struct{}{}:
 				default:
+				}
+				if record.Category() == model.BootstrapOnDemand {
+					select {
+					case <-application.onDemandDone:
+					default:
+					}
+					select {
+					case application.onDemandDone <- struct{}{}:
+					default:
+					}
 				}
 				continue
 			}

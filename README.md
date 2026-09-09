@@ -28,6 +28,7 @@ These screenshots were AI-edited for privacy using demo names and messages. Text
 - Persistent pure-Go SQLite cache with no CGO requirement
 - Up to 10,000 lightweight chat summaries and bounded recent message history
 - Cached startup without waiting for a complete HistorySync
+- Explicit bounded older-history paging
 - Incoming and outgoing text messages
 - Image, video, document, audio, and sticker messages shown as lightweight placeholders
 - Explicit media download/save, plus inline image/GIF and WebP sticker preview through optional `ueberzugpp` X11 overlays
@@ -74,6 +75,7 @@ The pairing window closes after a successful link. Later launches reuse the pers
 | `↑` / `↓` | Scroll message history |
 | `PageUp` / `PageDown` or `Ctrl-U` / `Ctrl-D` | Scroll history by a page |
 | `Home` / `End` | Jump to the oldest / newest loaded message |
+| `O` | Load one bounded page before the oldest loaded message |
 | `Enter` | Start composing |
 | `Ctrl-R` | Select a message to reply to |
 | `P` | Preview the newest visible supported media placeholder |
@@ -115,7 +117,7 @@ Settings are stored in `$XDG_CONFIG_HOME/walite/config.json`—normally `~/.conf
 
 HistorySync seeds a broad conversation list during initial setup. Chat summaries and bounded message pages are stored in SQLite, allowing later launches to display cached conversations immediately.
 
-The cache keeps at most 10,000 chat summaries. Selected or loaded chats use a fixed 32-message presentation window, so browsing the chat list does not allocate a full history buffer for every conversation. Explicitly downloaded decrypted media uses a separate private cache under `$XDG_CACHE_HOME/walite/media` (normally `~/.cache/walite/media`), bounded to 256 files and 256 MiB. Durable saves under `~/Downloads/walite` are never evicted with that cache.
+The cache keeps at most 10,000 chat summaries. Background chats retain at most 32 in-memory messages; only the selected chat expands to a fixed 256-message browsing buffer, so the summary list never becomes a 10,000 × 256 allocation. At the oldest loaded boundary, press `O` to prepend one page of up to 50 older messages without discarding the recent conversation. The request is explicit and never chains automatically; imported messages are deduplicated and remain in SQLite across restarts. When the selected buffer reaches 256, new committed messages evict the oldest retained rows, while loading still-older rows never evicts newer context. Explicitly downloaded decrypted media uses a separate private cache under `$XDG_CACHE_HOME/walite/media` (normally `~/.cache/walite/media`), bounded to 256 files and 256 MiB. Durable saves under `~/Downloads/walite` are never evicted with that cache.
 
 ## Performance
 
@@ -148,7 +150,6 @@ The UI and service use transport-neutral application data. WhatsApp-specific typ
 - Expired WhatsApp media references are reported as unavailable; media-retry refresh is not implemented yet.
 - Reactions, typing indicators, and presence are not implemented.
 - Quoted-reply sending is supported for one-to-one chats, not groups.
-- On-demand paging for history older than the bounded recent window is not implemented.
 - Status and broadcast handling remains limited.
 - Some identities remain opaque when WhatsApp provides no usable authoritative local metadata.
 - Linux/amd64 is the validated platform.
@@ -162,7 +163,7 @@ The UI and service use transport-neutral application data. WhatsApp-specific typ
 - Image/GIF and sticker download, save, and inline preview through `ueberzugpp` (v0.3B1)
 - Video/audio preview through `mpv` and PDF preview through `zathura` (v0.3B2)
 - Expired-media refresh
-- On-demand older-history paging
+- On-demand older-history paging (v0.3C)
 
 Planned image flow:
 

@@ -953,11 +953,14 @@ Status: ready for automated review and manual direct/group receipt validation.
 Do not mark complete until the linked-account manual test confirms the remote
 sender observes the read transition.
 
-Walite sends a remote read receipt only when `j`/`k` actually changes selection
-into a chat whose local unread count is nonzero. Receipt work is not triggered
-by realtime arrival, HistorySync, startup with cached unread, chat-list display,
-summary/name refresh, or automatic first-chat selection. The existing local
-behavior remains immediate and authoritative for walite: selection clears the
+Walite sends a remote read receipt when `j`/`k` actually changes selection into
+a chat whose local unread count is nonzero. An explicit reply or compose/send
+interaction also acknowledges a newly unread chat that was already selected;
+this covers arrival while the user remains in the conversation without guessing
+desktop focus. Receipt work is not triggered by realtime arrival, HistorySync,
+startup with cached unread, chat-list display, summary/name refresh, or automatic
+first-chat selection. The existing local behavior remains immediate and
+authoritative for walite: either explicit interaction clears the
 badge and asynchronously persists unread zero to SQLite independently of the
 remote operation. A receipt admission/network failure neither restores that
 badge nor retries forever.
@@ -978,8 +981,8 @@ Group receipts are supported for cached messages whose existing SenderID is
 present. Mixed-participant group frontiers are split into deterministic calls;
 missing participant identity is never guessed.
 
-Only the newest known unread incoming identities in the selected chat's current
-**32-message** cache page are acknowledged. Interleaved `FromMe` messages are
+Only the newest **32** known unread incoming identities in the selected chat's
+bounded current working set are acknowledged. Interleaved `FromMe` messages are
 excluded, message bodies are irrelevant, and no older history is loaded solely
 for a receipt. If the selected page has not arrived, one transient selection
 intent waits for that already-requested bounded page. This UI intent and all
@@ -1025,3 +1028,59 @@ another relationship still returns the same controlled conflict. Regression
 coverage constructs the production capabilities and worker, seeds both cached
 forms, then proves the first paired live event resolves without stopping while
 preserving stable message identity and Unicode.
+
+## walite v0.3C — Minimal older-history paging
+
+Status: ready for automated review and linked-account manual validation.
+
+At the oldest loaded boundary, `O` admits exactly one request for up to **50**
+messages immediately before the selected chat's stable `(ChatID, MessageID,
+timestamp, FromMe)` frontier. `PageUp` remains local scrolling and never starts
+network work. Pressing `O` away from the oldest loaded boundary produces a
+concise status instead of changing the viewport.
+
+The pinned whatsmeow request is `Client.BuildHistorySyncRequest(*types.MessageInfo,
+count)`, sent through `Client.SendPeerMessage`. Its response arrives through the
+existing `events.HistorySync` path with category `ON_DEMAND`. The request names
+one direct or group chat JID and the oldest known message ID, timestamp and
+direction; the upstream source recommends a count of 50.
+
+One application-owned worker permits one in-flight request and one coalesced
+pending request. It has capacity-one wake/result mailboxes and creates no
+goroutine per request. Results echo the selection epoch and full frontier, so a
+completion after an A→B selection change persists safely but cannot redraw B.
+Disconnected admission and transport failure are controlled, do not retry, and
+do not block the terminal loop.
+
+The application queries SQLite first. If a previously imported continuation is
+already present it is presented without another peer request. Otherwise the
+worker waits for the matching ON_DEMAND completion only after the existing
+bootstrap consumer has committed it. That path retains the existing metadata,
+deduplication, retention and cache-budget behavior; equal/older historical chat
+activity cannot resurrect or increment cached unread state.
+
+SQLite may retain the full bounded 50-row import. The selected chat alone owns a
+fixed **256-message** browsing buffer; background chats keep at most their newest
+**32** messages and metadata-only chats allocate no message buffer. Each
+completion prepends the nearest older rows while preserving the visible anchor,
+existing recent rows, draft/reply state and any live incoming or committed
+outgoing messages that arrived in flight. Duplicate MessageIDs are ignored and
+ordering remains timestamp then MessageID. At capacity, live/new committed rows
+evict the oldest retained row; loading older rows cannot evict newer context.
+Deselecting a chat compacts it to its newest 32 rows. Thus the design adds one
+256-row backing buffer (roughly tens of KiB), not 10,000 such buffers.
+
+Older-result freshness uses a transient selection epoch plus the exact oldest
+frontier. Live activity in the same selected chat does not invalidate an
+in-flight page, while A→B→A still rejects the stale completion. `End` returns
+directly to the newest retained messages. Date separators, media placeholders,
+reply metadata and sender identities use the same render path as the recent
+page. No automatic chaining or persistent end-of-history marker is added; an
+empty committed continuation reports `No older messages available`.
+
+For v0.3C acceptance, an unread message arriving in the already-selected chat is
+not marked read merely because walite is running. The first explicit `Ctrl-R`
+reply action or compose/send interaction clears the local unread state through
+SQLite and admits the existing bounded remote receipt frontier. Repeated typing
+or reply actions do not duplicate it. With read receipts disabled, the local
+clear is still persisted and no remote `MarkRead` request is admitted.

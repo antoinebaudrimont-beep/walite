@@ -162,7 +162,7 @@ func TestChatSummaryRefreshPreservesSelectedInteractionState(t *testing.T) {
 		t.Fatal("summary refresh rejected")
 	}
 	selected, ok := model.chats.selectedChat()
-	if !ok || selected.id != "a" || selected.title != "A renamed" || selected.unreadCount != 0 ||
+	if !ok || selected.id != "a" || selected.title != "A renamed" || selected.unreadCount != 9 || model.localReadRequest.ChatID != "" ||
 		model.mode != modeCompose || model.composer != wantComposer || model.replyTarget != wantTarget ||
 		model.replySelect != wantSelection || model.emojiPicker != wantPicker || model.settingsOpen != wantSettings ||
 		model.chatView != wantView || selected.messages == nil || selected.messages[0].id != "target" {

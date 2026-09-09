@@ -87,7 +87,7 @@ func TestComposeFooterIncludesSettingsShortcut(t *testing.T) {
 
 func TestNavigationFooterIncludesSettingsShortcut(t *testing.T) {
 	model := defaultDemoView()
-	want := "↑/↓ scroll  j/k chats  P preview  S save  Enter compose  Ctrl-P settings  Esc quit"
+	want := "↑/↓ scroll  j/k chats  O older  P preview  S save  Enter compose  Ctrl-P settings  Esc quit"
 	if got := navigationFooter(&model, false); got != want {
 		t.Fatalf("navigation footer=%q want=%q", got, want)
 	}
@@ -95,7 +95,7 @@ func TestNavigationFooterIncludesSettingsShortcut(t *testing.T) {
 
 func TestPolishedFooterModesAndNarrowFallbacks(t *testing.T) {
 	model := defaultDemoView()
-	if got := navigationFooter(&model, false); got != "↑/↓ scroll  j/k chats  P preview  S save  Enter compose  Ctrl-P settings  Esc quit" {
+	if got := navigationFooter(&model, false); got != "↑/↓ scroll  j/k chats  O older  P preview  S save  Enter compose  Ctrl-P settings  Esc quit" {
 		t.Fatalf("navigation footer=%q", got)
 	}
 	model.mode = modeCompose

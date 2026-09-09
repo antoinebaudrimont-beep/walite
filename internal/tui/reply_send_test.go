@@ -27,13 +27,13 @@ func TestReplySendCapturesRetainedTargetAndClearsOnlyOnSuccess(t *testing.T) {
 		if got.ReplyToID != string(target.id) || got.ReplyToText != target.text || got.ReplyToFromMe != fromMe {
 			t.Fatalf("request=%+v", got)
 		}
-		if !applySendResult(&model, SendResult{Failed: true, Uncertain: true}) || model.composer != beforeDraft || model.replyTarget != beforeTarget || model.chatView.scrollOffset != 2 || *model.chats != beforeChats {
+		if !applySendResult(&model, SendResult{Failed: true, Uncertain: true}) || model.composer != beforeDraft || model.replyTarget != beforeTarget || model.chatView.scrollOffset != 2 || !chatStatesEqual(*model.chats, beforeChats) {
 			t.Fatal("remote failure changed protected draft/target/viewport/data")
 		}
 		// A separate successful completion exercises the existing success path.
 		model.sendUncertain = false
 		model.sendPending = true
-		if !applySendResult(&model, SendResult{}) || model.replyTarget.valid || model.composer.length != 0 || model.chatView.scrollOffset != 0 || *model.chats != beforeChats {
+		if !applySendResult(&model, SendResult{}) || model.replyTarget.valid || model.composer.length != 0 || model.chatView.scrollOffset != 0 || !chatStatesEqual(*model.chats, beforeChats) {
 			t.Fatal("success did not clear quote or appended optimistic message")
 		}
 	}

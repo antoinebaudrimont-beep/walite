@@ -169,3 +169,107 @@ func TestNewUnreadAfterClearCreatesOnlyNextSelectionReceipt(t *testing.T) {
 		t.Fatal("duplicate live event duplicated receipt")
 	}
 }
+
+func TestSelectedUnreadReplyInteractionQueuesOneReadWithoutSelectionChange(t *testing.T) {
+	model := readReceiptView(t)
+	base := time.Date(2026, 9, 1, 14, 0, 0, 0, time.UTC)
+	event := LiveMessage{ChatID: "read@lid", MessageID: "selected-incoming", SentAt: base, Text: "reply to me 👋", BodyRetained: true, UnreadCount: 1, ActivityTime: base}
+	if !applyLiveMessage(&model, event) || model.chats.selectedIndex() != 0 {
+		t.Fatal("selected live event was not applied in place")
+	}
+	ctrlR := tcell.NewEventKey(tcell.KeyCtrlR, 0, tcell.ModCtrl)
+	if changed, exit := handleKey(&model, ctrlR, 100, 30); !changed || exit {
+		t.Fatalf("Ctrl-R changed=%t exit=%t", changed, exit)
+	}
+	if model.chats.chats[0].unreadCount != 0 || model.localReadRequest.ChatID != "read@lid" || model.readRequest.ChatID != "read@lid" {
+		t.Fatalf("unread=%d local=%+v remote=%+v", model.chats.chats[0].unreadCount, model.localReadRequest, model.readRequest)
+	}
+	calls := 0
+	requestPendingReadReceipt(&model, func(request ReadReceiptRequest) bool {
+		calls++
+		if request.ChatID != "read@lid" || len(request.Messages) != 1 || request.Messages[0].MessageID != "selected-incoming" {
+			t.Fatalf("request=%+v", request)
+		}
+		return true
+	})
+	handleKey(&model, tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone), 100, 30)
+	requestPendingReadReceipt(&model, func(ReadReceiptRequest) bool { calls++; return true })
+	if calls != 1 {
+		t.Fatalf("repeated reply interaction calls=%d", calls)
+	}
+}
+
+func TestSelectedUnreadComposeAndSendInteractionsMarkReadOnce(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		active bool
+	}{
+		{name: "begin compose"},
+		{name: "send from active compose", active: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			model := readReceiptView(t)
+			if test.active {
+				model.mode = modeCompose
+				model.composer.insertText("outgoing")
+				model.send = func(SendRequest) error { return nil }
+			}
+			base := time.Date(2026, 9, 1, 15, 0, 0, 0, time.UTC)
+			applyLiveMessage(&model, LiveMessage{ChatID: "read@lid", MessageID: "incoming", SentAt: base, Text: "body", BodyRetained: true, UnreadCount: 1, ActivityTime: base})
+			if changed, _ := handleKey(&model, tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone), 100, 30); !changed {
+				t.Fatal("compose/send interaction did not change state")
+			}
+			calls := 0
+			requestPendingReadReceipt(&model, func(request ReadReceiptRequest) bool { calls++; return true })
+			if calls != 1 || model.chats.chats[0].unreadCount != 0 || model.localReadRequest.ChatID != "read@lid" {
+				t.Fatalf("calls=%d unread=%d local=%+v", calls, model.chats.chats[0].unreadCount, model.localReadRequest)
+			}
+			if !test.active {
+				handleKey(&model, tcell.NewEventKey(tcell.KeyRune, 'x', tcell.ModNone), 100, 30)
+				requestPendingReadReceipt(&model, func(ReadReceiptRequest) bool { calls++; return true })
+				if calls != 1 {
+					t.Fatalf("typing duplicated receipt: %d", calls)
+				}
+			}
+		})
+	}
+}
+
+func TestSelectedUnreadInteractionWithReceiptsOffClearsOnlyLocal(t *testing.T) {
+	model := readReceiptView(t)
+	model.options.SendReadReceipts = false
+	base := time.Date(2026, 9, 1, 16, 0, 0, 0, time.UTC)
+	applyLiveMessage(&model, LiveMessage{ChatID: "read@lid", MessageID: "incoming", SentAt: base, Text: "body", BodyRetained: true, UnreadCount: 1, ActivityTime: base})
+	handleKey(&model, tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone), 100, 30)
+	calls := 0
+	requestPendingReadReceipt(&model, func(ReadReceiptRequest) bool { calls++; return true })
+	if model.chats.chats[0].unreadCount != 0 || model.localReadRequest.ChatID != "read@lid" || model.readRequest.ChatID != "" || calls != 0 {
+		t.Fatalf("unread=%d local=%+v remote=%+v calls=%d", model.chats.chats[0].unreadCount, model.localReadRequest, model.readRequest, calls)
+	}
+}
+
+func TestSelectedFromMeOnlyUnreadCreatesNoRemoteReceipt(t *testing.T) {
+	model := readReceiptView(t)
+	base := time.Date(2026, 9, 1, 17, 0, 0, 0, time.UTC)
+	applyLiveMessage(&model, LiveMessage{ChatID: "read@lid", MessageID: "mine", SentAt: base, FromMe: true, Text: "mine", BodyRetained: true, UnreadCount: 1, ActivityTime: base})
+	handleKey(&model, tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone), 100, 30)
+	if model.readRequest.ChatID != "" {
+		t.Fatalf("FromMe message created remote receipt: %+v", model.readRequest)
+	}
+}
+
+func TestSelectedChatNewUnreadAfterActiveClearCanBeReadAgain(t *testing.T) {
+	model := readReceiptView(t)
+	base := time.Date(2026, 9, 1, 18, 0, 0, 0, time.UTC)
+	for sequence := 1; sequence <= 2; sequence++ {
+		at := base.Add(time.Duration(sequence) * time.Minute)
+		applyLiveMessage(&model, LiveMessage{ChatID: "read@lid", MessageID: "incoming-" + string(rune('0'+sequence)), SentAt: at, Text: "body", BodyRetained: true, UnreadCount: 1, ActivityTime: at})
+		model.mode = modeCompose
+		handleKey(&model, tcell.NewEventKey(tcell.KeyRune, rune('a'+sequence), tcell.ModNone), 100, 30)
+		calls := 0
+		requestPendingReadReceipt(&model, func(ReadReceiptRequest) bool { calls++; return true })
+		if calls != 1 || model.chats.chats[0].unreadCount != 0 {
+			t.Fatalf("sequence=%d calls=%d unread=%d", sequence, calls, model.chats.chats[0].unreadCount)
+		}
+	}
+}

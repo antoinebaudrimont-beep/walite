@@ -98,6 +98,7 @@ func runInitialized(
 	model.asyncSend = input.SendResults != nil
 	model.media, model.closeMedia = input.Media, input.CloseMedia
 	model.closeExternalPreview = input.CloseExternalPreview
+	model.loadOlder = input.OlderHistory
 	defer closeMedia(&model)
 	if input.Send != nil {
 		model.send = func(request SendRequest) error { return input.Send(ctx, request) }
@@ -137,6 +138,7 @@ func runInitialized(
 	chatLoads := input.ChatLoads
 	optionsResults := input.OptionsResults
 	mediaResults := input.MediaResults
+	olderResults := input.OlderResults
 
 	for {
 		select {
@@ -197,6 +199,15 @@ func runInitialized(
 				continue
 			}
 			if applyMediaResult(&model, result) {
+				draw(screen, &model)
+				screen.Show()
+			}
+		case result, ok := <-olderResults:
+			if !ok {
+				olderResults = nil
+				continue
+			}
+			if applyOlderHistoryResult(&model, result) {
 				draw(screen, &model)
 				screen.Show()
 			}

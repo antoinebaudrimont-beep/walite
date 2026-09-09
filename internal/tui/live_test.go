@@ -31,7 +31,7 @@ func TestLiveMessagePromotesByActivityAndPreservesSelectedChatID(t *testing.T) {
 		t.Fatalf("chat C=%+v message=%+v", chatC, chatC.messages[0])
 	}
 	before := *model.chats
-	if applyLiveMessage(&model, event) || *model.chats != before {
+	if applyLiveMessage(&model, event) || !chatStatesEqual(*model.chats, before) {
 		t.Fatal("duplicate background event promoted or mutated twice")
 	}
 }
@@ -86,7 +86,7 @@ func TestLiveMessageDuplicateBodylessAndMessageCapacity(t *testing.T) {
 		t.Fatalf("bodyless=%+v found=%t unread=%d", bodyless, found, chat.unreadCount)
 	}
 	before := *model.chats
-	if applyLiveMessage(&model, event) || *model.chats != before {
+	if applyLiveMessage(&model, event) || !chatStatesEqual(*model.chats, before) {
 		t.Fatal("identical duplicate changed presentation state")
 	}
 	full := InitialChat{ID: "full", Title: "Full", ActivityTime: liveTestBase.Add(40 * time.Minute), Messages: make([]InitialMessage, maxMessages)}
@@ -95,12 +95,17 @@ func TestLiveMessageDuplicateBodylessAndMessageCapacity(t *testing.T) {
 	}
 	state, _ := chatStateFromInitial(InitialState{Chats: []InitialChat{full}})
 	bounded := viewModel{chats: state, options: DefaultOptions(), terminalWidth: 100, terminalHeight: 20}
-	if !applyLiveMessage(&bounded, liveTestMessage("full", "newest", 50, 50, false, "newest", 1)) {
+	for index := maxMessages; index < SelectedChatHistoryCapacity; index++ {
+		if !applyLiveMessage(&bounded, liveTestMessage("full", fmt.Sprintf("m%02d", index), index, index, false, fmt.Sprintf("message %02d", index), 1)) {
+			t.Fatalf("fill event %d rejected", index)
+		}
+	}
+	if !applyLiveMessage(&bounded, liveTestMessage("full", "newest", 300, 300, false, "newest", 1)) {
 		t.Fatal("bounded newest event rejected")
 	}
 	boundedChat, _ := bounded.chats.selectedChat()
-	if boundedChat.messageCount != maxMessages || boundedChat.messages[0].id != "m01" || boundedChat.messages[maxMessages-1].id != "newest" {
-		t.Fatalf("bounded messages first=%q last=%q count=%d", boundedChat.messages[0].id, boundedChat.messages[maxMessages-1].id, boundedChat.messageCount)
+	if boundedChat.messageCount != SelectedChatHistoryCapacity || boundedChat.messages[0].id != "m01" || boundedChat.messages[SelectedChatHistoryCapacity-1].id != "newest" {
+		t.Fatalf("bounded messages first=%q last=%q count=%d", boundedChat.messages[0].id, boundedChat.messages[SelectedChatHistoryCapacity-1].id, boundedChat.messageCount)
 	}
 }
 
@@ -192,7 +197,7 @@ func TestLiveMessageInsertsFifthChatWithExactPresentationData(t *testing.T) {
 		t.Fatalf("selected=%q top=%q", selected.id, model.chats.chats[0].id)
 	}
 	before := *model.chats
-	if applyLiveMessage(&model, event) || *model.chats != before {
+	if applyLiveMessage(&model, event) || !chatStatesEqual(*model.chats, before) {
 		t.Fatal("duplicate new-chat event changed presentation state")
 	}
 
@@ -285,7 +290,7 @@ func TestNewLiveChatAtSummaryCapacityIsIgnoredDeterministically(t *testing.T) {
 
 	before := *model.chats
 	newest := liveTestMessage("capacity-new", "capacity-message", 100, 100, false, "bounded", 4)
-	if applyLiveMessage(&model, newest) || *model.chats != before {
+	if applyLiveMessage(&model, newest) || !chatStatesEqual(*model.chats, before) {
 		t.Fatal("10,001st chat changed the bounded summary set")
 	}
 	if model.chats.chatCount != ChatWorkingSetCapacity {
@@ -300,7 +305,7 @@ func TestNewLiveChatAtSummaryCapacityIsIgnoredDeterministically(t *testing.T) {
 	}
 
 	stale := liveTestMessage("capacity-stale", "stale-message", -2, -1, false, "outside working set", 1)
-	if applyLiveMessage(&model, stale) || *model.chats != before {
+	if applyLiveMessage(&model, stale) || !chatStatesEqual(*model.chats, before) {
 		t.Fatal("stale new chat displaced the bounded working set")
 	}
 }

@@ -88,10 +88,17 @@ func applyChatSummaries(model *viewModel, update InitialState) bool {
 		}
 		if chat.id == selectedID {
 			fresh.selected = index
-			if chat.unreadCount > 0 {
-				model.localReadRequest = LocalReadRequest{ChatID: chat.id, ActivityTime: chat.activityTime}
-			}
-			chat.unreadCount = 0
+		}
+	}
+	newSelectedID := ""
+	if selected, ok := fresh.selectedChat(); ok {
+		newSelectedID = selected.id
+	}
+	for index := 0; index < fresh.chatCount; index++ {
+		if index == fresh.selectedIndex() {
+			fresh.expandMessageBuffer(index)
+		} else {
+			fresh.compactMessageBuffer(index)
 		}
 	}
 	changed := fresh.chatCount != model.chats.chatCount
@@ -109,6 +116,10 @@ func applyChatSummaries(model *viewModel, update InitialState) bool {
 		return false
 	}
 	*model.chats = *fresh
+	if newSelectedID != selectedID {
+		model.selectionEpoch++
+		model.olderHistory = olderHistoryState{}
+	}
 	model.chats.clampSelection()
 	clampMessageViewport(model, model.terminalWidth, model.terminalHeight)
 	return true

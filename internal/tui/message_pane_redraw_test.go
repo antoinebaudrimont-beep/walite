@@ -167,7 +167,7 @@ func TestMessagePaneClearPreservesModelAndPopupState(t *testing.T) {
 	for cycle := 0; cycle < 3; cycle++ {
 		draw(screen, &model)
 		screen.Show()
-		if !reflect.DeepEqual(model, beforeModel) || *model.chats != beforeChats {
+		if !reflect.DeepEqual(model, beforeModel) || !chatStatesEqual(*model.chats, beforeChats) {
 			t.Fatal("pane repaint changed chat data, selection, draft, cursor, reply, scroll, or popup state")
 		}
 		if text := screenText(screen); !strings.Contains(text, "Settings") {

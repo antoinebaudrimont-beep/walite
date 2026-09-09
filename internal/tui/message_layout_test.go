@@ -312,7 +312,7 @@ func TestDirectionalResizeRecomputesRightAnchor(t *testing.T) {
 		}
 		assertDirectionalTextAt(t, screen, start, y, "15:17  right 👋")
 		assertMessagePaneMatchesFresh(t, screen, &view)
-		if *view.chats != before {
+		if !chatStatesEqual(*view.chats, before) {
 			t.Fatal("resize mutated chat data")
 		}
 	}
@@ -375,7 +375,7 @@ func TestDirectionalRenderingPreservesInteractionState(t *testing.T) {
 	screen := initializedSimulationScreen(t, 80, 24)
 	draw(screen, &view)
 	screen.Show()
-	if !reflect.DeepEqual(view, before) || *view.chats != chats {
+	if !reflect.DeepEqual(view, before) || !chatStatesEqual(*view.chats, chats) {
 		t.Fatal("rendering changed state")
 	}
 }

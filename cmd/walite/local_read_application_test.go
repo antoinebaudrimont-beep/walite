@@ -21,6 +21,71 @@ func TestReadReceiptsOffStillPersistsLocalClearThroughSQLiteRestart(t *testing.T
 	testSelectingUnreadChatPersistsThroughSQLiteRestart(t, false)
 }
 
+func TestActiveInteractionInSelectedChatPersistsReadThroughSQLiteRestart(t *testing.T) {
+	isolateApplicationFiles(t)
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "cache.db")
+	cache, err := store.OpenSQLite(ctx, store.SQLiteOptions{Path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2100, 9, 5, 11, 0, 0, 0, time.UTC)
+	chat, _ := model.NewChat(model.ChatInput{ID: "selected@lid", DisplayName: "Selected", UnreadCount: 1, LastMessageAt: base, UpdatedAt: base})
+	if err := cache.EnsureChat(ctx, chat); err != nil {
+		t.Fatal(err)
+	}
+
+	loader := newCacheLoader(&connectedApplicationService{store: cache})
+	loaderCtx, cancelLoader := context.WithCancel(context.Background())
+	loaderDone := make(chan struct{})
+	go func() {
+		loader.run(loaderCtx)
+		close(loaderDone)
+	}()
+	screen := newStartupObservedScreen()
+	live := make(chan tui.LiveMessage, 1)
+	remoteReads := make(chan tui.ReadReceiptRequest, 1)
+	tuiDone := make(chan error, 1)
+	go func() {
+		tuiDone <- tui.Run(context.Background(), screen, tui.Input{
+			Options: tui.DefaultOptions(), InitialState: tui.InitialState{Chats: []tui.InitialChat{{
+				ID: chat.ID().String(), Title: "Selected", ActivityTime: base,
+			}}}, LiveEvents: live, PersistLocalRead: loader.requestLocalRead,
+			SendReadReceipt: func(request tui.ReadReceiptRequest) bool { remoteReads <- request; return true },
+		})
+	}()
+	<-screen.shown
+	live <- tui.LiveMessage{
+		ChatID: chat.ID().String(), MessageID: "new-incoming", SentAt: base,
+		Text: "body is irrelevant", BodyRetained: true, UnreadCount: 1, ActivityTime: base,
+	}
+	<-screen.shown
+	screen.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
+	<-screen.shown
+	if request := <-remoteReads; request.ChatID != chat.ID().String() || len(request.Messages) != 1 || request.Messages[0].MessageID != "new-incoming" {
+		t.Fatalf("remote request=%+v", request)
+	}
+	screen.InjectKey(tcell.KeyCtrlC, 0, tcell.ModNone)
+	if err := <-tuiDone; err != nil {
+		t.Fatal(err)
+	}
+	cancelLoader()
+	<-loaderDone
+	if err := cache.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := store.OpenSQLite(ctx, store.SQLiteOptions{Path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	chats, err := reopened.ListChats(ctx, model.MaxChatSummaries)
+	if err != nil || len(chats) != 1 || chats[0].UnreadCount() != 0 {
+		t.Fatalf("restart chats=%+v err=%v", chats, err)
+	}
+}
+
 func testSelectingUnreadChatPersistsThroughSQLiteRestart(t *testing.T, receipts bool) {
 	isolateApplicationFiles(t)
 	ctx := context.Background()

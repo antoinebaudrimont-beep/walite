@@ -100,6 +100,8 @@ type Input struct {
 	SummaryUpdates   <-chan InitialState
 	ChatLoads        <-chan ChatLoadResult
 	LoadChat         func(ChatLoadRequest) bool
+	OlderHistory     func(OlderHistoryRequest) bool
+	OlderResults     <-chan OlderHistoryResult
 	PersistLocalRead func(LocalReadRequest) bool
 	SendReadReceipt  func(ReadReceiptRequest) bool
 	Media            func(MediaRequest) bool
@@ -154,8 +156,8 @@ type ReadReceiptMessage struct {
 }
 
 // ReadReceiptRequest is the bounded transport-neutral frontier captured by an
-// explicit user chat selection. Messages is always limited to the chat working
-// set and contains no FromMe entries.
+// explicit user selection, reply, or compose/send interaction. Messages is
+// always limited to 32 known incoming entries and contains no FromMe entries.
 type ReadReceiptRequest struct {
 	ChatID   string
 	IsGroup  bool
@@ -173,6 +175,40 @@ type ChatLoadRequest struct {
 type ChatLoadResult struct {
 	ChatID   string
 	Revision uint64
+	Messages []InitialMessage
+}
+
+// OlderHistoryPageSize is both the upstream request maximum and the bounded
+// application result size. Repeated pages accumulate only for the selected
+// chat, within SelectedChatHistoryCapacity.
+const OlderHistoryPageSize = 50
+
+// OlderHistoryRequest identifies one explicit page before the selected chat's
+// stable oldest frontier. Revision is the transient selection epoch, not the
+// chat's live-data revision.
+type OlderHistoryRequest struct {
+	ChatID          string
+	Revision        uint64
+	OldestMessageID string
+	OldestSentAt    time.Time
+	OldestFromMe    bool
+	Count           int
+}
+
+type OlderHistoryResultKind uint8
+
+const (
+	OlderHistoryLoaded OlderHistoryResultKind = iota + 1
+	OlderHistoryNoMore
+	OlderHistoryUnavailable
+	OlderHistoryFailed
+)
+
+// OlderHistoryResult carries at most one bounded page, oldest-first. Request
+// is echoed verbatim so the TUI can reject stale chat/frontier completions.
+type OlderHistoryResult struct {
+	Request  OlderHistoryRequest
+	Kind     OlderHistoryResultKind
 	Messages []InitialMessage
 }
 
@@ -198,49 +234,57 @@ func chatStateFromInitial(initial InitialState) (*chatState, error) {
 		chat.activityTime = sourceChat.ActivityTime
 		chat.messageCount = len(sourceChat.Messages)
 		if chat.messageCount > 0 {
-			chat.messages = new([maxMessages]messageView)
+			chat.messages = make([]messageView, maxMessages)
 		}
 		seenMessages := make(map[string]struct{}, len(sourceChat.Messages))
 		for messageIndex, sourceMessage := range sourceChat.Messages {
-			if len(sourceMessage.SenderID) > 512 || !utf8.ValidString(sourceMessage.SenderID) ||
-				!utf8.ValidString(sourceMessage.MediaKind) || !utf8.ValidString(sourceMessage.MediaName) || !validMediaMIME(sourceMessage.MediaMIME) ||
-				!validMediaPresentation(sourceMessage.MediaKind, sourceMessage.MediaName) {
-				return nil, errors.New("tui initial state rejected")
-			}
-			if !validReplyMetadata(sourceMessage.ReplyToID, sourceMessage.ReplyToText, sourceMessage.ReplyToFromMe, sourceMessage.ReplyMediaKind, sourceMessage.ReplyMediaName, sourceMessage.ReplyMediaMIME) {
-				return nil, errors.New("tui initial state rejected")
-			}
-			if sourceMessage.ID == "" || !utf8.ValidString(sourceMessage.ID) || !utf8.ValidString(sourceMessage.Text) {
+			message, err := messageViewFromInitial(sourceMessage)
+			if err != nil {
 				return nil, errors.New("tui initial state rejected")
 			}
 			if _, exists := seenMessages[sourceMessage.ID]; exists {
 				return nil, errors.New("tui initial state rejected")
 			}
 			seenMessages[sourceMessage.ID] = struct{}{}
-			text := sourceMessage.Text
-			if !sourceMessage.BodyRetained {
-				text = ""
-			}
-			chat.messages[messageIndex] = messageView{
-				id:             messageID(sourceMessage.ID),
-				sentAt:         sourceMessage.SentAt,
-				time:           localMessageTime(sourceMessage.SentAt),
-				text:           text,
-				mediaKind:      sourceMessage.MediaKind,
-				mediaName:      sourceMessage.MediaName,
-				mediaMIME:      sourceMessage.MediaMIME,
-				fromMe:         sourceMessage.FromMe,
-				bodyRetained:   sourceMessage.BodyRetained,
-				replyText:      sourceMessage.ReplyToText,
-				replyFromMe:    sourceMessage.ReplyToFromMe,
-				replyMediaKind: sourceMessage.ReplyMediaKind,
-				replyMediaName: sourceMessage.ReplyMediaName,
-				replyMediaMIME: sourceMessage.ReplyMediaMIME,
-				replyToID:      messageID(sourceMessage.ReplyToID),
-				hasReply:       sourceMessage.ReplyToID != "",
-				senderID:       sourceMessage.SenderID, isGroup: sourceMessage.IsGroup,
-			}
+			chat.messages[messageIndex] = message
 		}
 	}
+	if state.chatCount > 0 {
+		state.expandMessageBuffer(state.selected)
+	}
 	return state, nil
+}
+
+func messageViewFromInitial(source InitialMessage) (messageView, error) {
+	if len(source.SenderID) > 512 || !utf8.ValidString(source.SenderID) ||
+		!utf8.ValidString(source.MediaKind) || !utf8.ValidString(source.MediaName) || !validMediaMIME(source.MediaMIME) ||
+		!validMediaPresentation(source.MediaKind, source.MediaName) ||
+		!validReplyMetadata(source.ReplyToID, source.ReplyToText, source.ReplyToFromMe, source.ReplyMediaKind, source.ReplyMediaName, source.ReplyMediaMIME) ||
+		source.ID == "" || !utf8.ValidString(source.ID) || !utf8.ValidString(source.Text) {
+		return messageView{}, errors.New("tui initial message rejected")
+	}
+	text := source.Text
+	if !source.BodyRetained {
+		text = ""
+	}
+	return messageView{
+		id:             messageID(source.ID),
+		sentAt:         source.SentAt,
+		time:           localMessageTime(source.SentAt),
+		text:           text,
+		mediaKind:      source.MediaKind,
+		mediaName:      source.MediaName,
+		mediaMIME:      source.MediaMIME,
+		fromMe:         source.FromMe,
+		bodyRetained:   source.BodyRetained,
+		replyText:      source.ReplyToText,
+		replyFromMe:    source.ReplyToFromMe,
+		replyMediaKind: source.ReplyMediaKind,
+		replyMediaName: source.ReplyMediaName,
+		replyMediaMIME: source.ReplyMediaMIME,
+		replyToID:      messageID(source.ReplyToID),
+		hasReply:       source.ReplyToID != "",
+		senderID:       source.SenderID,
+		isGroup:        source.IsGroup,
+	}, nil
 }

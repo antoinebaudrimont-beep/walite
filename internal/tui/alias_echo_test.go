@@ -38,7 +38,7 @@ func TestNormalizedAliasEchoPreservesSelectedChatAndAllTransientState(t *testing
 			if applyLiveMessage(&model, echo) {
 				t.Fatal("duplicate caused redraw")
 			}
-			if !reflect.DeepEqual(model, beforeModel) || *state != beforeChats {
+			if !reflect.DeepEqual(model, beforeModel) || !chatStatesEqual(*state, beforeChats) {
 				t.Fatal("echo changed selection/draft/cursor/viewport/reply/popups/unread/order")
 			}
 			selected, _ := state.selectedChat()

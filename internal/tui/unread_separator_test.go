@@ -116,7 +116,7 @@ func TestUnreadSeparatorStateIsTransient(t *testing.T) {
 	for _, size := range [][2]int{{100, 30}, {60, 20}, {100, 30}} {
 		clampView(&model, size[0], size[1])
 	}
-	if *model.chats != wantState {
+	if !chatStatesEqual(*model.chats, wantState) {
 		t.Fatal("transient separator changed chat data")
 	}
 }

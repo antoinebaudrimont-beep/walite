@@ -63,7 +63,7 @@ func TestRejectedSendPreservesDraftCursorReplyAndChatState(t *testing.T) {
 		t.Fatalf("request=%+v", got)
 	}
 	if model.composer.text() != text || model.composer.cursor != 5 || model.replyTarget != beforeTarget ||
-		model.chatView.scrollOffset != 3 || model.mode != modeCompose || *model.chats != beforeChat {
+		model.chatView.scrollOffset != 3 || model.mode != modeCompose || !chatStatesEqual(*model.chats, beforeChat) {
 		t.Fatalf("rejection mutated state: draft=%q cursor=%d target=%+v offset=%d mode=%d", model.composer.text(), model.composer.cursor, model.replyTarget, model.chatView.scrollOffset, model.mode)
 	}
 }

@@ -43,6 +43,9 @@ type viewModel struct {
 	media                func(MediaRequest) bool
 	closeMedia           func()
 	closeExternalPreview func() bool
+	loadOlder            func(OlderHistoryRequest) bool
+	olderHistory         olderHistoryState
+	selectionEpoch       uint64
 }
 
 func draw(screen tcell.Screen, model *viewModel) {
@@ -289,9 +292,9 @@ func navigationFooter(model *viewModel, narrow bool) string {
 		return "↑/↓ message  P preview  S save  Enter reply  Esc cancel"
 	}
 	if narrow {
-		return "↑/↓ scroll  j/k chat  P/S media  Enter  Ctrl-P  Esc quit"
+		return "↑/↓ scroll  j/k chat  O older  P/S media  Enter  Ctrl-P  Esc quit"
 	}
-	return "↑/↓ scroll  j/k chats  P preview  S save  Enter compose  Ctrl-P settings  Esc quit"
+	return "↑/↓ scroll  j/k chats  O older  P preview  S save  Enter compose  Ctrl-P settings  Esc quit"
 }
 
 func narrowNavigationFooter(model *viewModel, width int) string {

@@ -88,13 +88,15 @@ func handleKey(model *viewModel, event *tcell.EventKey, width, height int) (chan
 		if _, ok := model.chats.selectedChat(); !ok {
 			return false, false
 		}
+		markSelectedChatReadOnInteraction(model)
 		model.mode = modeCompose
 		model.composer.clear()
 		model.replyTarget = replyTarget{}
 		model.replySelect = replySelectionState{}
 		return true, false
 	case event.Key() == tcell.KeyCtrlR:
-		return focusNewestVisibleMessage(model, width, height), false
+		read := markSelectedChatReadOnInteraction(model)
+		return focusNewestVisibleMessage(model, width, height) || read, false
 	case event.Key() == tcell.KeyUp:
 		return scrollMessages(model, width, height, true), false
 	case event.Key() == tcell.KeyDown:
@@ -115,6 +117,8 @@ func handleKey(model *viewModel, event *tcell.EventKey, width, height int) (chan
 		return requestVisibleMedia(model, MediaPreview, width, height), false
 	case event.Key() == tcell.KeyRune && (event.Rune() == 'S' || event.Rune() == 's'):
 		return requestVisibleMedia(model, MediaSave, width, height), false
+	case event.Key() == tcell.KeyRune && (event.Rune() == 'O' || event.Rune() == 'o'):
+		return requestOlderHistory(model, width, height), false
 	}
 	return false, false
 }
@@ -127,7 +131,7 @@ func closesMediaPreview(event *tcell.EventKey) bool {
 	case tcell.KeyEnter, tcell.KeyCtrlR, tcell.KeyUp, tcell.KeyDown, tcell.KeyHome, tcell.KeyEnd, tcell.KeyPgUp, tcell.KeyPgDn, tcell.KeyCtrlU, tcell.KeyCtrlD:
 		return true
 	case tcell.KeyRune:
-		return event.Rune() == 'j' || event.Rune() == 'k'
+		return event.Rune() == 'j' || event.Rune() == 'k' || event.Rune() == 'o' || event.Rune() == 'O'
 	default:
 		return false
 	}
@@ -148,6 +152,7 @@ func moveChatSelection(model *viewModel, delta int) bool {
 	if !model.chats.moveSelection(delta) {
 		return false
 	}
+	model.selectionEpoch++
 	model.chatView.reset()
 	model.chatView.unreadBoundary = boundary
 	model.replySelect = replySelectionState{}
@@ -163,7 +168,8 @@ func handleReplySelectionKey(model *viewModel, event *tcell.EventKey, width, hei
 		return true
 	case event.Key() == tcell.KeyEnter:
 		closeMedia(model)
-		return chooseReplyTarget(model)
+		read := markSelectedChatReadOnInteraction(model)
+		return chooseReplyTarget(model) || read
 	case event.Key() == tcell.KeyUp || event.Key() == tcell.KeyRune && event.Rune() == 'k':
 		closeMedia(model)
 		return moveMessageFocus(model, -1, width, height)
@@ -187,12 +193,14 @@ func handleComposeKey(model *viewModel, event *tcell.EventKey, width, height int
 		model.mode = modeNavigate
 		return true
 	case tcell.KeyEnter:
-		return submitOutgoingMessage(model)
+		read := markSelectedChatReadOnInteraction(model)
+		return submitOutgoingMessage(model) || read
 	case tcell.KeyCtrlE:
 		model.emojiPicker.prepareOpen()
 		return true
 	case tcell.KeyCtrlR:
-		return focusReplyFromCompose(model, width, height)
+		read := markSelectedChatReadOnInteraction(model)
+		return focusReplyFromCompose(model, width, height) || read
 	case tcell.KeyUp:
 		return scrollMessages(model, width, height, true)
 	case tcell.KeyDown:
@@ -212,7 +220,8 @@ func handleComposeKey(model *viewModel, event *tcell.EventKey, width, height int
 	case tcell.KeyRight:
 		return model.composer.moveRight()
 	case tcell.KeyRune:
-		return model.composer.insert(event.Rune())
+		read := markSelectedChatReadOnInteraction(model)
+		return model.composer.insert(event.Rune()) || read
 	default:
 		return false
 	}
@@ -225,7 +234,8 @@ func handleComposeReplySelectionKey(model *viewModel, event *tcell.EventKey, wid
 		return true
 	case event.Key() == tcell.KeyEnter:
 		closeMedia(model)
-		return chooseReplyTarget(model)
+		read := markSelectedChatReadOnInteraction(model)
+		return chooseReplyTarget(model) || read
 	case event.Key() == tcell.KeyUp || event.Key() == tcell.KeyRune && event.Rune() == 'k':
 		closeMedia(model)
 		return moveMessageFocus(model, -1, width, height)

@@ -42,7 +42,7 @@ func TestCommittedReplyUsesOfflinePresentation(t *testing.T) {
 		}
 		before := *view.chats
 		event.ReplyToID, event.ReplyToText, event.ReplyToFromMe = "", "", false
-		if applyLiveMessage(&view, event) || *view.chats != before {
+		if applyLiveMessage(&view, event) || !chatStatesEqual(*view.chats, before) {
 			t.Fatal("quote-less echo downgraded reply or duplicated it")
 		}
 	}
@@ -110,7 +110,7 @@ func TestReplyPresentationMetadataStaysBounded(t *testing.T) {
 		if applyLiveMessage(&view, event) != test.valid {
 			t.Fatal("live quote validation changed")
 		}
-		if !test.valid && *state != before {
+		if !test.valid && !chatStatesEqual(*state, before) {
 			t.Fatal("invalid quote mutated working set")
 		}
 		_, err := chatStateFromInitial(InitialState{Chats: []InitialChat{{ID: "chat", Messages: []InitialMessage{{ID: "reply", SentAt: event.SentAt, ReplyToID: test.id, ReplyToText: test.text, ReplyToFromMe: test.fromMe,

@@ -128,14 +128,18 @@ func buildChatLoadResult(ctx context.Context, source applicationService, request
 	})
 	result := tui.ChatLoadResult{ChatID: request.ChatID, Revision: request.Revision, Messages: make([]tui.InitialMessage, len(messages))}
 	for index, message := range messages {
-		result.Messages[index] = tui.InitialMessage{
-			ID: message.MessageID().String(), SentAt: message.SentAt(), FromMe: message.FromMe(),
-			Text: message.Text(), BodyRetained: message.BodyRetained(),
-			MediaKind: message.Media().Kind().String(), MediaName: message.Media().Name(), MediaMIME: message.Media().MIMEType(),
-			ReplyToID: message.Quote().MessageID().String(), ReplyToText: message.Quote().Text(), ReplyToFromMe: message.Quote().FromMe(),
-			ReplyMediaKind: message.Quote().Media().Kind().String(), ReplyMediaName: message.Quote().Media().Name(), ReplyMediaMIME: message.Quote().Media().MIMEType(),
-			SenderID: message.SenderID().String(), IsGroup: message.IsGroup(),
-		}
+		result.Messages[index] = initialMessageFromModel(message)
 	}
 	return result, nil
+}
+
+func initialMessageFromModel(message model.Message) tui.InitialMessage {
+	return tui.InitialMessage{
+		ID: message.MessageID().String(), SentAt: message.SentAt(), FromMe: message.FromMe(),
+		Text: message.Text(), BodyRetained: message.BodyRetained(),
+		MediaKind: message.Media().Kind().String(), MediaName: message.Media().Name(), MediaMIME: message.Media().MIMEType(),
+		ReplyToID: message.Quote().MessageID().String(), ReplyToText: message.Quote().Text(), ReplyToFromMe: message.Quote().FromMe(),
+		ReplyMediaKind: message.Quote().Media().Kind().String(), ReplyMediaName: message.Quote().Media().Name(), ReplyMediaMIME: message.Quote().Media().MIMEType(),
+		SenderID: message.SenderID().String(), IsGroup: message.IsGroup(),
+	}
 }
