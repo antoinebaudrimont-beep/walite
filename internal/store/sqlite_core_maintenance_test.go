@@ -153,11 +153,12 @@ func TestSQLiteCoreMaintenanceSharesWriterGate(t *testing.T) {
 func TestSQLiteNativePruneDropsQuoteBytesWithBody(t *testing.T) {
 	disk, _ := openTestSQLite(t)
 	messages := sqliteSequentialMessages(t, "native-quote", 101)
-	quote, _ := model.NewTextQuote("quoted", "Synthetic Café 👋", true)
+	media, _ := model.NewMedia(model.MediaDocument, "report Café.pdf", "application/pdf")
+	quote, _ := model.NewMediaQuote("quoted", "Synthetic Café 👋", true, media)
 	messages[0] = messages[0].WithQuote(quote)
 	writeSQLitePageMessages(t, disk, messages)
 	result, err := disk.Prune(context.Background(), time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC))
-	wantBytes := len(messages[0].Text()) + len(quote.MessageID().String()) + len(quote.Text())
+	wantBytes := len(messages[0].Text()) + len(quote.MessageID().String()) + len(quote.Text()) + len(media.Name()) + len(media.MIMEType())
 	if err != nil || result.BodiesDropped != 1 || result.LogicalBytesFreed != int64(wantBytes) {
 		t.Fatalf("native prune result=%+v err=%v", result, err)
 	}
@@ -165,7 +166,7 @@ func TestSQLiteNativePruneDropsQuoteBytesWithBody(t *testing.T) {
 	if err != nil || stored.BodyRetained() || stored.Quote() != (model.TextQuote{}) {
 		t.Fatalf("native prune retained quote: %v", err)
 	}
-	if queryCount(t, disk.db, "SELECT COUNT(*) FROM messages WHERE retained_body = 0 AND (quote_id != '' OR quote_text != '')") != 0 {
+	if queryCount(t, disk.db, "SELECT COUNT(*) FROM messages WHERE retained_body = 0 AND (quote_id != '' OR quote_text != '' OR quote_media_kind != 0 OR quote_media_name != '' OR quote_media_mime != '')") != 0 {
 		t.Fatal("quote bytes survived body pruning")
 	}
 }

@@ -368,7 +368,7 @@ func TestRealTextSendPNAndLIDEchoCommitOnce(t *testing.T) {
 	testRealTextSendEchoCommitOnce(t, true)
 }
 
-func testRealTextSendEchoCommitOnce(t *testing.T, lidEcho bool, withReply ...bool) {
+func testRealTextSendEchoCommitOnce(t *testing.T, lidEcho bool, quotes ...model.TextQuote) {
 	t.Helper()
 	source := newRealtimeSource()
 	values := config.DefaultValues()
@@ -403,9 +403,8 @@ func testRealTextSendEchoCommitOnce(t *testing.T, lidEcho bool, withReply ...boo
 	})
 	waitForCoreReady(t, core.Updates())
 	request, _ := service.NewSendTextRequest("12345@s.whatsapp.net", text)
-	if len(withReply) == 1 && withReply[0] {
-		quote, _ := model.NewTextQuote("quoted-original", "synthetic original é 日本語 👋", false)
-		request, _ = service.NewSendTextRequest("12345@s.whatsapp.net", text, quote)
+	if len(quotes) == 1 {
+		request, _ = service.NewSendTextRequest("12345@s.whatsapp.net", text, quotes[0])
 	}
 	if err := core.SendText(ctx, request); err != nil {
 		t.Fatal(err)
@@ -418,7 +417,7 @@ func testRealTextSendEchoCommitOnce(t *testing.T, lidEcho bool, withReply ...boo
 		t.Fatal("committed live event lost outgoing quote (or added one to plain text)")
 	}
 	upstreamEcho := upstreamTextMessage("12345", "echo-id", base, true, &waE2E.Message{Conversation: &text})
-	if len(withReply) == 1 && withReply[0] {
+	if len(quotes) == 1 {
 		if sentPayload.GetExtendedTextMessage().GetContextInfo().GetStanzaID() != "quoted-original" {
 			t.Fatal("reply lost before transport")
 		}

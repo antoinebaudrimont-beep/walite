@@ -75,6 +75,7 @@ func run(ctx context.Context, screen tcell.Screen) error {
 			var realtimeSource *wa.RealtimeSource
 			var textSender wa.TextSender
 			var readReceiptSender wa.ReadReceiptSender
+			var mediaDownloader wa.MediaDownloader
 			return runAuthenticatedApplication(ctx, screen, authenticatedApplicationDependencies{
 				configuration: configurationStore,
 				newConnection: func(ctx context.Context) (applicationConnection, error) {
@@ -89,6 +90,7 @@ func run(ctx context.Context, screen tcell.Screen) error {
 					realtimeSource = connection.RealtimeSource()
 					textSender = connection.TextSender()
 					readReceiptSender = connection.ReadReceiptSender()
+					mediaDownloader = connection.MediaDownloader()
 					if realtimeSource == nil {
 						_ = connection.Close()
 						return nil, errors.New("WhatsApp realtime source unavailable")
@@ -109,7 +111,7 @@ func run(ctx context.Context, screen tcell.Screen) error {
 					return connection, nil
 				},
 				newService: func() (applicationService, error) {
-					return newConnectedApplicationService(realtimeSource, textSender, readReceiptSender, cache)
+					return newConnectedApplicationServiceWithMedia(realtimeSource, textSender, readReceiptSender, mediaDownloader, cache)
 				},
 				runConnection: tui.RunConnectionInitialized,
 				runTUI:        tui.RunInitialized,
@@ -170,6 +172,11 @@ func runStartedApplication(
 ) error {
 	runCtx, cancel := context.WithCancel(parent)
 	defer cancel()
+	media, err := newDefaultMediaWorker(runCtx, serviceCore)
+	if err != nil {
+		return fmt.Errorf("construct media worker: %w", err)
+	}
+	defer media.stop()
 
 	serviceDone := make(chan error, 1)
 	go func() { serviceDone <- serviceCore.Run(runCtx) }()
@@ -246,6 +253,7 @@ func runStartedApplication(
 			SummaryUpdates: loader.summaries, ChatLoads: loader.chats, LoadChat: loader.requestChat,
 			PersistLocalRead: loader.requestLocalRead,
 			SendReadReceipt:  readReceipts.admit,
+			Media:            media.admit, MediaResults: media.results, CloseMedia: media.close,
 		})
 	}()
 
@@ -293,11 +301,42 @@ func sendRequestFromTUI(request tui.SendRequest) (service.SendTextRequest, error
 	if request.ReplyToID == "" {
 		return service.NewSendTextRequest(request.ChatID, request.Text)
 	}
-	quote, err := model.NewTextQuote(request.ReplyToID, request.ReplyToText, request.ReplyToFromMe)
+	var quote model.TextQuote
+	var err error
+	if request.ReplyMediaKind == "" {
+		quote, err = model.NewTextQuote(request.ReplyToID, request.ReplyToText, request.ReplyToFromMe)
+	} else {
+		kind, ok := presentationMediaKind(request.ReplyMediaKind)
+		if !ok {
+			return service.SendTextRequest{}, errors.New("application media quote rejected")
+		}
+		media, mediaErr := model.NewMedia(kind, request.ReplyMediaName, request.ReplyMediaMIME)
+		if mediaErr != nil {
+			return service.SendTextRequest{}, mediaErr
+		}
+		quote, err = model.NewMediaQuote(request.ReplyToID, request.ReplyToText, request.ReplyToFromMe, media)
+	}
 	if err != nil {
 		return service.SendTextRequest{}, err
 	}
 	return service.NewSendTextRequest(request.ChatID, request.Text, quote)
+}
+
+func presentationMediaKind(value string) (model.MediaKind, bool) {
+	switch value {
+	case model.MediaImage.String():
+		return model.MediaImage, true
+	case model.MediaVideo.String():
+		return model.MediaVideo, true
+	case model.MediaDocument.String():
+		return model.MediaDocument, true
+	case model.MediaAudio.String():
+		return model.MediaAudio, true
+	case model.MediaSticker.String():
+		return model.MediaSticker, true
+	default:
+		return 0, false
+	}
 }
 
 func forwardLiveMessages(ctx context.Context, source <-chan model.LiveEvent, destination chan<- tui.LiveMessage) {
@@ -343,8 +382,9 @@ func adaptLiveMessage(event model.LiveEvent) (tui.LiveMessage, bool) {
 	return tui.LiveMessage{
 		ChatID: chatID, MessageID: messageID, SentAt: message.SentAt(), FromMe: message.FromMe(),
 		Text: text, BodyRetained: message.BodyRetained(), UnreadCount: event.UnreadCount(), ActivityTime: event.ActivityTime(),
-		MediaKind: message.Media().Kind().String(), MediaName: message.Media().Name(),
+		MediaKind: message.Media().Kind().String(), MediaName: message.Media().Name(), MediaMIME: message.Media().MIMEType(),
 		ReplyToID: message.Quote().MessageID().String(), ReplyToText: message.Quote().Text(), ReplyToFromMe: message.Quote().FromMe(),
+		ReplyMediaKind: message.Quote().Media().Kind().String(), ReplyMediaName: message.Quote().Media().Name(), ReplyMediaMIME: message.Quote().Media().MIMEType(),
 		SenderID: message.SenderID().String(), IsGroup: message.IsGroup(),
 	}, true
 }

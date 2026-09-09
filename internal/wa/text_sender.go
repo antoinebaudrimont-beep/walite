@@ -95,7 +95,7 @@ func (sender *realTextSender) ValidateText(chatID model.ChatID, text string, quo
 		if jid.Server == types.GroupServer {
 			return ErrGroupReplyUnavailable
 		}
-		if _, err := model.NewTextQuote(quotes[0].MessageID().String(), quotes[0].Text(), quotes[0].FromMe()); err != nil {
+		if _, err := ownedTextQuote(quotes[0]); err != nil {
 			return ErrTextRejected
 		}
 	}
@@ -169,8 +169,10 @@ func (sender *realTextSender) SendText(ctx context.Context, chatID model.ChatID,
 	return event, nil
 }
 
-// quotedText builds only a same-chat text quote. RemoteJID is deliberately
-// absent: cross-chat quotes are unsupported. No original protobuf is retained.
+// quotedText builds a same-chat quote. RemoteJID is deliberately absent:
+// cross-chat quotes are unsupported. Media quotes reconstruct only the bounded
+// content family/metadata WhatsApp needs for quote presentation; download
+// credentials, bytes, and original protobufs are not retained.
 func (sender *realTextSender) quotedText(peer types.JID, alternate model.ChatID, text string, quote model.TextQuote) (*waE2E.Message, error) {
 	participant := peer
 	if other, ok := directChatJID(alternate); ok && other.Server == types.HiddenUserServer {
@@ -189,12 +191,52 @@ func (sender *realTextSender) quotedText(peer types.JID, alternate model.ChatID,
 	if _, ok := directChatJID(id); !ok {
 		return nil, ErrTextUnavailable
 	}
-	stanza, author, quoted := quote.MessageID().String(), participant.String(), quote.Text()
+	stanza, author := quote.MessageID().String(), participant.String()
+	quoted := quotedMessage(quote)
+	if quoted == nil {
+		return nil, ErrTextRejected
+	}
 	return &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
 		Text: &text,
 		ContextInfo: &waE2E.ContextInfo{
 			StanzaID: &stanza, Participant: &author,
-			QuotedMessage: &waE2E.Message{Conversation: &quoted},
+			QuotedMessage: quoted,
 		},
 	}}, nil
+}
+
+func ownedTextQuote(quote model.TextQuote) (model.TextQuote, error) {
+	if quote.Media().Kind() != 0 {
+		return model.NewMediaQuote(quote.MessageID().String(), quote.Text(), quote.FromMe(), quote.Media())
+	}
+	return model.NewTextQuote(quote.MessageID().String(), quote.Text(), quote.FromMe())
+}
+
+func quotedMessage(quote model.TextQuote) *waE2E.Message {
+	text, media := quote.Text(), quote.Media()
+	if media.Kind() == 0 {
+		return &waE2E.Message{Conversation: &text}
+	}
+	mime, name := media.MIMEType(), media.Name()
+	switch media.Kind() {
+	case model.MediaImage:
+		return &waE2E.Message{ImageMessage: &waE2E.ImageMessage{Mimetype: optionalString(mime), Caption: optionalString(text)}}
+	case model.MediaVideo:
+		return &waE2E.Message{VideoMessage: &waE2E.VideoMessage{Mimetype: optionalString(mime), Caption: optionalString(text)}}
+	case model.MediaDocument:
+		return &waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{Mimetype: optionalString(mime), FileName: optionalString(name), Caption: optionalString(text)}}
+	case model.MediaAudio:
+		return &waE2E.Message{AudioMessage: &waE2E.AudioMessage{Mimetype: optionalString(mime)}}
+	case model.MediaSticker:
+		return &waE2E.Message{StickerMessage: &waE2E.StickerMessage{Mimetype: optionalString(mime)}}
+	default:
+		return nil
+	}
+}
+
+func optionalString(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }

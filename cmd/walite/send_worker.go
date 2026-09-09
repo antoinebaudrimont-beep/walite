@@ -66,7 +66,8 @@ func (worker *sendWorker) admit(ctx context.Context, request tui.SendRequest) er
 	}
 	worker.busy = true
 	quote := validated.Reply()
-	worker.requests <- tui.SendRequest{ChatID: validated.ChatID().String(), Text: validated.Text(), ReplyToID: quote.MessageID().String(), ReplyToText: quote.Text(), ReplyToFromMe: quote.FromMe()}
+	worker.requests <- tui.SendRequest{ChatID: validated.ChatID().String(), Text: validated.Text(), ReplyToID: quote.MessageID().String(), ReplyToText: quote.Text(), ReplyToFromMe: quote.FromMe(),
+		ReplyMediaKind: quote.Media().Kind().String(), ReplyMediaName: quote.Media().Name(), ReplyMediaMIME: quote.Media().MIMEType()}
 	return nil
 }
 

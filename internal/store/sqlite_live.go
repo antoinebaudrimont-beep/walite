@@ -101,7 +101,8 @@ func readSQLiteMessage(ctx context.Context, tx *sql.Tx, chat model.ChatID, id mo
 	err := tx.QueryRowContext(ctx, selectMessageSQL, chat.String(), id.String()).Scan(
 		&v.sentAt, &v.fromMe, &v.body, &v.bodyTruncated, &v.retainedBody,
 		&v.senderID, &v.isGroup, &v.quoteID, &v.quoteText, &v.quoteFromMe,
-		&v.mediaKind, &v.mediaName, &v.mediaMIME)
+		&v.quoteMediaKind, &v.quoteMediaName, &v.quoteMediaMIME,
+		&v.mediaKind, &v.mediaName, &v.mediaMIME, &v.mediaDeclaredBytes, &v.mediaDownloadRef)
 	if err != nil {
 		return model.Message{}, sqliteOperationError(err)
 	}

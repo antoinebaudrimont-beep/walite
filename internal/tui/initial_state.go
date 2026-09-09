@@ -32,48 +32,59 @@ type InitialChat struct {
 
 // InitialMessage is ordered oldest-first within InitialChat.Messages.
 type InitialMessage struct {
-	ID            string
-	SentAt        time.Time
-	FromMe        bool
-	Text          string
-	BodyRetained  bool
-	MediaKind     string
-	MediaName     string
-	ReplyToID     string
-	ReplyToText   string
-	ReplyToFromMe bool
-	SenderID      string
-	IsGroup       bool
+	ID             string
+	SentAt         time.Time
+	FromMe         bool
+	Text           string
+	BodyRetained   bool
+	MediaKind      string
+	MediaName      string
+	MediaMIME      string
+	ReplyToID      string
+	ReplyToText    string
+	ReplyToFromMe  bool
+	ReplyMediaKind string
+	ReplyMediaName string
+	ReplyMediaMIME string
+	SenderID       string
+	IsGroup        bool
 }
 
 // LiveMessage is an immutable-by-convention committed message presentation
 // event. It deliberately contains no service or storage types.
 type LiveMessage struct {
-	ChatID        string
-	MessageID     string
-	SentAt        time.Time
-	FromMe        bool
-	Text          string
-	BodyRetained  bool
-	MediaKind     string
-	MediaName     string
-	ReplyToID     string
-	ReplyToText   string
-	ReplyToFromMe bool
-	UnreadCount   uint32
-	ActivityTime  time.Time
-	SenderID      string
-	IsGroup       bool
+	ChatID         string
+	MessageID      string
+	SentAt         time.Time
+	FromMe         bool
+	Text           string
+	BodyRetained   bool
+	MediaKind      string
+	MediaName      string
+	MediaMIME      string
+	ReplyToID      string
+	ReplyToText    string
+	ReplyToFromMe  bool
+	ReplyMediaKind string
+	ReplyMediaName string
+	ReplyMediaMIME string
+	UnreadCount    uint32
+	ActivityTime   time.Time
+	SenderID       string
+	IsGroup        bool
 }
 
 // SendRequest is an immutable-by-convention outgoing presentation request.
 // Stable IDs, never presentation indexes, cross the application boundary.
 type SendRequest struct {
-	ChatID        string
-	Text          string
-	ReplyToID     string
-	ReplyToText   string
-	ReplyToFromMe bool
+	ChatID         string
+	Text           string
+	ReplyToID      string
+	ReplyToText    string
+	ReplyToFromMe  bool
+	ReplyMediaKind string
+	ReplyMediaName string
+	ReplyMediaMIME string
 }
 
 // Input supplies configuration and application-owned initial/live data to Run.
@@ -91,10 +102,37 @@ type Input struct {
 	LoadChat         func(ChatLoadRequest) bool
 	PersistLocalRead func(LocalReadRequest) bool
 	SendReadReceipt  func(ReadReceiptRequest) bool
+	Media            func(MediaRequest) bool
+	MediaResults     <-chan MediaResult
+	CloseMedia       func()
 	// SaveOptions admits one explicit save without performing I/O. OptionsResults
 	// completes it; options become active only after successful persistence.
 	SaveOptions    func(Options) bool
 	OptionsResults <-chan error
+}
+
+type MediaAction uint8
+
+const (
+	MediaPreview MediaAction = iota + 1
+	MediaSave
+)
+
+// MediaRequest identifies one explicit, currently visible user selection.
+// Stable IDs cross the boundary; paths and download credentials never do.
+type MediaRequest struct {
+	Action              MediaAction
+	ChatID, MessageID   string
+	Kind                string
+	X, Y, Width, Height int
+}
+
+// MediaResult completes one bounded asynchronous request.
+type MediaResult struct {
+	Action            MediaAction
+	ChatID, MessageID string
+	Status            string
+	Previewing        bool
 }
 
 // LocalReadRequest clears cached unread state only through the activity that
@@ -162,11 +200,11 @@ func chatStateFromInitial(initial InitialState) (*chatState, error) {
 		seenMessages := make(map[string]struct{}, len(sourceChat.Messages))
 		for messageIndex, sourceMessage := range sourceChat.Messages {
 			if len(sourceMessage.SenderID) > 512 || !utf8.ValidString(sourceMessage.SenderID) ||
-				!utf8.ValidString(sourceMessage.MediaKind) || !utf8.ValidString(sourceMessage.MediaName) ||
+				!utf8.ValidString(sourceMessage.MediaKind) || !utf8.ValidString(sourceMessage.MediaName) || !validMediaMIME(sourceMessage.MediaMIME) ||
 				!validMediaPresentation(sourceMessage.MediaKind, sourceMessage.MediaName) {
 				return nil, errors.New("tui initial state rejected")
 			}
-			if !validReplyMetadata(sourceMessage.ReplyToID, sourceMessage.ReplyToText, sourceMessage.ReplyToFromMe) {
+			if !validReplyMetadata(sourceMessage.ReplyToID, sourceMessage.ReplyToText, sourceMessage.ReplyToFromMe, sourceMessage.ReplyMediaKind, sourceMessage.ReplyMediaName, sourceMessage.ReplyMediaMIME) {
 				return nil, errors.New("tui initial state rejected")
 			}
 			if sourceMessage.ID == "" || !utf8.ValidString(sourceMessage.ID) || !utf8.ValidString(sourceMessage.Text) {
@@ -181,19 +219,23 @@ func chatStateFromInitial(initial InitialState) (*chatState, error) {
 				text = ""
 			}
 			chat.messages[messageIndex] = messageView{
-				id:           messageID(sourceMessage.ID),
-				sentAt:       sourceMessage.SentAt,
-				time:         localMessageTime(sourceMessage.SentAt),
-				text:         text,
-				mediaKind:    sourceMessage.MediaKind,
-				mediaName:    sourceMessage.MediaName,
-				fromMe:       sourceMessage.FromMe,
-				bodyRetained: sourceMessage.BodyRetained,
-				replyText:    sourceMessage.ReplyToText,
-				replyFromMe:  sourceMessage.ReplyToFromMe,
-				replyToID:    messageID(sourceMessage.ReplyToID),
-				hasReply:     sourceMessage.ReplyToID != "",
-				senderID:     sourceMessage.SenderID, isGroup: sourceMessage.IsGroup,
+				id:             messageID(sourceMessage.ID),
+				sentAt:         sourceMessage.SentAt,
+				time:           localMessageTime(sourceMessage.SentAt),
+				text:           text,
+				mediaKind:      sourceMessage.MediaKind,
+				mediaName:      sourceMessage.MediaName,
+				mediaMIME:      sourceMessage.MediaMIME,
+				fromMe:         sourceMessage.FromMe,
+				bodyRetained:   sourceMessage.BodyRetained,
+				replyText:      sourceMessage.ReplyToText,
+				replyFromMe:    sourceMessage.ReplyToFromMe,
+				replyMediaKind: sourceMessage.ReplyMediaKind,
+				replyMediaName: sourceMessage.ReplyMediaName,
+				replyMediaMIME: sourceMessage.ReplyMediaMIME,
+				replyToID:      messageID(sourceMessage.ReplyToID),
+				hasReply:       sourceMessage.ReplyToID != "",
+				senderID:       sourceMessage.SenderID, isGroup: sourceMessage.IsGroup,
 			}
 		}
 	}

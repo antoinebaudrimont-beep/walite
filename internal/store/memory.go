@@ -217,7 +217,14 @@ func (memory *Memory) writeBatch(ctx context.Context, batch model.WriteBatch, em
 					if mimeType == "" {
 						mimeType = priorMedia.MIMEType()
 					}
-					merged, _ := model.NewMedia(priorMedia.Kind(), name, mimeType)
+					var merged model.Media
+					if download, ok := media.Download(); ok {
+						merged, _ = model.NewDownloadableMedia(priorMedia.Kind(), name, mimeType, download.DirectPath(), download.MediaKey(), download.FileSHA256(), download.FileEncSHA256(), download.DeclaredBytes())
+					} else if download, ok := priorMedia.Download(); ok {
+						merged, _ = model.NewDownloadableMedia(priorMedia.Kind(), name, mimeType, download.DirectPath(), download.MediaKey(), download.FileSHA256(), download.FileEncSHA256(), download.DeclaredBytes())
+					} else {
+						merged, _ = model.NewMedia(priorMedia.Kind(), name, mimeType)
+					}
 					message = message.WithMedia(merged)
 				}
 			}

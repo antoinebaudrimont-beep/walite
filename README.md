@@ -10,7 +10,7 @@ walite began as an experiment to make WhatsApp usable on an older Linux laptop w
 
 ## Screenshots
 
-Four themes, with settings available through `Ctrl-P`. Click an image to view it at full size.
+Four themes, with settings available through `Ctrl-P`.
 
 | Terminal (default) | Dark |
 | --- | --- |
@@ -30,6 +30,7 @@ These screenshots were AI-edited for privacy using demo names and messages. Text
 - Cached startup without waiting for a complete HistorySync
 - Incoming and outgoing text messages
 - Image, video, document, audio, and sticker messages shown as lightweight placeholders
+- Explicit media download/save, plus inline image/GIF and WebP sticker preview through optional `ueberzugpp` X11 overlays
 - One-to-one quoted replies and incoming quote rendering
 - Contact, group, and group-participant names when authoritative local metadata is available
 - Readable phone-number fallbacks plus PN/LID identity handling and deduplication
@@ -75,6 +76,8 @@ The pairing window closes after a successful link. Later launches reuse the pers
 | `Home` / `End` | Jump to the oldest / newest loaded message |
 | `Enter` | Start composing |
 | `Ctrl-R` | Select a message to reply to |
+| `P` | Preview the newest visible image/GIF or sticker placeholder |
+| `S` | Save the newest visible media item to `~/Downloads/walite` |
 | `Ctrl-P` | Open settings |
 | `Esc` | Quit, or ask for confirmation when enabled |
 | `Ctrl-C` | Quit immediately |
@@ -93,6 +96,8 @@ The pairing window closes after a successful link. Later launches reuse the pers
 
 In reply selection, use `↑`/`↓` or `j`/`k`, then `Enter` to confirm. In the emoji picker, use the arrow keys or `h`/`j`/`k`/`l`; `Tab` and `Shift-Tab` switch categories, and `Enter` inserts the selected emoji.
 
+Media is never downloaded in the background. Scroll until the intended media placeholder is the newest visible media row, or focus it with `Ctrl-R` and the arrow keys, then press `P` for an image/GIF or sticker preview or `S` to save any supported media type. Preview requires `ueberzugpp` with its X11 backend; saving does not. Previews close with `P`, `Esc`, navigation, resize, or application shutdown.
+
 ## Settings
 
 Press `Ctrl-P` to configure:
@@ -110,7 +115,7 @@ Settings are stored in `$XDG_CONFIG_HOME/walite/config.json`—normally `~/.conf
 
 HistorySync seeds a broad conversation list during initial setup. Chat summaries and bounded message pages are stored in SQLite, allowing later launches to display cached conversations immediately.
 
-The cache keeps at most 10,000 chat summaries. Selected or loaded chats use a fixed 32-message presentation window, so browsing the chat list does not allocate a full history buffer for every conversation.
+The cache keeps at most 10,000 chat summaries. Selected or loaded chats use a fixed 32-message presentation window, so browsing the chat list does not allocate a full history buffer for every conversation. Explicitly downloaded decrypted media uses a separate private cache under `$XDG_CACHE_HOME/walite/media` (normally `~/.cache/walite/media`), bounded to 256 files and 256 MiB. Durable saves under `~/Downloads/walite` are never evicted with that cache.
 
 ## Performance
 
@@ -139,7 +144,8 @@ The UI and service use transport-neutral application data. WhatsApp-specific typ
 
 ## Current limitations
 
-- Media messages are visible as placeholders; media download and preview are not yet implemented.
+- Image/GIF and WebP sticker preview currently depends on Linux/X11 and optional `ueberzugpp`; video (including WhatsApp GifPlayback MP4), audio, and document preview is not implemented.
+- Expired WhatsApp media references are reported as unavailable; media-retry refresh is not implemented yet.
 - Reactions, typing indicators, and presence are not implemented.
 - Quoted-reply sending is supported for one-to-one chats, not groups.
 - On-demand paging for history older than the bounded recent window is not implemented.
@@ -153,8 +159,8 @@ The UI and service use transport-neutral application data. WhatsApp-specific typ
 
 ### v0.3
 
-- Image download and decryption
-- External high-resolution image previews using `nsxiv`
+- Image/GIF and sticker download, save, and inline preview through `ueberzugpp` (v0.3B1)
+- Richer media viewers and expired-media refresh
 - On-demand older-history paging
 
 Planned image flow:
@@ -164,7 +170,8 @@ image message
   → visible media placeholder in walite
   → user requests preview
   → walite downloads and decrypts the image
-  → lightweight external nsxiv window opens
+  → bounded private cache
+  → inline ueberzugpp X11 overlay opens
 ```
 
 ### v0.4

@@ -42,3 +42,28 @@ func DefaultApplicationCachePath() (string, error) {
 	}
 	return filepath.Join(filepath.Clean(cacheHome), "walite", applicationCacheFilename), nil
 }
+
+// DefaultMediaCachePath returns the private disposable decrypted-media cache.
+func DefaultMediaCachePath() (string, error) {
+	cacheHome := os.Getenv("XDG_CACHE_HOME")
+	if cacheHome == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		cacheHome = filepath.Join(home, ".cache")
+	}
+	if !filepath.IsAbs(cacheHome) {
+		return "", errors.New("invalid cache directory")
+	}
+	return filepath.Join(filepath.Clean(cacheHome), "walite", "media"), nil
+}
+
+// DefaultMediaSavePath is the user-owned destination for explicit saves.
+func DefaultMediaSavePath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil || !filepath.IsAbs(home) {
+		return "", errors.New("invalid home directory")
+	}
+	return filepath.Join(filepath.Clean(home), "Downloads", "walite"), nil
+}

@@ -43,3 +43,25 @@ func TestMessageMediaSurvivesCopiesAndBodyRemoval(t *testing.T) {
 		t.Fatalf("bodyless media message=%+v", bodyless)
 	}
 }
+
+func TestDownloadableMediaOwnsBoundedNeutralInputs(t *testing.T) {
+	key, hash, encrypted := []byte("key"), []byte("hash"), []byte("encrypted")
+	media, err := NewDownloadableMedia(MediaImage, "Café 👋.jpg", "image/jpeg", "/mms/image", key, hash, encrypted, 123)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key[0], hash[0], encrypted[0] = 'X', 'X', 'X'
+	download, ok := media.Download()
+	if !ok || download.DirectPath() != "/mms/image" || string(download.MediaKey()) != "key" || string(download.FileSHA256()) != "hash" || string(download.FileEncSHA256()) != "encrypted" || download.DeclaredBytes() != 123 {
+		t.Fatalf("download=%+v ok=%t", download, ok)
+	}
+	returned := download.MediaKey()
+	returned[0] = 'Y'
+	again, _ := media.Download()
+	if string(again.MediaKey()) != "key" {
+		t.Fatal("download bytes were mutable")
+	}
+	if _, err := NewDownloadableMedia(MediaImage, "", "", "relative", []byte("k"), []byte("h"), []byte("e"), 0); err == nil {
+		t.Fatal("relative path accepted")
+	}
+}

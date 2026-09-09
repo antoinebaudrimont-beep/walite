@@ -106,7 +106,8 @@ func scanSQLitePageMessage(scanner sqliteScanner) (model.Message, error) {
 		&values.bodyTruncated,
 		&values.retainedBody,
 		&values.senderID, &values.isGroup, &values.quoteID, &values.quoteText, &values.quoteFromMe,
-		&values.mediaKind, &values.mediaName, &values.mediaMIME,
+		&values.quoteMediaKind, &values.quoteMediaName, &values.quoteMediaMIME,
+		&values.mediaKind, &values.mediaName, &values.mediaMIME, &values.mediaDeclaredBytes, &values.mediaDownloadRef,
 	); err != nil {
 		return model.Message{}, sqliteOperationError(err)
 	}
@@ -114,7 +115,8 @@ func scanSQLitePageMessage(scanner sqliteScanner) (model.Message, error) {
 }
 
 const sqliteMessageValueColumns = `sent_at, from_me, body, body_truncated, retained_body,
-sender_id, is_group, quote_id, quote_text, quote_from_me, kind,
+sender_id, is_group, quote_id, quote_text, quote_from_me,
+quote_media_kind, quote_media_name, quote_media_mime, kind,
 COALESCE((SELECT display_name FROM attachments AS media_attachment
     WHERE media_attachment.chat_id = messages.chat_id
       AND media_attachment.message_id = messages.message_id
@@ -122,7 +124,15 @@ COALESCE((SELECT display_name FROM attachments AS media_attachment
 COALESCE((SELECT mime_type FROM attachments AS media_attachment
     WHERE media_attachment.chat_id = messages.chat_id
       AND media_attachment.message_id = messages.message_id
-      AND media_attachment.attachment_id = 'primary'), '')`
+      AND media_attachment.attachment_id = 'primary'), ''),
+COALESCE((SELECT declared_bytes FROM attachments AS media_attachment
+    WHERE media_attachment.chat_id = messages.chat_id
+      AND media_attachment.message_id = messages.message_id
+      AND media_attachment.attachment_id = 'primary'), 0),
+COALESCE((SELECT download_ref FROM attachments AS media_attachment
+    WHERE media_attachment.chat_id = messages.chat_id
+      AND media_attachment.message_id = messages.message_id
+      AND media_attachment.attachment_id = 'primary'), X'')`
 
 const sqliteMessagePageColumns = `chat_id, message_id, ` + sqliteMessageValueColumns
 

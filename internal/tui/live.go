@@ -96,8 +96,8 @@ func (state *chatState) admitLiveChat(event LiveMessage) (int, bool) {
 func validLiveMessage(event LiveMessage) bool {
 	return event.ChatID != "" && event.MessageID != "" &&
 		utf8.ValidString(event.ChatID) && utf8.ValidString(event.MessageID) && utf8.ValidString(event.Text) &&
-		utf8.ValidString(event.MediaKind) && utf8.ValidString(event.MediaName) && validMediaPresentation(event.MediaKind, event.MediaName) &&
-		validReplyMetadata(event.ReplyToID, event.ReplyToText, event.ReplyToFromMe) &&
+		utf8.ValidString(event.MediaKind) && utf8.ValidString(event.MediaName) && validMediaPresentation(event.MediaKind, event.MediaName) && validMediaMIME(event.MediaMIME) &&
+		validReplyMetadata(event.ReplyToID, event.ReplyToText, event.ReplyToFromMe, event.ReplyMediaKind, event.ReplyMediaName, event.ReplyMediaMIME) &&
 		len(event.SenderID) <= 512 && utf8.ValidString(event.SenderID) &&
 		!event.SentAt.IsZero() && !event.ActivityTime.IsZero() && !event.ActivityTime.Before(event.SentAt)
 }
@@ -125,19 +125,23 @@ func (state *chatState) applyLiveMessage(chatIndex int, event LiveMessage) liveM
 		text = ""
 	}
 	message := messageView{
-		id:           messageID(event.MessageID),
-		sentAt:       event.SentAt,
-		time:         localMessageTime(event.SentAt),
-		text:         text,
-		mediaKind:    event.MediaKind,
-		mediaName:    event.MediaName,
-		fromMe:       event.FromMe,
-		bodyRetained: event.BodyRetained,
-		replyText:    event.ReplyToText,
-		replyFromMe:  event.ReplyToFromMe,
-		replyToID:    messageID(event.ReplyToID),
-		hasReply:     event.ReplyToID != "",
-		senderID:     event.SenderID, isGroup: event.IsGroup,
+		id:             messageID(event.MessageID),
+		sentAt:         event.SentAt,
+		time:           localMessageTime(event.SentAt),
+		text:           text,
+		mediaKind:      event.MediaKind,
+		mediaName:      event.MediaName,
+		mediaMIME:      event.MediaMIME,
+		fromMe:         event.FromMe,
+		bodyRetained:   event.BodyRetained,
+		replyText:      event.ReplyToText,
+		replyFromMe:    event.ReplyToFromMe,
+		replyMediaKind: event.ReplyMediaKind,
+		replyMediaName: event.ReplyMediaName,
+		replyMediaMIME: event.ReplyMediaMIME,
+		replyToID:      messageID(event.ReplyToID),
+		hasReply:       event.ReplyToID != "",
+		senderID:       event.SenderID, isGroup: event.IsGroup,
 	}
 	inserted, insertionIndex := insertBoundedMessage(chat, message)
 	return liveMessageMutation{changed: changed || inserted, inserted: inserted, insertionIndex: insertionIndex}

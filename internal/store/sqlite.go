@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -19,11 +20,12 @@ import (
 
 // All application-cache timestamp columns use signed Unix milliseconds.
 const (
-	currentSQLiteSchemaVersion = 2
+	currentSQLiteSchemaVersion = 3
 	defaultSQLiteBusyTimeout   = time.Second
 	defaultSQLiteCacheKiB      = 2048
 	messageKindUnknown         = 0
 	primaryMediaAttachmentID   = "primary"
+	maxMediaDownloadRefBytes   = 4096
 )
 
 var (
@@ -390,9 +392,12 @@ func migrateSQLite(ctx context.Context, database *sql.DB, version int, hook migr
 			_ = transaction.Rollback()
 		}
 	}()
-	statements := sqliteSchemaV2
+	statements := sqliteSchemaV3
+	if version <= 1 {
+		statements = append(append([]string(nil), sqliteSchemaV2...), sqliteSchemaV3...)
+	}
 	if version == 0 {
-		statements = append(append([]string(nil), sqliteSchemaV1...), sqliteSchemaV2...)
+		statements = append(append([]string(nil), sqliteSchemaV1...), statements...)
 	}
 	for _, statement := range statements {
 		if _, err := transaction.ExecContext(ctx, statement); err != nil {
@@ -404,7 +409,7 @@ func migrateSQLite(ctx context.Context, database *sql.DB, version int, hook migr
 			return err
 		}
 	}
-	if _, err := transaction.ExecContext(ctx, "PRAGMA user_version = 2"); err != nil {
+	if _, err := transaction.ExecContext(ctx, "PRAGMA user_version = 3"); err != nil {
 		return err
 	}
 	if err := transaction.Commit(); err != nil {
@@ -744,6 +749,7 @@ func writeSQLiteMessage(ctx context.Context, transaction *sql.Tx, message model.
 		bodyBytes, bodyTruncated, retainedBody,
 		message.SenderID().String(), sqliteBool(message.IsGroup()),
 		message.Quote().MessageID().String(), message.Quote().Text(), sqliteBool(message.Quote().FromMe()),
+		int(message.Quote().Media().Kind()), message.Quote().Media().Name(), message.Quote().Media().MIMEType(),
 	)
 	if err != nil {
 		return fmt.Errorf("ingest message: %w", sqliteOperationError(err))
@@ -761,6 +767,7 @@ func writeSQLiteMessage(ctx context.Context, transaction *sql.Tx, message model.
 			int(message.Media().Kind()),
 			retainedBody, message.SenderID().String(), retainedBody, sqliteBool(message.IsGroup()),
 			message.Quote().MessageID().String(), message.Quote().Text(), sqliteBool(message.Quote().FromMe()),
+			int(message.Quote().Media().Kind()), message.Quote().Media().Name(), message.Quote().Media().MIMEType(),
 			message.ChatID().String(), message.MessageID().String(),
 			message.SentAt().UnixMilli(), fromMe,
 		)
@@ -778,9 +785,21 @@ func writeSQLiteMessage(ctx context.Context, transaction *sql.Tx, message model.
 		return fmt.Errorf("ingest message: %w", newSQLiteError(ErrStoreRejected, nil))
 	}
 	if media := message.Media(); media.Kind() != 0 {
+		var declaredBytes uint64
+		var downloadRef []byte
+		if download, ok := media.Download(); ok {
+			declaredBytes = download.DeclaredBytes()
+			if declaredBytes > math.MaxInt64 {
+				return fmt.Errorf("ingest media metadata: %w", newSQLiteError(ErrStoreRejected, nil))
+			}
+			downloadRef, err = encodeMediaDownload(download)
+			if err != nil {
+				return fmt.Errorf("ingest media metadata: %w", newSQLiteError(ErrStoreRejected, err))
+			}
+		}
 		if _, err := transaction.ExecContext(ctx, upsertMediaSQL,
 			message.ChatID().String(), message.MessageID().String(), primaryMediaAttachmentID,
-			int(media.Kind()), media.Name(), media.MIMEType(),
+			int(media.Kind()), media.Name(), media.MIMEType(), int64(declaredBytes), downloadRef,
 		); err != nil {
 			return fmt.Errorf("ingest media metadata: %w", sqliteOperationError(err))
 		}
@@ -832,7 +851,8 @@ func (store *SQLiteStore) Message(ctx context.Context, chatID model.ChatID, mess
 		&values.bodyTruncated,
 		&values.retainedBody,
 		&values.senderID, &values.isGroup, &values.quoteID, &values.quoteText, &values.quoteFromMe,
-		&values.mediaKind, &values.mediaName, &values.mediaMIME,
+		&values.quoteMediaKind, &values.quoteMediaName, &values.quoteMediaMIME,
+		&values.mediaKind, &values.mediaName, &values.mediaMIME, &values.mediaDeclaredBytes, &values.mediaDownloadRef,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.Message{}, newSQLiteError(ErrMessageNotFound, nil)
@@ -857,9 +877,14 @@ type sqliteMessageValues struct {
 	isGroup            int
 	quoteID, quoteText string
 	quoteFromMe        int
+	quoteMediaKind     int
+	quoteMediaName     string
+	quoteMediaMIME     string
 	mediaKind          int
 	mediaName          string
 	mediaMIME          string
+	mediaDeclaredBytes int64
+	mediaDownloadRef   []byte
 }
 
 func sqliteMessageFromValues(chatID, messageID string, values sqliteMessageValues) (model.Message, error) {
@@ -867,17 +892,26 @@ func sqliteMessageFromValues(chatID, messageID string, values sqliteMessageValue
 		values.bodyTruncated < 0 || values.bodyTruncated > 1 ||
 		values.retainedBody < 0 || values.retainedBody > 1 ||
 		!sqliteBoolean(values.isGroup) || !sqliteBoolean(values.quoteFromMe) ||
-		(values.retainedBody == 1 && !values.body.Valid) {
+		(values.retainedBody == 1 && !values.body.Valid) ||
+		(values.quoteID == "" && (values.quoteText != "" || values.quoteFromMe != 0 || values.quoteMediaKind != 0 || values.quoteMediaName != "" || values.quoteMediaMIME != "")) ||
+		(values.retainedBody == 0 && values.quoteID != "") {
 		return model.Message{}, newSQLiteError(ErrCorruptCache, nil)
 	}
 	var media model.Media
 	if values.mediaKind == messageKindUnknown {
-		if values.mediaName != "" || values.mediaMIME != "" {
+		if values.mediaName != "" || values.mediaMIME != "" || values.mediaDeclaredBytes != 0 || len(values.mediaDownloadRef) != 0 {
 			return model.Message{}, newSQLiteError(ErrCorruptCache, nil)
 		}
 	} else {
 		var err error
-		media, err = model.NewMedia(model.MediaKind(values.mediaKind), values.mediaName, values.mediaMIME)
+		if values.mediaDeclaredBytes < 0 || len(values.mediaDownloadRef) > maxMediaDownloadRefBytes {
+			return model.Message{}, newSQLiteError(ErrCorruptCache, nil)
+		}
+		if len(values.mediaDownloadRef) == 0 {
+			media, err = model.NewMedia(model.MediaKind(values.mediaKind), values.mediaName, values.mediaMIME)
+		} else {
+			media, err = decodeMediaDownload(model.MediaKind(values.mediaKind), values.mediaName, values.mediaMIME, uint64(values.mediaDeclaredBytes), values.mediaDownloadRef)
+		}
 		if err != nil {
 			return model.Message{}, newSQLiteError(ErrCorruptCache, err)
 		}
@@ -899,7 +933,20 @@ func sqliteMessageFromValues(chatID, messageID string, values sqliteMessageValue
 	if values.retainedBody == 0 {
 		message = message.WithoutBody()
 	} else if values.quoteID != "" {
-		quote, err := model.NewTextQuote(values.quoteID, values.quoteText, values.quoteFromMe == 1)
+		var quote model.TextQuote
+		var err error
+		if values.quoteMediaKind == 0 {
+			if values.quoteMediaName != "" || values.quoteMediaMIME != "" {
+				return model.Message{}, newSQLiteError(ErrCorruptCache, nil)
+			}
+			quote, err = model.NewTextQuote(values.quoteID, values.quoteText, values.quoteFromMe == 1)
+		} else {
+			media, mediaErr := model.NewMedia(model.MediaKind(values.quoteMediaKind), values.quoteMediaName, values.quoteMediaMIME)
+			if mediaErr != nil {
+				return model.Message{}, newSQLiteError(ErrCorruptCache, mediaErr)
+			}
+			quote, err = model.NewMediaQuote(values.quoteID, values.quoteText, values.quoteFromMe == 1, media)
+		}
 		if err != nil || len(values.quoteText) > model.MaxQuoteTextBytes {
 			return model.Message{}, newSQLiteError(ErrCorruptCache, err)
 		}
@@ -992,9 +1039,10 @@ const insertMessageSQL = `
 INSERT INTO messages(
     chat_id, message_id, sent_at, from_me, kind, body, body_bytes,
     body_truncated, local_revision, ingest_seq, retained_body,
-    sender_id, is_group, quote_id, quote_text, quote_from_me
+    sender_id, is_group, quote_id, quote_text, quote_from_me,
+	quote_media_kind, quote_media_name, quote_media_mime
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(chat_id, message_id) DO NOTHING`
 
 const updateMessageSQL = `
@@ -1017,12 +1065,15 @@ UPDATE messages SET
 	is_group = CASE WHEN retained_body = 1 AND ? = 0 THEN is_group ELSE MAX(is_group, ?) END,
 	quote_id = CASE WHEN quote_id != '' THEN quote_id ELSE ? END,
 	quote_text = CASE WHEN quote_id != '' THEN quote_text ELSE ? END,
-	quote_from_me = CASE WHEN quote_id != '' THEN quote_from_me ELSE ? END
+	quote_from_me = CASE WHEN quote_id != '' THEN quote_from_me ELSE ? END,
+	quote_media_kind = CASE WHEN quote_id != '' THEN quote_media_kind ELSE ? END,
+	quote_media_name = CASE WHEN quote_id != '' THEN quote_media_name ELSE ? END,
+	quote_media_mime = CASE WHEN quote_id != '' THEN quote_media_mime ELSE ? END
 WHERE chat_id = ? AND message_id = ? AND sent_at = ? AND from_me = ?`
 
 const upsertMediaSQL = `
-INSERT INTO attachments(chat_id, message_id, attachment_id, kind, display_name, mime_type)
-VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO attachments(chat_id, message_id, attachment_id, kind, display_name, mime_type, declared_bytes, download_ref)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(chat_id, message_id, attachment_id) DO UPDATE SET
 	kind = attachments.kind,
 	display_name = CASE
@@ -1032,6 +1083,14 @@ ON CONFLICT(chat_id, message_id, attachment_id) DO UPDATE SET
 	mime_type = CASE
 		WHEN attachments.kind != excluded.kind OR excluded.mime_type = '' THEN attachments.mime_type
 		ELSE excluded.mime_type
+	END,
+	declared_bytes = CASE
+		WHEN attachments.kind != excluded.kind OR excluded.download_ref IS NULL THEN attachments.declared_bytes
+		ELSE excluded.declared_bytes
+	END,
+	download_ref = CASE
+		WHEN attachments.kind != excluded.kind OR excluded.download_ref IS NULL THEN attachments.download_ref
+		ELSE excluded.download_ref
 	END`
 
 const updateChatActivitySQL = `

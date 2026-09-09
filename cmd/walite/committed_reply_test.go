@@ -138,3 +138,28 @@ func TestCommittedQuoteSurvivesLiveAndSnapshotAdapters(t *testing.T) {
 		}
 	}
 }
+
+func TestCommittedMediaQuoteSurvivesLiveAndSnapshotAdapters(t *testing.T) {
+	now := time.Date(2100, 8, 1, 12, 0, 0, 0, time.UTC)
+	media, _ := model.NewMedia(model.MediaImage, "", "image/jpeg")
+	quote, _ := model.NewMediaQuote("media-original", "Holiday Café 👋", false, media)
+	message := mustSnapshotMessage(t, "chat", "reply", now, true, "body 👋").WithQuote(quote)
+	committed, err := model.NewLiveMessageCommitted(message, 1, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live, ok := adaptLiveMessage(committed)
+	if !ok || live.ReplyToID != "media-original" || live.ReplyToText != quote.Text() || live.ReplyMediaKind != "image" || live.ReplyMediaMIME != "image/jpeg" {
+		t.Fatalf("live=%+v", live)
+	}
+	chat := mustSnapshotChat(t, "chat", "Synthetic", false, 1, now)
+	stub := &snapshotStub{chats: []model.Chat{chat}, messages: map[string][]model.Message{"chat": {message}}}
+	loaded, err := buildChatLoadResult(context.Background(), stub, tui.ChatLoadRequest{ChatID: "chat"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := loaded.Messages[0]
+	if got.ReplyToID != "media-original" || got.ReplyToText != quote.Text() || got.ReplyMediaKind != "image" || got.ReplyMediaMIME != "image/jpeg" {
+		t.Fatalf("snapshot=%+v", got)
+	}
+}

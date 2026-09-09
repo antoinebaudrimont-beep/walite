@@ -62,8 +62,7 @@ func TestAdaptMediaIsMetadataOnlyAndUnsupportedIsControlled(t *testing.T) {
 	if message.Media().Kind() != model.MediaImage || message.Media().MIMEType() != wantMIME || message.Text() != caption || message.Media().Name() != "" {
 		t.Fatalf("metadata=%+v text=%q", message.Media(), message.Text())
 	}
-	// The model owns only copied presentation strings. Mutating download fields
-	// after adaptation cannot affect it, and this pure adapter has no client on
+	// The model owns copied bounded fields. This pure adapter has no client on
 	// which it could perform a download or network lookup.
 	*upstream.Mimetype = "changed"
 	upstream.MediaKey[0] = 'X'
@@ -81,9 +80,11 @@ func TestHistorySyncMediaUsesExistingNewestMessageBound(t *testing.T) {
 	conversation := &waHistorySync.Conversation{ID: stringPointer("media-history@g.us")}
 	for index := 0; index < model.MaxBootstrapMessagesPerChat+10; index++ {
 		mime := "image/jpeg"
+		direct := fmt.Sprintf("/mms/image/%d", index)
+		length := uint64(index + 1)
 		conversation.Messages = append(conversation.Messages, &waHistorySync.HistorySyncMsg{Message: bootstrapWebMessage(
 			"media-history@g.us", fmt.Sprintf("media-%02d", index), now.Add(time.Duration(index)*time.Second), false,
-			"22222@s.whatsapp.net", &waE2E.Message{ImageMessage: &waE2E.ImageMessage{Mimetype: &mime}},
+			"22222@s.whatsapp.net", &waE2E.Message{ImageMessage: &waE2E.ImageMessage{Mimetype: &mime, DirectPath: &direct, MediaKey: []byte("key"), FileSHA256: []byte("hash"), FileEncSHA256: []byte("encrypted"), FileLength: &length}},
 		)})
 	}
 	record, ok := client.adaptBootstrapConversation(model.BootstrapFull, conversation, now)
@@ -94,5 +95,29 @@ func TestHistorySyncMediaUsesExistingNewestMessageBound(t *testing.T) {
 	last, _ := record.At(record.Len() - 1)
 	if first.MessageID().String() != "media-10" || last.MessageID().String() != "media-59" || first.Media().Kind() != model.MediaImage {
 		t.Fatalf("bounded media first=%q last=%q", first.MessageID(), last.MessageID())
+	}
+	download, ok := first.Media().Download()
+	if !ok || download.DirectPath() != "/mms/image/10" || download.DeclaredBytes() != 11 {
+		t.Fatalf("history download=%+v ok=%t", download, ok)
+	}
+}
+
+func TestAdaptMediaPreservesDownloadInputsWithoutProtocolObject(t *testing.T) {
+	sentAt := time.Unix(11, 0).UTC()
+	direct, mime := "/mms/image", "image/jpeg"
+	key, hash, encrypted := []byte("key"), []byte("hash"), []byte("encrypted")
+	length := uint64(42)
+	upstream := &waE2E.ImageMessage{DirectPath: &direct, Mimetype: &mime, MediaKey: key, FileSHA256: hash, FileEncSHA256: encrypted, FileLength: &length}
+	event, ok := adaptMessage(upstreamTextMessage("12345", "downloadable", sentAt, false, &waE2E.Message{ImageMessage: upstream}), sentAt)
+	if !ok {
+		t.Fatal("downloadable image ignored")
+	}
+	download, ok := event.Message().Media().Download()
+	if !ok || download.DirectPath() != direct || string(download.MediaKey()) != "key" || download.DeclaredBytes() != length {
+		t.Fatalf("download=%+v ok=%t", download, ok)
+	}
+	upstream.MediaKey[0] = 'X'
+	if string(download.MediaKey()) != "key" {
+		t.Fatal("adapter retained protobuf bytes")
 	}
 }

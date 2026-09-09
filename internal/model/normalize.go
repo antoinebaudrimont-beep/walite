@@ -264,7 +264,7 @@ func validateMessage(message Message) (int, error) {
 }
 
 func messageByteSize(chatID, messageID, text string, quote TextQuote, media Media, sender ContactID) (int, bool) {
-	return checkedByteSum(len(chatID), len(messageID), len(text), len(quote.id.value), len(quote.text), len(media.name), len(media.mimeType), len(sender.value))
+	return checkedByteSum(len(chatID), len(messageID), len(text), len(quote.id.value), len(quote.text), len(quote.media.name), len(quote.media.mimeType), len(media.name), len(media.mimeType), len(media.directPath), len(media.mediaKey), len(media.fileSHA256), len(media.fileEncSHA256), len(sender.value))
 }
 
 func normalizedEventByteSize(messageBytes int) (int, error) {

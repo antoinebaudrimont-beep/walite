@@ -23,6 +23,7 @@ func handleKey(model *viewModel, event *tcell.EventKey, width, height int) (chan
 		return handleSettingsKey(model, event), false
 	}
 	if event.Key() == tcell.KeyCtrlP {
+		closeMedia(model)
 		openSettings(model)
 		return true, false
 	}
@@ -53,6 +54,11 @@ func handleKey(model *viewModel, event *tcell.EventKey, width, height int) (chan
 	if model.emojiPicker.open {
 		return handleEmojiKey(model, event, width, height), false
 	}
+	if event.Key() == tcell.KeyEscape && model.mediaTarget.active {
+		closeMedia(model)
+		model.sendStatus = "Preview closed"
+		return true, false
+	}
 	if model.replySelect.valid && model.replySelect.fromCompose {
 		return handleComposeReplySelectionKey(model, event, width, height), false
 	}
@@ -61,6 +67,9 @@ func handleKey(model *viewModel, event *tcell.EventKey, width, height int) (chan
 	}
 	if model.replySelect.valid {
 		return handleReplySelectionKey(model, event, width, height), false
+	}
+	if closesMediaPreview(event) {
+		closeMedia(model)
 	}
 
 	switch {
@@ -97,8 +106,26 @@ func handleKey(model *viewModel, event *tcell.EventKey, width, height int) (chan
 		return scrollPage(model, width, height, true), false
 	case event.Key() == tcell.KeyPgDn || event.Key() == tcell.KeyCtrlD:
 		return scrollPage(model, width, height, false), false
+	case event.Key() == tcell.KeyRune && (event.Rune() == 'P' || event.Rune() == 'p'):
+		return requestVisibleMedia(model, MediaPreview, width, height), false
+	case event.Key() == tcell.KeyRune && (event.Rune() == 'S' || event.Rune() == 's'):
+		return requestVisibleMedia(model, MediaSave, width, height), false
 	}
 	return false, false
+}
+
+func closesMediaPreview(event *tcell.EventKey) bool {
+	if event == nil {
+		return false
+	}
+	switch event.Key() {
+	case tcell.KeyEnter, tcell.KeyCtrlR, tcell.KeyUp, tcell.KeyDown, tcell.KeyHome, tcell.KeyEnd, tcell.KeyPgUp, tcell.KeyPgDn, tcell.KeyCtrlU, tcell.KeyCtrlD:
+		return true
+	case tcell.KeyRune:
+		return event.Rune() == 'j' || event.Rune() == 'k'
+	default:
+		return false
+	}
 }
 
 func moveChatSelection(model *viewModel, delta int) bool {
@@ -126,14 +153,22 @@ func moveChatSelection(model *viewModel, delta int) bool {
 func handleReplySelectionKey(model *viewModel, event *tcell.EventKey, width, height int) bool {
 	switch {
 	case event.Key() == tcell.KeyEscape:
+		closeMedia(model)
 		model.replySelect = replySelectionState{}
 		return true
 	case event.Key() == tcell.KeyEnter:
+		closeMedia(model)
 		return chooseReplyTarget(model)
 	case event.Key() == tcell.KeyUp || event.Key() == tcell.KeyRune && event.Rune() == 'k':
+		closeMedia(model)
 		return moveMessageFocus(model, -1, width, height)
 	case event.Key() == tcell.KeyDown || event.Key() == tcell.KeyRune && event.Rune() == 'j':
+		closeMedia(model)
 		return moveMessageFocus(model, 1, width, height)
+	case event.Key() == tcell.KeyRune && (event.Rune() == 'P' || event.Rune() == 'p'):
+		return requestMediaAt(model, MediaPreview, model.replySelect.index, width, height)
+	case event.Key() == tcell.KeyRune && (event.Rune() == 'S' || event.Rune() == 's'):
+		return requestMediaAt(model, MediaSave, model.replySelect.index, width, height)
 	}
 	return false
 }
@@ -184,11 +219,18 @@ func handleComposeReplySelectionKey(model *viewModel, event *tcell.EventKey, wid
 		model.replySelect = replySelectionState{}
 		return true
 	case event.Key() == tcell.KeyEnter:
+		closeMedia(model)
 		return chooseReplyTarget(model)
 	case event.Key() == tcell.KeyUp || event.Key() == tcell.KeyRune && event.Rune() == 'k':
+		closeMedia(model)
 		return moveMessageFocus(model, -1, width, height)
 	case event.Key() == tcell.KeyDown || event.Key() == tcell.KeyRune && event.Rune() == 'j':
+		closeMedia(model)
 		return moveMessageFocus(model, 1, width, height)
+	case event.Key() == tcell.KeyRune && (event.Rune() == 'P' || event.Rune() == 'p'):
+		return requestMediaAt(model, MediaPreview, model.replySelect.index, width, height)
+	case event.Key() == tcell.KeyRune && (event.Rune() == 'S' || event.Rune() == 's'):
+		return requestMediaAt(model, MediaSave, model.replySelect.index, width, height)
 	}
 	return false
 }
@@ -252,8 +294,9 @@ func submitOutgoingMessage(model *viewModel) bool {
 	request := SendRequest{ChatID: selected.id, Text: model.composer.text()}
 	if model.replyTarget.valid {
 		request.ReplyToID = string(model.replyTarget.id)
-		if target, found := model.chats.findMessageByID(model.chats.selectedIndex(), model.replyTarget.id); found && target.bodyRetained {
+		if target, found := model.chats.findMessageByID(model.chats.selectedIndex(), model.replyTarget.id); found && (target.bodyRetained || target.mediaKind != "") {
 			request.ReplyToText, request.ReplyToFromMe = target.text, target.fromMe
+			request.ReplyMediaKind, request.ReplyMediaName, request.ReplyMediaMIME = target.mediaKind, target.mediaName, target.mediaMIME
 		}
 	}
 	if err := model.send(request); err != nil {

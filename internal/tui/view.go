@@ -39,6 +39,9 @@ type viewModel struct {
 	localReadRequest LocalReadRequest
 	readRequest      ReadReceiptRequest
 	readIntent       readReceiptIntent
+	mediaTarget      mediaTargetState
+	media            func(MediaRequest) bool
+	closeMedia       func()
 }
 
 func draw(screen tcell.Screen, model *viewModel) {
@@ -280,14 +283,14 @@ func drawComposer(screen tcell.Screen, model *viewModel, x, y, limit int) {
 func navigationFooter(model *viewModel, narrow bool) string {
 	if model.replySelect.valid {
 		if narrow {
-			return "↑/↓ msg  Enter reply  Esc cancel"
+			return "↑/↓ msg  P/S media  Enter reply  Esc cancel"
 		}
-		return "↑/↓ message  Enter reply  Esc cancel"
+		return "↑/↓ message  P preview  S save  Enter reply  Esc cancel"
 	}
 	if narrow {
-		return "↑/↓ scroll  j/k chat  Enter  Ctrl-P  Esc quit"
+		return "↑/↓ scroll  j/k chat  P/S media  Enter  Ctrl-P  Esc quit"
 	}
-	return "↑/↓ scroll  j/k chats  Enter compose  Ctrl-P settings  Esc quit"
+	return "↑/↓ scroll  j/k chats  P preview  S save  Enter compose  Ctrl-P settings  Esc quit"
 }
 
 func narrowNavigationFooter(model *viewModel, width int) string {
@@ -378,7 +381,7 @@ func drawMessages(screen tcell.Screen, model *viewModel, chatIndex int, chat *ch
 				break
 			}
 		}
-		selected := model.replySelect.valid && model.replySelect.index == index
+		selected := model.replySelect.valid && model.replySelect.index == index || model.mediaTarget.active && model.mediaTarget.messageID == chat.messages[index].id
 		y += drawMessage(screen, model, chatIndex, chat.messages[index], x, y, limit, bottom, selected)
 	}
 }
@@ -450,11 +453,16 @@ func drawMessage(screen tcell.Screen, model *viewModel, chatIndex int, message m
 
 func messageQuoteLine(model *viewModel, chatIndex int, message messageView, width int) string {
 	reference := "original message unavailable"
-	if message.replyText != "" {
-		reference = message.replyText
+	if message.replyText != "" || message.replyMediaKind != "" {
+		reference = mediaPlaceholder(message.replyMediaKind, message.replyMediaName)
+		if reference == "" {
+			reference = message.replyText
+		} else if message.replyText != "" {
+			reference += " " + message.replyText
+		}
 	}
 	if original, ok := model.chats.findMessageByID(chatIndex, message.replyToID); ok {
-		if message.replyText == "" {
+		if message.replyText == "" && message.replyMediaKind == "" {
 			reference = messageDisplayText(original)
 		}
 		if model.options.ShowTimestamps {

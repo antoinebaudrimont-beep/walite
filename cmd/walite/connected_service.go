@@ -23,6 +23,7 @@ type connectedApplicationService struct {
 	store        *store.SQLiteStore
 	sender       wa.TextSender
 	readReceipts wa.ReadReceiptSender
+	media        wa.MediaDownloader
 	display      displaySource
 	source       service.EventSource
 	policy       service.RetentionPolicy
@@ -30,6 +31,10 @@ type connectedApplicationService struct {
 }
 
 func newConnectedApplicationService(source service.EventSource, sender wa.TextSender, readReceipts wa.ReadReceiptSender, cache *store.SQLiteStore) (applicationService, error) {
+	return newConnectedApplicationServiceWithMedia(source, sender, readReceipts, nil, cache)
+}
+
+func newConnectedApplicationServiceWithMedia(source service.EventSource, sender wa.TextSender, readReceipts wa.ReadReceiptSender, media wa.MediaDownloader, cache *store.SQLiteStore) (applicationService, error) {
 	if source == nil || sender == nil || readReceipts == nil || cache == nil {
 		return nil, errors.New("connected event source rejected")
 	}
@@ -59,7 +64,21 @@ func newConnectedApplicationService(source service.EventSource, sender wa.TextSe
 		return nil, err
 	}
 	display, _ := source.(displaySource)
-	return &connectedApplicationService{core: core, store: cache, sender: sender, readReceipts: readReceipts, display: display, source: source, policy: policy, cacheUpdates: make(chan struct{}, 1)}, nil
+	return &connectedApplicationService{core: core, store: cache, sender: sender, readReceipts: readReceipts, media: media, display: display, source: source, policy: policy, cacheUpdates: make(chan struct{}, 1)}, nil
+}
+
+func (application *connectedApplicationService) MediaMessage(ctx context.Context, chatID model.ChatID, messageID model.MessageID) (model.Message, error) {
+	if application == nil || application.store == nil {
+		return model.Message{}, errors.New("media unavailable")
+	}
+	return application.store.Message(ctx, chatID, messageID)
+}
+
+func (application *connectedApplicationService) DownloadMedia(ctx context.Context, media model.Media, file wa.MediaFile) error {
+	if application == nil || application.media == nil {
+		return wa.ErrMediaUnavailable
+	}
+	return application.media.DownloadMedia(ctx, media, file)
 }
 
 func (application *connectedApplicationService) MarkRead(ctx context.Context, request model.ReadReceiptRequest) error {

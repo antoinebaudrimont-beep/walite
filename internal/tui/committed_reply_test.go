@@ -83,12 +83,16 @@ func TestCommittedReplyExcerptRendersWithoutOriginalInLiveAndSnapshot(t *testing
 
 func TestReplyPresentationMetadataStaysBounded(t *testing.T) {
 	for _, test := range []struct {
-		id, text string
-		fromMe   bool
-		valid    bool
+		id, text, mediaKind, mediaName, mediaMIME string
+		fromMe                                    bool
+		valid                                     bool
 	}{
 		{valid: true},
 		{id: strings.Repeat("i", maxReplyIDBytes), text: strings.Repeat("q", maxReplyTextBytes-4) + "👋", fromMe: true, valid: true},
+		{id: "media", mediaKind: mediaImage, mediaMIME: "image/jpeg", valid: true},
+		{id: "media", mediaKind: mediaDocument, mediaName: "report.pdf", mediaMIME: "application/pdf", valid: true},
+		{id: "media", mediaKind: "unknown"},
+		{id: "media", mediaKind: mediaImage, mediaMIME: strings.Repeat("m", maxMediaMIMEBytes+1)},
 		{id: "original", text: strings.Repeat("q", maxReplyTextBytes+1)},
 		{id: strings.Repeat("i", maxReplyIDBytes+1), text: "quote"},
 		{id: "original", text: "\xff"},
@@ -99,6 +103,7 @@ func TestReplyPresentationMetadataStaysBounded(t *testing.T) {
 	} {
 		event := liveTestMessage("chat", "reply", 70, 70, true, "reply", 0)
 		event.ReplyToID, event.ReplyToText, event.ReplyToFromMe = test.id, test.text, test.fromMe
+		event.ReplyMediaKind, event.ReplyMediaName, event.ReplyMediaMIME = test.mediaKind, test.mediaName, test.mediaMIME
 		state, _ := chatStateFromInitial(InitialState{})
 		view := viewModel{chats: state, options: DefaultOptions()}
 		before := *state
@@ -108,7 +113,8 @@ func TestReplyPresentationMetadataStaysBounded(t *testing.T) {
 		if !test.valid && *state != before {
 			t.Fatal("invalid quote mutated working set")
 		}
-		_, err := chatStateFromInitial(InitialState{Chats: []InitialChat{{ID: "chat", Messages: []InitialMessage{{ID: "reply", SentAt: event.SentAt, ReplyToID: test.id, ReplyToText: test.text, ReplyToFromMe: test.fromMe}}}}})
+		_, err := chatStateFromInitial(InitialState{Chats: []InitialChat{{ID: "chat", Messages: []InitialMessage{{ID: "reply", SentAt: event.SentAt, ReplyToID: test.id, ReplyToText: test.text, ReplyToFromMe: test.fromMe,
+			ReplyMediaKind: test.mediaKind, ReplyMediaName: test.mediaName, ReplyMediaMIME: test.mediaMIME}}}}})
 		if (err == nil) != test.valid {
 			t.Fatal("snapshot quote validation differs")
 		}

@@ -25,8 +25,9 @@ func TestMilestone4EProductionShapedConstruction(t *testing.T) {
 	source := connection.RealtimeSource()
 	textSender := connection.TextSender()
 	readReceiptSender := connection.ReadReceiptSender()
-	if source == nil || textSender == nil || readReceiptSender == nil {
-		t.Fatalf("capabilities source=%t text=%t receipt=%t linked=%t", source != nil, textSender != nil, readReceiptSender != nil, connection.Linked())
+	mediaDownloader := connection.MediaDownloader()
+	if source == nil || textSender == nil || readReceiptSender == nil || mediaDownloader == nil {
+		t.Fatalf("capabilities source=%t text=%t receipt=%t media=%t linked=%t", source != nil, textSender != nil, readReceiptSender != nil, mediaDownloader != nil, connection.Linked())
 	}
 	cache, err := store.OpenSQLite(ctx, store.SQLiteOptions{Path: cachePath})
 	if err != nil {
@@ -54,7 +55,7 @@ func TestMilestone4EProductionShapedConstruction(t *testing.T) {
 	if err := source.SeedChatIDs(ids); err != nil {
 		t.Fatalf("seed cached chat identities: %v", err)
 	}
-	application, err := newConnectedApplicationService(source, textSender, readReceiptSender, cache)
+	application, err := newConnectedApplicationServiceWithMedia(source, textSender, readReceiptSender, mediaDownloader, cache)
 	if err != nil || application == nil {
 		t.Fatalf("construct service: application=%t err=%v", application != nil, err)
 	}

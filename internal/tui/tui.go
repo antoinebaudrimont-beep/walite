@@ -96,6 +96,8 @@ func runInitialized(
 	screen.HideCursor()
 	model := viewModel{chats: chats, options: input.Options}
 	model.asyncSend = input.SendResults != nil
+	model.media, model.closeMedia = input.Media, input.CloseMedia
+	defer closeMedia(&model)
 	if input.Send != nil {
 		model.send = func(request SendRequest) error { return input.Send(ctx, request) }
 	}
@@ -133,6 +135,7 @@ func runInitialized(
 	summaryUpdates := input.SummaryUpdates
 	chatLoads := input.ChatLoads
 	optionsResults := input.OptionsResults
+	mediaResults := input.MediaResults
 
 	for {
 		select {
@@ -187,6 +190,15 @@ func runInitialized(
 				draw(screen, &model)
 				screen.Show()
 			}
+		case result, ok := <-mediaResults:
+			if !ok {
+				mediaResults = nil
+				continue
+			}
+			if applyMediaResult(&model, result) {
+				draw(screen, &model)
+				screen.Show()
+			}
 		case event, ok := <-liveEvents:
 			if !ok {
 				liveEvents = nil
@@ -222,6 +234,7 @@ func runInitialized(
 					screen.Show()
 				}
 			case *tcell.EventResize:
+				closeMedia(&model)
 				screen.Sync()
 				width, height := screen.Size()
 				clampView(&model, width, height)

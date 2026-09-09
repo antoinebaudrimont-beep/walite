@@ -308,13 +308,17 @@ func adaptMessageContent(message *waE2E.Message, ownIDs []types.JID) (string, mo
 	var kind model.MediaKind
 	var name, mimeType, caption string
 	var contextInfo *waE2E.ContextInfo
+	var downloadable whatsmeow.DownloadableMessage
+	var declaredBytes uint64
 	switch {
 	case message.GetImageMessage() != nil:
 		value := message.GetImageMessage()
 		kind, mimeType, caption, contextInfo = model.MediaImage, value.GetMimetype(), value.GetCaption(), value.GetContextInfo()
+		downloadable, declaredBytes = value, value.GetFileLength()
 	case message.GetVideoMessage() != nil:
 		value := message.GetVideoMessage()
 		kind, mimeType, caption, contextInfo = model.MediaVideo, value.GetMimetype(), value.GetCaption(), value.GetContextInfo()
+		downloadable, declaredBytes = value, value.GetFileLength()
 	case message.GetDocumentMessage() != nil:
 		value := message.GetDocumentMessage()
 		name = value.GetFileName()
@@ -322,16 +326,22 @@ func adaptMessageContent(message *waE2E.Message, ownIDs []types.JID) (string, mo
 			name = value.GetTitle()
 		}
 		kind, mimeType, caption, contextInfo = model.MediaDocument, value.GetMimetype(), value.GetCaption(), value.GetContextInfo()
+		downloadable, declaredBytes = value, value.GetFileLength()
 	case message.GetAudioMessage() != nil:
 		value := message.GetAudioMessage()
 		kind, mimeType, contextInfo = model.MediaAudio, value.GetMimetype(), value.GetContextInfo()
+		downloadable, declaredBytes = value, value.GetFileLength()
 	case message.GetStickerMessage() != nil:
 		value := message.GetStickerMessage()
 		kind, mimeType, contextInfo = model.MediaSticker, value.GetMimetype(), value.GetContextInfo()
+		downloadable, declaredBytes = value, value.GetFileLength()
 	default:
 		return "", model.TextQuote{}, model.Media{}, false
 	}
 	media, err := model.NewMedia(kind, name, mimeType)
+	if downloadable.GetDirectPath() != "" && len(downloadable.GetMediaKey()) > 0 && len(downloadable.GetFileSHA256()) > 0 && len(downloadable.GetFileEncSHA256()) > 0 {
+		media, err = model.NewDownloadableMedia(kind, name, mimeType, downloadable.GetDirectPath(), downloadable.GetMediaKey(), downloadable.GetFileSHA256(), downloadable.GetFileEncSHA256(), declaredBytes)
+	}
 	if err != nil {
 		return "", model.TextQuote{}, model.Media{}, false
 	}

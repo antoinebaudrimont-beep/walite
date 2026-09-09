@@ -330,7 +330,8 @@ WITH ranked AS (
            ) AS body_rank
     FROM messages
 ), eligible AS (
-    SELECT message.body_bytes + length(CAST(message.quote_text AS BLOB)) + length(CAST(message.quote_id AS BLOB)) AS body_bytes
+    SELECT message.body_bytes + length(CAST(message.quote_text AS BLOB)) + length(CAST(message.quote_id AS BLOB))
+           + length(CAST(message.quote_media_name AS BLOB)) + length(CAST(message.quote_media_mime AS BLOB)) AS body_bytes
     FROM messages AS message
     JOIN ranked
       ON ranked.chat_id = message.chat_id
@@ -370,6 +371,9 @@ SET body = NULL,
     quote_id = '',
     quote_text = '',
     quote_from_me = 0,
+	quote_media_kind = 0,
+	quote_media_name = '',
+	quote_media_mime = '',
     retained_body = 0
 WHERE EXISTS (
     SELECT 1

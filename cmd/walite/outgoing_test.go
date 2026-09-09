@@ -107,6 +107,16 @@ func TestSendTextFromTUIAdaptsPlainTextAndReply(t *testing.T) {
 	if application.calls != 2 || application.request.Reply().MessageID().String() != request.ReplyToID || application.request.Reply().Text() != request.ReplyToText || !application.request.Reply().FromMe() {
 		t.Fatalf("reply metadata lost: calls=%d request=%+v", application.calls, application.request)
 	}
+	request.ReplyToText, request.ReplyToFromMe = "", false
+	request.ReplyMediaKind, request.ReplyMediaName, request.ReplyMediaMIME = "document", "report 日本語.pdf", "application/pdf"
+	if err := sendTextFromTUI(context.Background(), application, request); err != nil {
+		t.Fatalf("media reply=%v", err)
+	}
+	quote := application.request.Reply()
+	if application.calls != 3 || quote.MessageID().String() != request.ReplyToID || quote.Text() != "" || quote.Media().Kind() != model.MediaDocument ||
+		quote.Media().Name() != request.ReplyMediaName || quote.Media().MIMEType() != request.ReplyMediaMIME {
+		t.Fatalf("media reply metadata lost: calls=%d quote=%+v", application.calls, quote)
+	}
 }
 
 func TestOfflineApplicationOutgoingPathCommitsBeforeLivePresentation(t *testing.T) {

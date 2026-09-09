@@ -62,7 +62,7 @@ func TestMilestone4BProductionCompositionUsesConnectionOwnedSourceAndSender(t *t
 		!strings.Contains(string(application), "connection.TextSender()") ||
 		!strings.Contains(string(application), "connection.ReadReceiptSender()") ||
 		!strings.Contains(string(application), "realtimeSource.SeedChatIDs(cachedIDs)") ||
-		!strings.Contains(string(application), "newConnectedApplicationService(realtimeSource, textSender, readReceiptSender, cache)") {
+		!strings.Contains(string(application), "newConnectedApplicationServiceWithMedia(realtimeSource, textSender, readReceiptSender, mediaDownloader, cache)") {
 		t.Fatal("production authentication does not compose the connection-owned realtime source")
 	}
 	if !strings.Contains(string(demo), "wa.NewOfflineTextSender") {

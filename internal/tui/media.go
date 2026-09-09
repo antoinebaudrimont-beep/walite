@@ -1,5 +1,7 @@
 package tui
 
+import "unicode/utf8"
+
 const (
 	mediaImage    = "image"
 	mediaVideo    = "video"
@@ -8,7 +10,12 @@ const (
 	mediaSticker  = "sticker"
 
 	maxMediaNameBytes = 512
+	maxMediaMIMEBytes = 256
 )
+
+func validMediaMIME(value string) bool {
+	return len(value) <= maxMediaMIMEBytes && utf8.ValidString(value)
+}
 
 func validMediaPresentation(kind, name string) bool {
 	if kind == "" {

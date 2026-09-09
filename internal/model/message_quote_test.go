@@ -58,8 +58,11 @@ func TestMessageQuoteSurvivesNormalizedCopiesAndByteAccounting(t *testing.T) {
 
 func TestMessageQuoteKeepsMaximumBatchBounded(t *testing.T) {
 	id := strings.Repeat("i", MaxIdentifierBytes)
-	quote, _ := NewTextQuote(id, strings.Repeat("q", MaxQuoteTextBytes), true)
-	media, _ := NewMedia(MediaDocument, strings.Repeat("n", MaxMediaNameBytes), strings.Repeat("m", MaxMediaMIMEBytes))
+	quoteMedia, _ := NewMedia(MediaDocument, strings.Repeat("r", MaxMediaNameBytes), strings.Repeat("t", MaxMediaMIMEBytes))
+	quote, _ := NewMediaQuote(id, strings.Repeat("q", MaxQuoteTextBytes), true, quoteMedia)
+	media, _ := NewDownloadableMedia(MediaDocument, strings.Repeat("n", MaxMediaNameBytes), strings.Repeat("m", MaxMediaMIMEBytes),
+		"/"+strings.Repeat("p", MaxMediaDirectPathBytes-1), []byte(strings.Repeat("k", MaxMediaKeyBytes)),
+		[]byte(strings.Repeat("h", MaxMediaHashBytes)), []byte(strings.Repeat("e", MaxMediaHashBytes)), 1)
 	message, err := NewMessage(MessageInput{ChatID: id, MessageID: id, SenderID: id, IsGroup: true, SentAt: time.Unix(1, 0), Text: strings.Repeat("b", MaxRetainedTextBytes), Quote: quote, Media: media})
 	if err != nil {
 		t.Fatal(err)

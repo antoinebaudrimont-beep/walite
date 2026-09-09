@@ -100,6 +100,38 @@ func TestReplySendUsesSameReservationAndSuccessCancellationContract(t *testing.T
 	}
 }
 
+func TestMediaReplyPreservesDescriptorThroughRealtimeAdmission(t *testing.T) {
+	media, _ := model.NewMedia(model.MediaImage, "", "image/jpeg")
+	quote, _ := model.NewMediaQuote("media-original", "Holiday Café 👋", false, media)
+	request, err := NewSendTextRequest("opaque-chat", "reply 👋", quote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	sender := quotedSenderFunc(func(_ context.Context, id model.ChatID, text string, quotes ...model.TextQuote) (model.Event, error) {
+		calls++
+		if len(quotes) != 1 || quotes[0] != quote {
+			t.Fatal("media quote lost before transport")
+		}
+		return outgoingTestEvent(t, id, "media-reply", writerTestTime, text), nil
+	})
+	options := validCoreOptions()
+	options.Realtime.Bytes = int64(options.Realtime.Entries) * model.MaxNormalizedEventBytes
+	core, err := NewWithTextSender(options, newCoreTestSource(), defaultHistoryStore(t), &historyPolicy{}, newManualClock(writerTestTime), sender)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core.acceptingSends.Store(true)
+	if err := core.SendText(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	queued, ok := core.realtimeQ.TryTake()
+	if !ok || calls != 1 || queued.Value().Message().Quote() != quote {
+		t.Fatalf("queued=%t calls=%d", ok, calls)
+	}
+	_ = queued.Release()
+}
+
 func TestSendRequestAllowsOnlyOneValidatedQuote(t *testing.T) {
 	quote, _ := model.NewTextQuote("id", "quoted", false)
 	for _, quotes := range [][]model.TextQuote{{{}}, {quote, quote}} {

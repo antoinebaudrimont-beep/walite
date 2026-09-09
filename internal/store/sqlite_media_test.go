@@ -87,3 +87,37 @@ func TestSQLiteRealtimeMediaCommitRetainsMetadata(t *testing.T) {
 		t.Fatalf("duplicate changed media=%+v err=%v", stored.Media(), err)
 	}
 }
+
+func TestSQLiteDownloadDescriptorSurvivesRestartAndDuplicateCannotDowngradeIt(t *testing.T) {
+	ctx := context.Background()
+	path := testSQLitePath(t)
+	disk, err := OpenSQLite(ctx, SQLiteOptions{Path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	media, _ := model.NewDownloadableMedia(model.MediaImage, "holiday.jpg", "image/jpeg", "/mms/image", []byte("key"), []byte("hash"), []byte("encrypted"), 7)
+	message, _ := model.NewMessage(model.MessageInput{ChatID: "chat", MessageID: "image", SentAt: time.Unix(1, 0).UTC(), Media: media})
+	if err := disk.PutMessage(ctx, message); err != nil {
+		t.Fatal(err)
+	}
+	presentationOnly, _ := model.NewMedia(model.MediaImage, "better.jpg", "image/jpeg")
+	if err := disk.PutMessage(ctx, message.WithMedia(presentationOnly)); err != nil {
+		t.Fatal(err)
+	}
+	if err := disk.Close(); err != nil {
+		t.Fatal(err)
+	}
+	disk, err = OpenSQLite(ctx, SQLiteOptions{Path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer disk.Close()
+	got, err := disk.Message(ctx, message.ChatID(), message.MessageID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	download, ok := got.Media().Download()
+	if !ok || download.DirectPath() != "/mms/image" || download.DeclaredBytes() != 7 || string(download.MediaKey()) != "key" {
+		t.Fatalf("media=%+v download=%+v", got.Media(), download)
+	}
+}

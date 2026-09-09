@@ -28,12 +28,19 @@ func NewSendTextRequest(chatID, text string, quotes ...model.TextQuote) (SendTex
 		return SendTextRequest{}, &CoreError{Kind: CoreMalformed, Operation: CoreOperationSend}
 	}
 	if len(quotes) == 1 {
-		request.reply, err = model.NewTextQuote(quotes[0].MessageID().String(), quotes[0].Text(), quotes[0].FromMe())
+		request.reply, err = cloneSendQuote(quotes[0])
 		if err != nil {
 			return SendTextRequest{}, &CoreError{Kind: CoreMalformed, Operation: CoreOperationSend}
 		}
 	}
 	return request, nil
+}
+
+func cloneSendQuote(quote model.TextQuote) (model.TextQuote, error) {
+	if quote.Media().Kind() != 0 {
+		return model.NewMediaQuote(quote.MessageID().String(), quote.Text(), quote.FromMe(), quote.Media())
+	}
+	return model.NewTextQuote(quote.MessageID().String(), quote.Text(), quote.FromMe())
 }
 
 // ChatID returns the stable selected-chat identity.

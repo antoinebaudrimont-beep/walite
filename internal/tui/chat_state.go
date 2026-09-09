@@ -16,31 +16,37 @@ const (
 type messageID string
 
 type messageView struct {
-	id            messageID
-	sentAt        time.Time
-	time          string
-	text          string
-	mediaKind     string
-	mediaName     string
-	fromMe        bool
-	bodyRetained  bool
-	replyToID     messageID
-	hasReply      bool
-	replyText     string
-	replyFromMe   bool
-	senderID      string
-	senderName    string
-	senderQuality uint8
-	isGroup       bool
+	id             messageID
+	sentAt         time.Time
+	time           string
+	text           string
+	mediaKind      string
+	mediaName      string
+	mediaMIME      string
+	fromMe         bool
+	bodyRetained   bool
+	replyToID      messageID
+	hasReply       bool
+	replyText      string
+	replyFromMe    bool
+	replyMediaKind string
+	replyMediaName string
+	replyMediaMIME string
+	senderID       string
+	senderName     string
+	senderQuality  uint8
+	isGroup        bool
 }
 
 // Presentation mirrors the application's bounded quote fields without an
 // application-model dependency. The adapter tests check fidelity at this seam.
-func validReplyMetadata(id, text string, fromMe bool) bool {
+func validReplyMetadata(id, text string, fromMe bool, mediaKind, mediaName, mediaMIME string) bool {
 	if id == "" {
-		return text == "" && !fromMe
+		return text == "" && !fromMe && mediaKind == "" && mediaName == "" && mediaMIME == ""
 	}
-	return len(id) <= maxReplyIDBytes && utf8.ValidString(id) && text != "" && len(text) <= maxReplyTextBytes && utf8.ValidString(text)
+	return len(id) <= maxReplyIDBytes && utf8.ValidString(id) && len(text) <= maxReplyTextBytes && utf8.ValidString(text) &&
+		validMediaPresentation(mediaKind, mediaName) && validMediaMIME(mediaMIME) &&
+		(mediaKind != "" || mediaName == "" && mediaMIME == "") && (text != "" || mediaKind != "")
 }
 
 type chatView struct {

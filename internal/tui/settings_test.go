@@ -87,7 +87,7 @@ func TestComposeFooterIncludesSettingsShortcut(t *testing.T) {
 
 func TestNavigationFooterIncludesSettingsShortcut(t *testing.T) {
 	model := defaultDemoView()
-	want := "↑/↓ scroll  j/k chats  Enter compose  Ctrl-P settings  Esc quit"
+	want := "↑/↓ scroll  j/k chats  P preview  S save  Enter compose  Ctrl-P settings  Esc quit"
 	if got := navigationFooter(&model, false); got != want {
 		t.Fatalf("navigation footer=%q want=%q", got, want)
 	}
@@ -95,7 +95,7 @@ func TestNavigationFooterIncludesSettingsShortcut(t *testing.T) {
 
 func TestPolishedFooterModesAndNarrowFallbacks(t *testing.T) {
 	model := defaultDemoView()
-	if got := navigationFooter(&model, false); got != "↑/↓ scroll  j/k chats  Enter compose  Ctrl-P settings  Esc quit" {
+	if got := navigationFooter(&model, false); got != "↑/↓ scroll  j/k chats  P preview  S save  Enter compose  Ctrl-P settings  Esc quit" {
 		t.Fatalf("navigation footer=%q", got)
 	}
 	model.mode = modeCompose
@@ -106,7 +106,7 @@ func TestPolishedFooterModesAndNarrowFallbacks(t *testing.T) {
 		t.Fatalf("compact compose footer=%q", got)
 	}
 	model.replySelect = replySelectionState{valid: true}
-	if got := navigationFooter(&model, false); got != "↑/↓ message  Enter reply  Esc cancel" {
+	if got := navigationFooter(&model, false); got != "↑/↓ message  P preview  S save  Enter reply  Esc cancel" {
 		t.Fatalf("reply footer=%q", got)
 	}
 	if got := narrowNavigationFooter(&model, 24); got != "↑/↓  Enter  Esc cancel" {

@@ -53,8 +53,75 @@ func TestRealQuotedTextBuildsExactContextAndParticipant(t *testing.T) {
 	}
 }
 
+func TestRealMediaRepliesBuildMatchingQuotedMessageShape(t *testing.T) {
+	pn, lid := "12345@s.whatsapp.net", "987654@lid"
+	tests := []struct {
+		kind                model.MediaKind
+		name, mime, caption string
+		assert              func(*testing.T, *waE2E.Message)
+	}{
+		{model.MediaImage, "", "image/jpeg", "", func(t *testing.T, message *waE2E.Message) {
+			if value := message.GetImageMessage(); value == nil || value.GetMimetype() != "image/jpeg" || value.GetCaption() != "" {
+				t.Fatal("image quote shape lost")
+			}
+		}},
+		{model.MediaImage, "", "image/jpeg", "Holiday Café 👋", func(t *testing.T, message *waE2E.Message) {
+			if value := message.GetImageMessage(); value == nil || value.GetCaption() != "Holiday Café 👋" {
+				t.Fatal("image caption lost")
+			}
+		}},
+		{model.MediaVideo, "", "video/mp4", "clip", func(t *testing.T, message *waE2E.Message) {
+			if value := message.GetVideoMessage(); value == nil || value.GetMimetype() != "video/mp4" || value.GetCaption() != "clip" || value.GetGifPlayback() {
+				t.Fatal("video quote shape lost")
+			}
+		}},
+		{model.MediaDocument, "report 日本語.pdf", "application/pdf", "", func(t *testing.T, message *waE2E.Message) {
+			if value := message.GetDocumentMessage(); value == nil || value.GetFileName() != "report 日本語.pdf" || value.GetMimetype() != "application/pdf" {
+				t.Fatal("document quote shape lost")
+			}
+		}},
+		{model.MediaAudio, "", "audio/ogg", "", func(t *testing.T, message *waE2E.Message) {
+			if value := message.GetAudioMessage(); value == nil || value.GetMimetype() != "audio/ogg" {
+				t.Fatal("audio quote shape lost")
+			}
+		}},
+		{model.MediaSticker, "", "image/webp", "", func(t *testing.T, message *waE2E.Message) {
+			if value := message.GetStickerMessage(); value == nil || value.GetMimetype() != "image/webp" {
+				t.Fatal("sticker quote shape lost")
+			}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.kind.String()+test.caption, func(t *testing.T) {
+			media, _ := model.NewMedia(test.kind, test.name, test.mime)
+			quote, err := model.NewMediaQuote("media-original", test.caption, false, media)
+			if err != nil {
+				t.Fatal(err)
+			}
+			client := &fakeTextClient{connected: true, loggedIn: true, send: func(_ context.Context, jid types.JID, payload *waE2E.Message) (whatsmeow.SendResponse, error) {
+				if jid.String() != pn {
+					t.Fatalf("destination=%s", jid)
+				}
+				info := payload.GetExtendedTextMessage().GetContextInfo()
+				if info.GetStanzaID() != "media-original" || info.GetParticipant() != lid {
+					t.Fatalf("context=%+v", info)
+				}
+				test.assert(t, info.GetQuotedMessage())
+				return whatsmeow.SendResponse{ID: "outgoing", Timestamp: time.Unix(2, 0).UTC()}, nil
+			}}
+			sender := &realTextSender{client: client, aliases: &chatAliases{}, lookup: func(context.Context, types.JID) (types.JID, error) { return types.ParseJID(lid) }}
+			event, err := sender.SendText(context.Background(), aliasID(t, pn), "reply", quote)
+			if err != nil || client.calls.Load() != 1 || event.Message().MessageID().String() != "outgoing" {
+				t.Fatalf("event=%+v err=%v calls=%d", event, err, client.calls.Load())
+			}
+		})
+	}
+}
+
 func TestRealQuotedTextRejectsGroupsAndMissingParticipantBeforeTransport(t *testing.T) {
 	quote, _ := model.NewTextQuote("id", "quoted", false)
+	media, _ := model.NewMedia(model.MediaImage, "", "image/jpeg")
+	mediaQuote, _ := model.NewMediaQuote("media-id", "", false, media)
 	own, _ := model.NewTextQuote("id", "quoted", true)
 	client := &fakeTextClient{connected: true, loggedIn: true}
 	sender := &realTextSender{client: client}
@@ -63,6 +130,9 @@ func TestRealQuotedTextRejectsGroupsAndMissingParticipantBeforeTransport(t *test
 		t.Fatal(err)
 	}
 	if _, err := sender.SendText(context.Background(), group, "reply", quote); !errors.Is(err, ErrGroupReplyUnavailable) {
+		t.Fatal(err)
+	}
+	if err := sender.ValidateText(group, "reply", mediaQuote); !errors.Is(err, ErrGroupReplyUnavailable) {
 		t.Fatal(err)
 	}
 	if _, err := sender.SendText(context.Background(), aliasID(t, "12345@lid"), "reply", own); !errors.Is(err, ErrTextUnavailable) {
@@ -96,7 +166,14 @@ func TestRealQuotedTextFailureOrCancellationDoesNotRetry(t *testing.T) {
 }
 
 func TestRealQuotedTextPNAndLIDEchoCommitOnce(t *testing.T) {
-	testRealTextSendEchoCommitOnce(t, true, true)
+	quote, _ := model.NewTextQuote("quoted-original", "synthetic original é 日本語 👋", false)
+	testRealTextSendEchoCommitOnce(t, true, quote)
+}
+
+func TestRealMediaQuotePNAndLIDEchoCommitOnceWithoutDowngrade(t *testing.T) {
+	media, _ := model.NewMedia(model.MediaImage, "", "image/jpeg")
+	quote, _ := model.NewMediaQuote("quoted-original", "Holiday Café 👋", false, media)
+	testRealTextSendEchoCommitOnce(t, true, quote)
 }
 
 func TestReplyParticipantUsesExistingDeviceIdentity(t *testing.T) {

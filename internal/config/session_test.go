@@ -67,3 +67,17 @@ func TestDefaultApplicationCachePathUsesHomeFallbackAndRejectsRelative(t *testin
 		t.Fatal("relative XDG_CACHE_HOME accepted")
 	}
 }
+
+func TestDefaultMediaPathsUseSeparateCacheAndDownloadsRoots(t *testing.T) {
+	cacheRoot, home := t.TempDir(), t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cacheRoot)
+	t.Setenv("HOME", home)
+	cachePath, err := DefaultMediaCachePath()
+	if err != nil || cachePath != filepath.Join(cacheRoot, "walite", "media") {
+		t.Fatalf("cache=%q err=%v", cachePath, err)
+	}
+	savePath, err := DefaultMediaSavePath()
+	if err != nil || savePath != filepath.Join(home, "Downloads", "walite") {
+		t.Fatalf("save=%q err=%v", savePath, err)
+	}
+}

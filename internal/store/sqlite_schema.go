@@ -1,5 +1,13 @@
 package store
 
+// V3 adds only the bounded presentation descriptor required to reconstruct a
+// media quote after restart. Media bytes and download metadata remain absent.
+var sqliteSchemaV3 = []string{
+	`ALTER TABLE messages ADD COLUMN quote_media_kind INTEGER NOT NULL DEFAULT 0 CHECK (quote_media_kind BETWEEN 0 AND 5)`,
+	`ALTER TABLE messages ADD COLUMN quote_media_name TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE messages ADD COLUMN quote_media_mime TEXT NOT NULL DEFAULT ''`,
+}
+
 // V2 adds only fields used by today's transport-neutral live messages/names.
 // The advisory display cache has the same 128-slot FIFO bound as Memory.
 var sqliteSchemaV2 = []string{
