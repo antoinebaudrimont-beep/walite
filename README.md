@@ -32,11 +32,11 @@ These screenshots were AI-edited for privacy using demo names and messages. Text
 - Incoming and outgoing text messages
 - Image, video, document, audio, and sticker messages shown as lightweight placeholders
 - Explicit media download/save, plus inline image/GIF and WebP sticker preview through optional `ueberzugpp` X11 overlays
-- One-to-one quoted replies and incoming quote rendering
+- One-to-one text replies—including replies to media placeholders—and incoming quote rendering
 - Contact, group, and group-participant names when authoritative local metadata is available
 - Readable phone-number fallbacks plus PN/LID identity handling and deduplication
 - Directional incoming/outgoing layout and date separators
-- Persistent local unread state and WhatsApp read receipts
+- Persistent local unread state and WhatsApp read receipts on explicit chat selection, reply, or compose/send interaction
 - Unicode-safe composition and rendering
 - Emoji picker with persistent recent emoji
 - Functional `Ctrl-P` settings with four themes: Terminal, Dark, Light, and High contrast
@@ -44,7 +44,7 @@ These screenshots were AI-edited for privacy using demo names and messages. Text
 
 ## Installation and build
 
-Building walite requires Go 1.26.0 or newer. Linux/amd64 is the currently validated runtime environment.
+Building walite requires Go 1.26.0 or newer. MX Linux with XFCE/X11 on linux/amd64 is the currently validated runtime environment.
 
 ```sh
 git clone https://github.com/antoinebaudrimont-beep/walite.git
@@ -111,7 +111,7 @@ Press `Ctrl-P` to configure:
 
 Use `↑`/`↓` or `j`/`k` to move between settings. `Enter` or `Space` changes the selected value. Choose **Save and close** to persist and apply the changes; `Esc` or `Ctrl-P` closes the panel and discards unsaved edits.
 
-Settings are stored in `$XDG_CONFIG_HOME/walite/config.json`—normally `~/.config/walite/config.json`. Timestamps and read receipts default to On; quit confirmation defaults to Off. Disabling read receipts does not stop walite from clearing its own local unread badge when you open a chat.
+Settings are stored in `$XDG_CONFIG_HOME/walite/config.json`—normally `~/.config/walite/config.json`. Timestamps and read receipts default to On; quit confirmation defaults to Off. Disabling read receipts does not stop walite from clearing its own local unread badge when you explicitly select, reply in, or compose/send in a chat.
 
 ## Chat history and cache
 
@@ -158,12 +158,13 @@ The UI and service use transport-neutral application data. WhatsApp-specific typ
 
 ## Roadmap
 
-### v0.3
+### v0.3.0
 
 - Image/GIF and sticker download, save, and inline preview through `ueberzugpp` (v0.3B1)
 - Video/audio preview through `mpv` and PDF preview through `zathura` (v0.3B2)
-- Expired-media refresh
-- On-demand older-history paging (v0.3C)
+- Text replies to media messages using bounded placeholder metadata
+- On-demand older-history paging with a 256-message selected-chat working set (v0.3C)
+- Read receipts for explicit interaction with an already-selected unread chat
 
 Planned image flow:
 
