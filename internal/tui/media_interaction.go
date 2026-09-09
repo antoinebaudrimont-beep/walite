@@ -42,13 +42,13 @@ func requestMediaAt(model *viewModel, action MediaAction, index, width, height i
 		model.sendStatus = "Selected message has no media"
 		return true
 	}
-	if action == MediaPreview && message.mediaKind != mediaImage && message.mediaKind != mediaSticker {
-		model.sendStatus = "Preview is available for images and stickers only"
-		return true
-	}
-	if model.mediaTarget.previewing && action == MediaPreview && model.mediaTarget.chatID == chat.id && model.mediaTarget.messageID == message.id {
-		closeMedia(model)
-		model.sendStatus = "Preview closed"
+	if action == MediaPreview && model.mediaTarget.active && model.mediaTarget.chatID == chat.id && model.mediaTarget.messageID == message.id {
+		if model.mediaTarget.previewing {
+			closeMedia(model)
+			model.sendStatus = "Preview closed"
+		} else {
+			model.sendStatus = "Media preview is already loading"
+		}
 		return true
 	}
 	x, y, previewWidth, previewHeight := mediaPreviewRectangle(width, height)
@@ -59,7 +59,7 @@ func requestMediaAt(model *viewModel, action MediaAction, index, width, height i
 	}
 	model.mediaTarget = mediaTargetState{active: true, chatID: chat.id, messageID: message.id}
 	if action == MediaPreview {
-		model.sendStatus = "Loading image or sticker preview…"
+		model.sendStatus = "Loading media preview…"
 	} else {
 		model.sendStatus = "Saving media…"
 	}

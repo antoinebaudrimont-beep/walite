@@ -105,6 +105,9 @@ type Input struct {
 	Media            func(MediaRequest) bool
 	MediaResults     <-chan MediaResult
 	CloseMedia       func()
+	// CloseExternalPreview admits asynchronous termination and reports whether
+	// an active viewer consumed Escape.
+	CloseExternalPreview func() bool
 	// SaveOptions admits one explicit save without performing I/O. OptionsResults
 	// completes it; options become active only after successful persistence.
 	SaveOptions    func(Options) bool

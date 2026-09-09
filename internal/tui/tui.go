@@ -97,6 +97,7 @@ func runInitialized(
 	model := viewModel{chats: chats, options: input.Options}
 	model.asyncSend = input.SendResults != nil
 	model.media, model.closeMedia = input.Media, input.CloseMedia
+	model.closeExternalPreview = input.CloseExternalPreview
 	defer closeMedia(&model)
 	if input.Send != nil {
 		model.send = func(request SendRequest) error { return input.Send(ctx, request) }

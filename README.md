@@ -76,7 +76,7 @@ The pairing window closes after a successful link. Later launches reuse the pers
 | `Home` / `End` | Jump to the oldest / newest loaded message |
 | `Enter` | Start composing |
 | `Ctrl-R` | Select a message to reply to |
-| `P` | Preview the newest visible image/GIF or sticker placeholder |
+| `P` | Preview the newest visible supported media placeholder |
 | `S` | Save the newest visible media item to `~/Downloads/walite` |
 | `Ctrl-P` | Open settings |
 | `Esc` | Quit, or ask for confirmation when enabled |
@@ -96,7 +96,7 @@ The pairing window closes after a successful link. Later launches reuse the pers
 
 In reply selection, use `↑`/`↓` or `j`/`k`, then `Enter` to confirm. In the emoji picker, use the arrow keys or `h`/`j`/`k`/`l`; `Tab` and `Shift-Tab` switch categories, and `Enter` inserts the selected emoji.
 
-Media is never downloaded in the background. Scroll until the intended media placeholder is the newest visible media row, or focus it with `Ctrl-R` and the arrow keys, then press `P` for an image/GIF or sticker preview or `S` to save any supported media type. Preview requires `ueberzugpp` with its X11 backend; saving does not. Previews close with `P`, `Esc`, navigation, resize, or application shutdown.
+Media is never downloaded in the background. Scroll until the intended media placeholder is the newest visible media row, or focus it with `Ctrl-R` and the arrow keys, then press `P` to preview or `S` to save. Images, ordinary GIFs, and WebP stickers use an inline `ueberzugpp` X11 overlay; video (including WhatsApp GifPlayback MP4) and audio open in `mpv`; PDF documents open in `zathura`. Other document types remain save-only. Video/GifPlayback previews loop continuously; audio plays once. Inline overlays close with `P`, `Esc`, navigation, resize, or application shutdown. External viewers survive navigation; `Esc` in walite closes the active viewer without quitting walite. Once it closes, `P` can reopen the same media and `Esc` resumes its normal behavior. One external viewer is allowed at a time and is also closed on application shutdown. All viewers are optional, and a missing backend is reported without blocking the TUI.
 
 ## Settings
 
@@ -144,7 +144,7 @@ The UI and service use transport-neutral application data. WhatsApp-specific typ
 
 ## Current limitations
 
-- Image/GIF and WebP sticker preview currently depends on Linux/X11 and optional `ueberzugpp`; video (including WhatsApp GifPlayback MP4), audio, and document preview is not implemented.
+- Preview backends are optional: image/GIF and WebP sticker overlays require Linux/X11 and `ueberzugpp`, video/audio require `mpv`, and PDF documents require `zathura`. Other document formats remain save-only.
 - Expired WhatsApp media references are reported as unavailable; media-retry refresh is not implemented yet.
 - Reactions, typing indicators, and presence are not implemented.
 - Quoted-reply sending is supported for one-to-one chats, not groups.
@@ -160,7 +160,8 @@ The UI and service use transport-neutral application data. WhatsApp-specific typ
 ### v0.3
 
 - Image/GIF and sticker download, save, and inline preview through `ueberzugpp` (v0.3B1)
-- Richer media viewers and expired-media refresh
+- Video/audio preview through `mpv` and PDF preview through `zathura` (v0.3B2)
+- Expired-media refresh
 - On-demand older-history paging
 
 Planned image flow:

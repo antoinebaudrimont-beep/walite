@@ -16,13 +16,14 @@ import (
 )
 
 type fakeMediaApplication struct {
-	message     model.Message
-	payload     []byte
-	mu          sync.Mutex
-	downloads   int
-	started     chan struct{}
-	release     <-chan struct{}
-	downloadErr error
+	message      model.Message
+	payload      []byte
+	mu           sync.Mutex
+	downloads    int
+	started      chan struct{}
+	release      <-chan struct{}
+	ignoreCancel bool
+	downloadErr  error
 }
 
 func (application *fakeMediaApplication) MediaMessage(context.Context, model.ChatID, model.MessageID) (model.Message, error) {
@@ -38,10 +39,14 @@ func (application *fakeMediaApplication) DownloadMedia(ctx context.Context, _ mo
 		close(started)
 	}
 	if application.release != nil {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-application.release:
+		if application.ignoreCancel {
+			<-application.release
+		} else {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-application.release:
+			}
 		}
 	}
 	if application.downloadErr != nil {
@@ -61,6 +66,39 @@ type fakePreviewer struct {
 	shown  []string
 	closed int
 	err    error
+}
+
+type fakeExternalPreviewer struct {
+	mu       sync.Mutex
+	previews []externalPreview
+	closed   int
+	err      error
+}
+
+func (previewer *fakeExternalPreviewer) Show(ctx context.Context, preview externalPreview) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	previewer.mu.Lock()
+	defer previewer.mu.Unlock()
+	previewer.previews = append(previewer.previews, preview)
+	return previewer.err
+}
+
+func (previewer *fakeExternalPreviewer) Close() error {
+	previewer.mu.Lock()
+	defer previewer.mu.Unlock()
+	previewer.closed++
+	return nil
+}
+
+func (previewer *fakeExternalPreviewer) Active() bool { return false }
+func (previewer *fakeExternalPreviewer) StopActive()  {}
+
+func (previewer *fakeExternalPreviewer) shown() []externalPreview {
+	previewer.mu.Lock()
+	defer previewer.mu.Unlock()
+	return append([]externalPreview(nil), previewer.previews...)
 }
 
 func (preview *fakePreviewer) Show(_ context.Context, path string, _ tui.MediaRequest) error {
@@ -142,6 +180,23 @@ func TestMediaWorkerPreviewsWebPStickerThroughImageBackend(t *testing.T) {
 	}
 }
 
+func TestMediaWorkerPreviewsOrdinaryGIFThroughImageBackend(t *testing.T) {
+	payload := []byte("synthetic gif bytes")
+	application := &fakeMediaApplication{message: mediaWorkerMessage(t, model.MediaImage, "animation.gif", "image/gif", payload), payload: payload}
+	cache, _ := mediacache.New(filepath.Join(t.TempDir(), "cache"))
+	overlay, external := &fakePreviewer{}, &fakeExternalPreviewer{}
+	worker := newMediaWorkerWithExternalPreviewer(context.Background(), application, cache, t.TempDir(), overlay, external)
+	defer worker.stop()
+	request := tui.MediaRequest{Action: tui.MediaPreview, ChatID: "chat", MessageID: "media", Kind: "image", Width: 30, Height: 10}
+	if !worker.admit(request) {
+		t.Fatal("GIF preview rejected")
+	}
+	result := awaitMediaResult(t, worker)
+	if !result.Previewing || application.count() != 1 || len(overlay.shown) != 1 || filepath.Ext(overlay.shown[0]) != ".gif" || len(external.shown()) != 0 {
+		t.Fatalf("result=%+v downloads=%d overlay=%v external=%+v", result, application.count(), overlay.shown, external.shown())
+	}
+}
+
 func TestMediaWorkerCancellationPreventsStalePreview(t *testing.T) {
 	release := make(chan struct{})
 	application := &fakeMediaApplication{message: mediaWorkerMessage(t, model.MediaImage, "x.jpg", "image/jpeg", []byte("x")), payload: []byte("x"), started: make(chan struct{}), release: release}
@@ -171,17 +226,115 @@ func TestMediaWorkerControlledPreviewFailureAndTypeGate(t *testing.T) {
 	}
 }
 
-func TestVideoAndGifPlaybackClassRemainOutsideImagePreview(t *testing.T) {
+func TestMediaWorkerRoutesVideoAudioAndPDFToExternalViewers(t *testing.T) {
+	tests := []struct {
+		name, file, mime, status string
+		kind                     model.MediaKind
+		viewer                   externalViewerKind
+	}{
+		{"video and GifPlayback MP4", "clip.mp4", "video/mp4", "Opened video in mpv", model.MediaVideo, externalViewerMPVVideo},
+		{"audio", "voice.ogg", "audio/ogg", "Opened audio in mpv", model.MediaAudio, externalViewerMPV},
+		{"PDF", "report.pdf", "application/pdf; version=1.7", "Opened PDF in zathura", model.MediaDocument, externalViewerZathura},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			payload := []byte(test.name)
+			application := &fakeMediaApplication{message: mediaWorkerMessage(t, test.kind, test.file, test.mime, payload), payload: payload}
+			cache, _ := mediacache.New(filepath.Join(t.TempDir(), "cache"))
+			overlay, external := &fakePreviewer{}, &fakeExternalPreviewer{}
+			worker := newMediaWorkerWithExternalPreviewer(context.Background(), application, cache, t.TempDir(), overlay, external)
+			defer worker.stop()
+			worker.admit(tui.MediaRequest{Action: tui.MediaPreview, ChatID: "chat", MessageID: "media", Kind: test.kind.String(), Width: 10, Height: 10})
+			result := awaitMediaResult(t, worker)
+			shown := external.shown()
+			if result.Previewing || result.Status != test.status || application.count() != 1 || len(overlay.shown) != 0 || len(shown) != 1 || shown[0].kind != test.viewer {
+				t.Fatalf("result=%+v downloads=%d overlay=%v external=%+v", result, application.count(), overlay.shown, shown)
+			}
+		})
+	}
+}
+
+func TestNonPDFDocumentPreviewIsControlledAndDoesNotDownload(t *testing.T) {
+	payload := []byte("document")
+	application := &fakeMediaApplication{message: mediaWorkerMessage(t, model.MediaDocument, "report.pdf", "text/plain", payload), payload: payload}
+	cache, _ := mediacache.New(filepath.Join(t.TempDir(), "cache"))
+	external := &fakeExternalPreviewer{}
+	worker := newMediaWorkerWithExternalPreviewer(context.Background(), application, cache, t.TempDir(), &fakePreviewer{}, external)
+	defer worker.stop()
+	worker.admit(tui.MediaRequest{Action: tui.MediaPreview, ChatID: "chat", MessageID: "media", Kind: "document"})
+	result := awaitMediaResult(t, worker)
+	if result.Previewing || result.Status != "Preview not available for this document type" || application.count() != 0 || len(external.shown()) != 0 {
+		t.Fatalf("result=%+v downloads=%d external=%+v", result, application.count(), external.shown())
+	}
+	worker.admit(tui.MediaRequest{Action: tui.MediaSave, ChatID: "chat", MessageID: "media", Kind: "document"})
+	result = awaitMediaResult(t, worker)
+	if result.Status == "" || application.count() != 1 {
+		t.Fatalf("save result=%+v downloads=%d", result, application.count())
+	}
+}
+
+func TestExternalPreviewUsesCacheWithoutRedownloading(t *testing.T) {
 	payload := []byte("synthetic mp4")
 	application := &fakeMediaApplication{message: mediaWorkerMessage(t, model.MediaVideo, "clip.mp4", "video/mp4", payload), payload: payload}
 	cache, _ := mediacache.New(filepath.Join(t.TempDir(), "cache"))
-	preview := &fakePreviewer{}
-	worker := newMediaWorker(context.Background(), application, cache, t.TempDir(), preview)
+	external := &fakeExternalPreviewer{}
+	worker := newMediaWorkerWithExternalPreviewer(context.Background(), application, cache, t.TempDir(), &fakePreviewer{}, external)
 	defer worker.stop()
-	worker.admit(tui.MediaRequest{Action: tui.MediaPreview, ChatID: "chat", MessageID: "media", Kind: "video", Width: 10, Height: 10})
-	result := awaitMediaResult(t, worker)
-	if result.Previewing || result.Status != "Preview is available for images and stickers only" || application.count() != 0 || len(preview.shown) != 0 {
-		t.Fatalf("result=%+v downloads=%d shown=%v", result, application.count(), preview.shown)
+	request := tui.MediaRequest{Action: tui.MediaPreview, ChatID: "chat", MessageID: "media", Kind: "video"}
+	for index := 0; index < 2; index++ {
+		if !worker.admit(request) {
+			t.Fatal("preview rejected")
+		}
+		if result := awaitMediaResult(t, worker); result.Status != "Opened video in mpv" {
+			t.Fatalf("result=%+v", result)
+		}
+	}
+	if application.count() != 1 || len(external.shown()) != 2 {
+		t.Fatalf("downloads=%d external=%+v", application.count(), external.shown())
+	}
+}
+
+func TestCanceledDownloadCannotLaunchStaleExternalViewer(t *testing.T) {
+	release := make(chan struct{})
+	application := &fakeMediaApplication{message: mediaWorkerMessage(t, model.MediaVideo, "clip.mp4", "video/mp4", []byte("mp4")), payload: []byte("mp4"), started: make(chan struct{}), release: release, ignoreCancel: true}
+	started := application.started
+	cache, _ := mediacache.New(filepath.Join(t.TempDir(), "cache"))
+	external := &fakeExternalPreviewer{}
+	worker := newMediaWorkerWithExternalPreviewer(context.Background(), application, cache, t.TempDir(), &fakePreviewer{}, external)
+	worker.admit(tui.MediaRequest{Action: tui.MediaPreview, ChatID: "chat", MessageID: "media", Kind: "video"})
+	<-started
+	worker.close()
+	close(release)
+	worker.stop()
+	if len(external.shown()) != 0 {
+		t.Fatalf("stale external preview=%+v", external.shown())
+	}
+}
+
+func TestExternalViewerFailuresProduceControlledStatus(t *testing.T) {
+	tests := []struct {
+		name, status string
+		kind         model.MediaKind
+		file, mime   string
+		err          error
+	}{
+		{"missing mpv", "mpv is not installed", model.MediaVideo, "x.mp4", "video/mp4", errMPVUnavailable},
+		{"missing zathura", "zathura is not installed", model.MediaDocument, "x.pdf", "application/pdf", errZathuraUnavailable},
+		{"duplicate", "Video preview is already open", model.MediaVideo, "x.mp4", "video/mp4", errExternalViewerDuplicate},
+		{"busy", "Close the current external preview before opening another", model.MediaAudio, "x.ogg", "audio/ogg", errExternalViewerBusy},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			payload := []byte("payload")
+			application := &fakeMediaApplication{message: mediaWorkerMessage(t, test.kind, test.file, test.mime, payload), payload: payload}
+			cache, _ := mediacache.New(filepath.Join(t.TempDir(), "cache"))
+			worker := newMediaWorkerWithExternalPreviewer(context.Background(), application, cache, t.TempDir(), &fakePreviewer{}, &fakeExternalPreviewer{err: test.err})
+			defer worker.stop()
+			worker.admit(tui.MediaRequest{Action: tui.MediaPreview, ChatID: "chat", MessageID: "media", Kind: test.kind.String()})
+			if result := awaitMediaResult(t, worker); result.Status != test.status {
+				t.Fatalf("result=%+v", result)
+			}
+		})
 	}
 }
 
@@ -238,5 +391,45 @@ func TestUeberzugArgumentsAndJSONAreDeterministicAndShellFree(t *testing.T) {
 	}
 	if payload["x"] != float64(7) || payload["y"] != float64(3) || payload["max_width"] != float64(42) || payload["max_height"] != float64(12) {
 		t.Fatalf("geometry=%v", payload)
+	}
+}
+
+func TestExternalViewerArgumentsAreDeterministicAndShellFree(t *testing.T) {
+	hostile := filepath.Join(t.TempDir(), "$(touch pwned); --really-quiet.pdf")
+	binary, args, err := externalViewerCommand(externalViewerMPV, hostile)
+	if err != nil || binary != "mpv" || len(args) != 2 || args[0] != "--" || args[1] != hostile {
+		t.Fatalf("mpv binary=%q args=%q err=%v", binary, args, err)
+	}
+	binary, args, err = externalViewerCommand(externalViewerZathura, hostile)
+	if err != nil || binary != "zathura" || len(args) != 1 || args[0] != hostile {
+		t.Fatalf("zathura binary=%q args=%q err=%v", binary, args, err)
+	}
+}
+
+type blockingExternalStop struct {
+	fakeExternalPreviewer
+	started chan struct{}
+	release chan struct{}
+}
+
+func (previewer *blockingExternalStop) Active() bool { return true }
+func (previewer *blockingExternalStop) StopActive() {
+	close(previewer.started)
+	<-previewer.release
+}
+
+func TestExternalCloseAdmissionDoesNotWaitForProcessExit(t *testing.T) {
+	external := &blockingExternalStop{started: make(chan struct{}), release: make(chan struct{})}
+	worker := newMediaWorkerWithExternalPreviewer(context.Background(), nil, nil, t.TempDir(), &fakePreviewer{}, external)
+	defer worker.stop()
+	defer close(external.release)
+	// This must return while StopActive is still blocked on process completion.
+	if !worker.closeExternal() {
+		t.Fatal("active external viewer did not consume Escape")
+	}
+	select {
+	case <-external.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("media worker did not process external close")
 	}
 }

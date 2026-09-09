@@ -6,6 +6,11 @@ import (
 )
 
 func handleKey(model *viewModel, event *tcell.EventKey, width, height int) (changed, exit bool) {
+	if event.Key() == tcell.KeyEscape && model.closeExternalPreview != nil && model.closeExternalPreview() {
+		closeMedia(model)
+		model.sendStatus = "External preview closing"
+		return true, false
+	}
 	if event.Key() == tcell.KeyCtrlC {
 		return false, true
 	}

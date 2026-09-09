@@ -22,11 +22,13 @@ func TestVisibleMediaPreviewAndSaveUseStableNewestVisibleIdentity(t *testing.T) 
 	if !changed || exit || len(requests) != 1 || requests[0].ChatID != "chat" || requests[0].MessageID != "document-new" || requests[0].Action != MediaSave {
 		t.Fatalf("changed=%t exit=%t requests=%+v", changed, exit, requests)
 	}
-	if changed, _ := handleKey(&model, tcell.NewEventKey(tcell.KeyRune, 'P', tcell.ModNone), 100, 24); !changed || len(requests) != 1 || model.sendStatus == "" {
-		t.Fatal("non-image preview was not rejected locally")
+	model.mediaTarget = mediaTargetState{}
+	if changed, _ := handleKey(&model, tcell.NewEventKey(tcell.KeyRune, 'P', tcell.ModNone), 100, 24); !changed || len(requests) != 2 || requests[1].MessageID != "document-new" || requests[1].Action != MediaPreview {
+		t.Fatalf("document preview was not admitted to worker: requests=%+v", requests)
 	}
+	model.mediaTarget = mediaTargetState{}
 	model.replySelect = replySelectionState{valid: true, index: 0}
-	if changed, _ := handleKey(&model, tcell.NewEventKey(tcell.KeyRune, 'P', tcell.ModNone), 100, 24); !changed || len(requests) != 2 || requests[1].MessageID != "image-old" || requests[1].Action != MediaPreview {
+	if changed, _ := handleKey(&model, tcell.NewEventKey(tcell.KeyRune, 'P', tcell.ModNone), 100, 24); !changed || len(requests) != 3 || requests[2].MessageID != "image-old" || requests[2].Action != MediaPreview {
 		t.Fatalf("focused request=%+v", requests)
 	}
 }
@@ -67,6 +69,38 @@ func TestPreviewKeyTogglesExistingOverlayClosed(t *testing.T) {
 	changed, exit := handleKey(&model, tcell.NewEventKey(tcell.KeyRune, 'P', tcell.ModNone), 100, 24)
 	if !changed || exit || closed != 1 || admitted != 0 || model.mediaTarget.active {
 		t.Fatalf("changed=%t exit=%t closed=%d admitted=%d", changed, exit, closed, admitted)
+	}
+}
+
+func TestRepeatedPreviewWhileLoadingIsNotReadmitted(t *testing.T) {
+	state, _ := chatStateFromInitial(InitialState{Chats: []InitialChat{{ID: "chat", Title: "Chat", ActivityTime: time.Unix(1, 0), Messages: []InitialMessage{{ID: "video", SentAt: time.Unix(1, 0), MediaKind: mediaVideo}}}}})
+	admitted := 0
+	model := viewModel{chats: state, options: DefaultOptions(), media: func(MediaRequest) bool { admitted++; return true }}
+	key := tcell.NewEventKey(tcell.KeyRune, 'P', tcell.ModNone)
+	if changed, _ := handleKey(&model, key, 100, 24); !changed || admitted != 1 || !model.mediaTarget.active {
+		t.Fatalf("first changed=%t admitted=%d state=%+v", changed, admitted, model.mediaTarget)
+	}
+	if changed, _ := handleKey(&model, key, 100, 24); !changed || admitted != 1 || model.sendStatus != "Media preview is already loading" {
+		t.Fatalf("second changed=%t admitted=%d status=%q", changed, admitted, model.sendStatus)
+	}
+}
+
+func TestEscapeClosesExternalViewerBeforeNormalQuit(t *testing.T) {
+	active, closed, overlayClosed := true, 0, 0
+	model := viewModel{options: DefaultOptions(), mediaTarget: mediaTargetState{active: true, previewing: true}, closeMedia: func() { overlayClosed++ }, closeExternalPreview: func() bool {
+		if !active {
+			return false
+		}
+		active = false
+		closed++
+		return true
+	}}
+	escape := tcell.NewEventKey(tcell.KeyEscape, 0, tcell.ModNone)
+	if changed, exit := handleKey(&model, escape, 80, 24); !changed || exit || active || closed != 1 || overlayClosed != 1 || model.mediaTarget.active {
+		t.Fatalf("changed=%t exit=%t active=%t closed=%d overlay_closed=%d", changed, exit, active, closed, overlayClosed)
+	}
+	if _, exit := handleKey(&model, escape, 80, 24); !exit || closed != 1 {
+		t.Fatal("next Escape did not resume normal quit behavior")
 	}
 }
 

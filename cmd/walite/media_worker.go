@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"mime"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/antoinebaudrimont-beep/walite/internal/config"
@@ -30,18 +33,27 @@ type mediaPreviewer interface {
 }
 
 type mediaWorker struct {
-	ctx             context.Context
-	cancel          context.CancelFunc
-	application     mediaApplication
-	cache           *mediacache.Cache
-	savePath        string
-	preview         mediaPreviewer
-	requests        chan tui.MediaRequest
-	results         chan tui.MediaResult
-	done            chan struct{}
-	stopOnce        sync.Once
-	operationMu     sync.Mutex
-	operationCancel context.CancelFunc
+	ctx                   context.Context
+	cancel                context.CancelFunc
+	application           mediaApplication
+	cache                 *mediacache.Cache
+	savePath              string
+	preview               mediaPreviewer
+	external              externalMediaPreviewer
+	requests              chan mediaWorkItem
+	results               chan tui.MediaResult
+	done                  chan struct{}
+	stopOnce              sync.Once
+	operationMu           sync.Mutex
+	operationCancel       context.CancelFunc
+	validityMu            sync.RWMutex
+	generation            uint64
+	externalStopRequested atomic.Bool
+}
+
+type mediaWorkItem struct {
+	request    tui.MediaRequest
+	generation uint64
 }
 
 func newDefaultMediaWorker(ctx context.Context, application applicationService) (*mediaWorker, error) {
@@ -62,8 +74,12 @@ func newDefaultMediaWorker(ctx context.Context, application applicationService) 
 }
 
 func newMediaWorker(ctx context.Context, application mediaApplication, cache *mediacache.Cache, savePath string, preview mediaPreviewer) *mediaWorker {
+	return newMediaWorkerWithExternalPreviewer(ctx, application, cache, savePath, preview, newProcessExternalPreviewer())
+}
+
+func newMediaWorkerWithExternalPreviewer(ctx context.Context, application mediaApplication, cache *mediacache.Cache, savePath string, preview mediaPreviewer, external externalMediaPreviewer) *mediaWorker {
 	workerCtx, cancel := context.WithCancel(ctx)
-	worker := &mediaWorker{ctx: workerCtx, cancel: cancel, application: application, cache: cache, savePath: savePath, preview: preview, requests: make(chan tui.MediaRequest, 1), results: make(chan tui.MediaResult, 1), done: make(chan struct{})}
+	worker := &mediaWorker{ctx: workerCtx, cancel: cancel, application: application, cache: cache, savePath: savePath, preview: preview, external: external, requests: make(chan mediaWorkItem, 1), results: make(chan tui.MediaResult, 1), done: make(chan struct{})}
 	go worker.run()
 	return worker
 }
@@ -72,13 +88,14 @@ func (worker *mediaWorker) admit(request tui.MediaRequest) bool {
 	if worker == nil || request.Action < tui.MediaPreview || request.Action > tui.MediaSave || request.ChatID == "" || request.MessageID == "" {
 		return false
 	}
+	generation := worker.invalidate()
 	worker.cancelOperation()
 	select {
 	case <-worker.requests:
 	default:
 	}
 	select {
-	case worker.requests <- request:
+	case worker.requests <- mediaWorkItem{request: request, generation: generation}:
 		return true
 	case <-worker.ctx.Done():
 		return false
@@ -86,16 +103,30 @@ func (worker *mediaWorker) admit(request tui.MediaRequest) bool {
 }
 
 func (worker *mediaWorker) close() {
+	worker.closeRequest()
+}
+
+func (worker *mediaWorker) closeExternal() bool {
+	if worker == nil || !worker.external.Active() {
+		return false
+	}
+	worker.externalStopRequested.Store(true)
+	worker.closeRequest()
+	return true
+}
+
+func (worker *mediaWorker) closeRequest() {
 	if worker == nil {
 		return
 	}
+	worker.invalidate()
 	worker.cancelOperation()
 	select {
 	case <-worker.requests:
 	default:
 	}
 	select {
-	case worker.requests <- tui.MediaRequest{}:
+	case worker.requests <- mediaWorkItem{}:
 	case <-worker.ctx.Done():
 	}
 }
@@ -104,7 +135,14 @@ func (worker *mediaWorker) stop() {
 	if worker == nil {
 		return
 	}
-	worker.stopOnce.Do(func() { worker.cancelOperation(); worker.cancel(); <-worker.done })
+	worker.stopOnce.Do(func() { worker.invalidate(); worker.cancelOperation(); worker.cancel(); <-worker.done })
+}
+
+func (worker *mediaWorker) invalidate() uint64 {
+	worker.validityMu.Lock()
+	defer worker.validityMu.Unlock()
+	worker.generation++
+	return worker.generation
 }
 
 func (worker *mediaWorker) cancelOperation() {
@@ -119,12 +157,17 @@ func (worker *mediaWorker) run() {
 	defer close(worker.done)
 	defer close(worker.results)
 	defer worker.preview.Close()
+	defer worker.external.Close()
 	for {
 		select {
 		case <-worker.ctx.Done():
 			return
-		case request := <-worker.requests:
+		case item := <-worker.requests:
+			if worker.externalStopRequested.Swap(false) {
+				worker.external.StopActive()
+			}
 			_ = worker.preview.Close()
+			request := item.request
 			if request.Action == 0 {
 				worker.operationMu.Lock()
 				worker.operationCancel = nil
@@ -135,7 +178,7 @@ func (worker *mediaWorker) run() {
 			worker.operationMu.Lock()
 			worker.operationCancel = cancel
 			worker.operationMu.Unlock()
-			result := worker.handle(operationCtx, request)
+			result := worker.handle(operationCtx, request, item.generation)
 			operationErr := operationCtx.Err()
 			cancel()
 			if !result.Previewing || operationErr != nil {
@@ -162,7 +205,7 @@ func (worker *mediaWorker) run() {
 	}
 }
 
-func (worker *mediaWorker) handle(ctx context.Context, request tui.MediaRequest) tui.MediaResult {
+func (worker *mediaWorker) handle(ctx context.Context, request tui.MediaRequest, generation uint64) tui.MediaResult {
 	result := tui.MediaResult{Action: request.Action, ChatID: request.ChatID, MessageID: request.MessageID}
 	if worker.application == nil || worker.cache == nil {
 		result.Status = "Media unavailable while offline"
@@ -179,8 +222,9 @@ func (worker *mediaWorker) handle(ctx context.Context, request tui.MediaRequest)
 		result.Status = "Media is no longer available"
 		return result
 	}
-	if request.Action == tui.MediaPreview && message.Media().Kind() != model.MediaImage && message.Media().Kind() != model.MediaSticker {
-		result.Status = "Preview is available for images and stickers only"
+	backend := previewBackendFor(message.Media())
+	if request.Action == tui.MediaPreview && backend == previewBackendUnsupported {
+		result.Status = "Preview not available for this document type"
 		return result
 	}
 	limit := mediacache.MaxSaveBytes
@@ -202,6 +246,10 @@ func (worker *mediaWorker) handle(ctx context.Context, request tui.MediaRequest)
 		}
 		return result
 	}
+	if err := worker.revalidate(ctx, generation, chatID, messageID, message); err != nil {
+		result.Status = "Media operation canceled"
+		return result
+	}
 	if request.Action == tui.MediaSave {
 		saved, err := worker.cache.Save(path, worker.savePath, message.Media())
 		if err != nil {
@@ -211,39 +259,142 @@ func (worker *mediaWorker) handle(ctx context.Context, request tui.MediaRequest)
 		result.Status = "Saved to ~/Downloads/walite/" + filepath.Base(saved)
 		return result
 	}
-	if request.Width < 1 || request.Height < 1 {
-		result.Status = "Terminal too small for image preview"
+	if backend == previewBackendImage {
+		if request.Width < 1 || request.Height < 1 {
+			result.Status = "Terminal too small for image preview"
+			return result
+		}
+		_, err := worker.showImagePreview(ctx, generation, path, request)
+		if err != nil {
+			result.Status = "Image preview unavailable (install ueberzugpp with X11 support)"
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				result.Status = "Media operation canceled"
+			}
+			return result
+		}
+		result.Previewing = true
+		if cached {
+			result.Status = "Previewing cached image — P or navigation closes"
+		} else {
+			result.Status = "Previewing image — P or navigation closes"
+		}
 		return result
 	}
-	previewCtx, previewCancel, err := worker.beginPreview(ctx)
+
+	externalKind := externalViewerMPVVideo
+	label := "Video"
+	if backend == previewBackendAudio {
+		externalKind = externalViewerMPV
+		label = "Audio"
+	} else if backend == previewBackendPDF {
+		externalKind = externalViewerZathura
+		label = "PDF"
+	}
+	err = worker.showExternalPreview(ctx, generation, externalPreview{kind: externalKind, path: path, chatID: request.ChatID, messageID: request.MessageID})
 	if err != nil {
-		result.Status = "Media operation canceled"
+		result.Status = externalPreviewFailureStatus(label, err)
 		return result
 	}
-	if err := worker.preview.Show(previewCtx, path, request); err != nil {
-		previewCancel()
-		result.Status = "Image preview unavailable (install ueberzugpp with X11 support)"
-		return result
-	}
-	result.Previewing = true
-	if cached {
-		result.Status = "Previewing cached image — P or navigation closes"
+	if externalKind == externalViewerZathura {
+		result.Status = "Opened PDF in zathura"
 	} else {
-		result.Status = "Previewing image — P or navigation closes"
+		result.Status = "Opened " + strings.ToLower(label) + " in mpv"
 	}
 	return result
 }
 
-func (worker *mediaWorker) beginPreview(operationCtx context.Context) (context.Context, context.CancelFunc, error) {
+type previewBackend uint8
+
+const (
+	previewBackendUnsupported previewBackend = iota
+	previewBackendImage
+	previewBackendVideo
+	previewBackendAudio
+	previewBackendPDF
+)
+
+func previewBackendFor(mediaValue model.Media) previewBackend {
+	switch mediaValue.Kind() {
+	case model.MediaImage, model.MediaSticker:
+		return previewBackendImage
+	case model.MediaVideo:
+		return previewBackendVideo
+	case model.MediaAudio:
+		return previewBackendAudio
+	case model.MediaDocument:
+		mediaType, _, err := mime.ParseMediaType(mediaValue.MIMEType())
+		if err == nil && strings.EqualFold(mediaType, "application/pdf") {
+			return previewBackendPDF
+		}
+	}
+	return previewBackendUnsupported
+}
+
+func externalPreviewFailureStatus(label string, err error) string {
+	switch {
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return "Media operation canceled"
+	case errors.Is(err, errExternalViewerDuplicate):
+		return label + " preview is already open"
+	case errors.Is(err, errExternalViewerBusy):
+		return "Close the current external preview before opening another"
+	case errors.Is(err, errMPVUnavailable):
+		return "mpv is not installed"
+	case errors.Is(err, errZathuraUnavailable):
+		return "zathura is not installed"
+	default:
+		return label + " preview could not be opened"
+	}
+}
+
+func (worker *mediaWorker) revalidate(ctx context.Context, generation uint64, chatID model.ChatID, messageID model.MessageID, original model.Message) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	current, err := worker.application.MediaMessage(ctx, chatID, messageID)
+	if err != nil || current.MessageID() != original.MessageID() || current.Media() != original.Media() {
+		return errors.New("media identity changed")
+	}
+	worker.validityMu.RLock()
+	defer worker.validityMu.RUnlock()
+	if worker.generation != generation {
+		return context.Canceled
+	}
+	return ctx.Err()
+}
+
+func (worker *mediaWorker) showImagePreview(operationCtx context.Context, generation uint64, path string, request tui.MediaRequest) (context.CancelFunc, error) {
+	worker.validityMu.RLock()
+	defer worker.validityMu.RUnlock()
+	if worker.generation != generation {
+		return nil, context.Canceled
+	}
 	previewCtx, cancel := context.WithCancel(worker.ctx)
 	worker.operationMu.Lock()
-	defer worker.operationMu.Unlock()
 	if err := operationCtx.Err(); err != nil {
+		worker.operationMu.Unlock()
 		cancel()
-		return nil, nil, err
+		return nil, err
 	}
 	worker.operationCancel = cancel
-	return previewCtx, cancel, nil
+	worker.operationMu.Unlock()
+	if err := worker.preview.Show(previewCtx, path, request); err != nil {
+		cancel()
+		return nil, err
+	}
+	return cancel, nil
+}
+
+func (worker *mediaWorker) showExternalPreview(ctx context.Context, generation uint64, preview externalPreview) error {
+	worker.validityMu.RLock()
+	defer worker.validityMu.RUnlock()
+	if worker.generation != generation {
+		return context.Canceled
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return worker.external.Show(ctx, preview)
 }
 
 type ueberzugPreviewer struct {

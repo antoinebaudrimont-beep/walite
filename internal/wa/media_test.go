@@ -13,7 +13,8 @@ import (
 func TestAdaptMessageRecognizesBoundedMediaMetadata(t *testing.T) {
 	caption := "Holiday Café 日本語 👋"
 	filename := "résumé 👨‍👩‍👧‍👦.pdf"
-	imageMIME, videoMIME, documentMIME, audioMIME, stickerMIME := "image/jpeg", "video/mp4", "application/pdf", "audio/ogg", "image/webp"
+	imageMIME, gifMIME, videoMIME, documentMIME, audioMIME, stickerMIME := "image/jpeg", "image/gif", "video/mp4", "application/pdf", "audio/ogg", "image/webp"
+	gifPlayback := true
 	tests := []struct {
 		name     string
 		payload  *waE2E.Message
@@ -23,7 +24,9 @@ func TestAdaptMessageRecognizesBoundedMediaMetadata(t *testing.T) {
 		caption  string
 	}{
 		{name: "image", payload: &waE2E.Message{ImageMessage: &waE2E.ImageMessage{Mimetype: &imageMIME, Caption: &caption}}, kind: model.MediaImage, mime: imageMIME, caption: caption},
+		{name: "ordinary_gif", payload: &waE2E.Message{ImageMessage: &waE2E.ImageMessage{Mimetype: &gifMIME}}, kind: model.MediaImage, mime: gifMIME},
 		{name: "video", payload: &waE2E.Message{VideoMessage: &waE2E.VideoMessage{Mimetype: &videoMIME, Caption: &caption}}, kind: model.MediaVideo, mime: videoMIME, caption: caption},
+		{name: "gif_playback_mp4", payload: &waE2E.Message{VideoMessage: &waE2E.VideoMessage{Mimetype: &videoMIME, GifPlayback: &gifPlayback}}, kind: model.MediaVideo, mime: videoMIME},
 		{name: "document", payload: &waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{Mimetype: &documentMIME, FileName: &filename, Caption: &caption}}, kind: model.MediaDocument, filename: filename, mime: documentMIME, caption: caption},
 		{name: "audio", payload: &waE2E.Message{AudioMessage: &waE2E.AudioMessage{Mimetype: &audioMIME}}, kind: model.MediaAudio, mime: audioMIME},
 		{name: "sticker", payload: &waE2E.Message{StickerMessage: &waE2E.StickerMessage{Mimetype: &stickerMIME}}, kind: model.MediaSticker, mime: stickerMIME},

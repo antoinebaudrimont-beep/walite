@@ -254,6 +254,7 @@ func runStartedApplication(
 			PersistLocalRead: loader.requestLocalRead,
 			SendReadReceipt:  readReceipts.admit,
 			Media:            media.admit, MediaResults: media.results, CloseMedia: media.close,
+			CloseExternalPreview: media.closeExternal,
 		})
 	}()
 
