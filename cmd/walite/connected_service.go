@@ -173,6 +173,10 @@ func (application *connectedApplicationService) SendText(ctx context.Context, re
 	return application.core.SendText(ctx, request)
 }
 
+func (application *connectedApplicationService) SendMedia(ctx context.Context, request service.SendMediaRequest) error {
+	return application.core.SendMedia(ctx, request)
+}
+
 func (application *connectedApplicationService) MarkChatLocallyRead(ctx context.Context, id model.ChatID, through time.Time) error {
 	return application.store.MarkChatLocallyRead(ctx, id, through)
 }

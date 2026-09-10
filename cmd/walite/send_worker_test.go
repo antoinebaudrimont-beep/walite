@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -22,6 +23,17 @@ type workerTestApplication struct {
 	send     func(context.Context, service.SendTextRequest) error
 	validate func(service.SendTextRequest) error
 	calls    atomic.Int32
+}
+
+type workerMediaApplication struct {
+	*workerTestApplication
+	media      func(context.Context, service.SendMediaRequest) error
+	mediaCalls atomic.Int32
+}
+
+func (application *workerMediaApplication) SendMedia(ctx context.Context, request service.SendMediaRequest) error {
+	application.mediaCalls.Add(1)
+	return application.media(ctx, request)
 }
 
 func newWorkerTestApplication() *workerTestApplication {
@@ -162,6 +174,46 @@ func TestSendWorkerFailureDoesNotRetry(t *testing.T) {
 	worker.stop()
 	if !result.Failed || !result.Uncertain || application.calls.Load() != 1 {
 		t.Fatalf("result=%+v calls=%d", result, application.calls.Load())
+	}
+}
+
+func TestSendWorkerClassifiesMediaOffLoopAndCallsApplicationOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "Café $(not-shell).pdf")
+	if err := os.WriteFile(path, []byte("%PDF-1.7\nsynthetic"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	application := &workerMediaApplication{workerTestApplication: newWorkerTestApplication()}
+	application.media = func(_ context.Context, request service.SendMediaRequest) error {
+		if request.Path() != path || request.ChatID().String() != "123@lid" || request.Media().Kind() != model.MediaDocument ||
+			request.Media().Name() != "Café $(not-shell).pdf" || request.Media().MIMEType() != "application/pdf" {
+			t.Fatalf("request path=%q chat=%q media=%+v", request.Path(), request.ChatID().String(), request.Media())
+		}
+		return nil
+	}
+	worker := newSendWorker(context.Background(), application)
+	if err := worker.admit(context.Background(), tui.SendRequest{ChatID: "123@lid", FilePath: path}); err != nil {
+		t.Fatal(err)
+	}
+	result := <-worker.results
+	worker.stop()
+	if result.Failed || !result.Media || application.mediaCalls.Load() != 1 || application.calls.Load() != 0 {
+		t.Fatalf("result=%+v media calls=%d text calls=%d", result, application.mediaCalls.Load(), application.calls.Load())
+	}
+}
+
+func TestSendWorkerInvalidFileCreatesControlledFailureWithoutTransport(t *testing.T) {
+	application := &workerMediaApplication{workerTestApplication: newWorkerTestApplication(), media: func(context.Context, service.SendMediaRequest) error {
+		return errors.New("must not be called")
+	}}
+	worker := newSendWorker(context.Background(), application)
+	path := filepath.Join(t.TempDir(), "missing")
+	if err := worker.admit(context.Background(), tui.SendRequest{ChatID: "123@lid", FilePath: path}); err != nil {
+		t.Fatal(err)
+	}
+	result := <-worker.results
+	worker.stop()
+	if !result.Failed || result.Uncertain || !result.Media || application.mediaCalls.Load() != 0 {
+		t.Fatalf("result=%+v media calls=%d", result, application.mediaCalls.Load())
 	}
 }
 

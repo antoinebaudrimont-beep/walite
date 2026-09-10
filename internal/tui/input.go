@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+
 	"github.com/gdamore/tcell/v2"
 )
 
@@ -70,6 +71,9 @@ func handleKey(model *viewModel, event *tcell.EventKey, width, height int) (chan
 	if model.mode == modeCompose {
 		return handleComposeKey(model, event, width, height), false
 	}
+	if model.mode == modeFile {
+		return handleFileKey(model, event), false
+	}
 	if model.replySelect.valid {
 		return handleReplySelectionKey(model, event, width, height), false
 	}
@@ -93,6 +97,18 @@ func handleKey(model *viewModel, event *tcell.EventKey, width, height int) (chan
 		model.composer.clear()
 		model.replyTarget = replyTarget{}
 		model.replySelect = replySelectionState{}
+		return true, false
+	case event.Key() == tcell.KeyRune && event.Rune() == 'F':
+		if _, ok := model.chats.selectedChat(); !ok {
+			return false, false
+		}
+		closeMedia(model)
+		markSelectedChatReadOnInteraction(model)
+		model.mode = modeFile
+		model.composer.clear()
+		model.replyTarget = replyTarget{}
+		model.replySelect = replySelectionState{}
+		model.sendStatus = ""
 		return true, false
 	case event.Key() == tcell.KeyCtrlR:
 		read := markSelectedChatReadOnInteraction(model)
@@ -131,7 +147,31 @@ func closesMediaPreview(event *tcell.EventKey) bool {
 	case tcell.KeyEnter, tcell.KeyCtrlR, tcell.KeyUp, tcell.KeyDown, tcell.KeyHome, tcell.KeyEnd, tcell.KeyPgUp, tcell.KeyPgDn, tcell.KeyCtrlU, tcell.KeyCtrlD:
 		return true
 	case tcell.KeyRune:
-		return event.Rune() == 'j' || event.Rune() == 'k' || event.Rune() == 'o' || event.Rune() == 'O'
+		return event.Rune() == 'j' || event.Rune() == 'k' || event.Rune() == 'o' || event.Rune() == 'O' || event.Rune() == 'F'
+	default:
+		return false
+	}
+}
+
+func handleFileKey(model *viewModel, event *tcell.EventKey) bool {
+	switch event.Key() {
+	case tcell.KeyEscape:
+		model.sendStatus = ""
+		model.composer.clear()
+		model.mode = modeNavigate
+		return true
+	case tcell.KeyEnter:
+		return submitOutgoingFile(model)
+	case tcell.KeyBackspace, tcell.KeyBackspace2:
+		return model.composer.backspace()
+	case tcell.KeyDelete:
+		return model.composer.delete()
+	case tcell.KeyLeft:
+		return model.composer.moveLeft()
+	case tcell.KeyRight:
+		return model.composer.moveRight()
+	case tcell.KeyRune:
+		return model.composer.insert(event.Rune())
 	default:
 		return false
 	}
@@ -330,6 +370,35 @@ func submitOutgoingMessage(model *viewModel) bool {
 		return true
 	}
 	clearSentDraft(model)
+	return true
+}
+
+func submitOutgoingFile(model *viewModel) bool {
+	if model.sendPending || model.sendUncertain {
+		return false
+	}
+	model.composer.normalize()
+	if model.composer.length == 0 || model.send == nil {
+		return false
+	}
+	selected, ok := model.chats.selectedChat()
+	if !ok {
+		return false
+	}
+	if err := model.send(SendRequest{ChatID: selected.id, FilePath: model.composer.text()}); err != nil {
+		if model.asyncSend {
+			model.sendStatus = "File send unavailable or rejected; path kept"
+			return true
+		}
+		return false
+	}
+	if model.asyncSend {
+		model.sendPending = true
+		model.sendStatus = "Sending file… path protected"
+		return true
+	}
+	clearSentDraft(model)
+	model.mode = modeNavigate
 	return true
 }
 

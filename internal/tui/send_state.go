@@ -7,7 +7,7 @@ var ErrGroupReplyUnavailable = errors.New("group replies not available yet")
 
 // SendResult completes one admitted request, not a chat-data mutation. Only
 // LiveEvents can add the resulting message. Uncertain disables Enter-to-retry.
-type SendResult struct{ Failed, Uncertain bool }
+type SendResult struct{ Failed, Uncertain, Media bool }
 
 func applySendResult(model *viewModel, result SendResult) bool {
 	if !model.sendPending {
@@ -17,6 +17,9 @@ func applySendResult(model *viewModel, result SendResult) bool {
 	if result.Failed {
 		model.sendUncertain = result.Uncertain
 		model.sendStatus = "Send failed; draft kept"
+		if result.Media {
+			model.sendStatus = "Send failed; path kept"
+		}
 		if result.Uncertain {
 			model.sendStatus = "Delivery unknown; check recipient. Esc discard"
 		}
@@ -24,6 +27,9 @@ func applySendResult(model *viewModel, result SendResult) bool {
 	}
 	model.sendStatus = ""
 	clearSentDraft(model)
+	if result.Media {
+		model.mode = modeNavigate
+	}
 	return true
 }
 

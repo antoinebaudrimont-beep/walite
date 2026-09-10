@@ -113,6 +113,7 @@ type Core struct {
 	updates                   chan model.Update
 	liveEvents                chan model.LiveEvent
 	sender                    TextSender
+	mediaSender               MediaSender
 	sendSlot                  chan struct{}
 	localDrops                *saturatingCounter
 	localDropWake             chan struct{}
@@ -175,7 +176,8 @@ func newCore(options Options, source EventSource, store MessageStore, policy Ret
 	}
 	mailbox, _ := newFixedMailbox(keys, updateBudget, weighUpdate)
 	drops := &saturatingCounter{}
-	return &Core{options: options, source: source, store: store, policy: policy, clock: clock, realtimeQ: realtimeQ, historyQ: historyQ, liveWriteQ: liveQ, historyWriteQ: historyWriteQ, resultQ: resultQ, updateMailbox: mailbox, updates: make(chan model.Update, 1), liveEvents: make(chan model.LiveEvent, LiveEventCapacity), sender: sender, sendSlot: make(chan struct{}, 1), localDrops: drops, localDropWake: make(chan struct{}, 1)}, nil
+	mediaSender, _ := sender.(MediaSender)
+	return &Core{options: options, source: source, store: store, policy: policy, clock: clock, realtimeQ: realtimeQ, historyQ: historyQ, liveWriteQ: liveQ, historyWriteQ: historyWriteQ, resultQ: resultQ, updateMailbox: mailbox, updates: make(chan model.Update, 1), liveEvents: make(chan model.LiveEvent, LiveEventCapacity), sender: sender, mediaSender: mediaSender, sendSlot: make(chan struct{}, 1), localDrops: drops, localDropWake: make(chan struct{}, 1)}, nil
 }
 
 func validateOptions(o Options, source EventSource, store MessageStore, policy RetentionPolicy, clock Clock) error {

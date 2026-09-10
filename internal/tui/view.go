@@ -126,7 +126,7 @@ func drawCompact(screen tcell.Screen, model *viewModel, width, height int) {
 		escapeAction := "Esc quit"
 		if model.settingsOpen || model.emojiPicker.open {
 			escapeAction = "Esc close"
-		} else if model.mode == modeCompose || model.replySelect.valid {
+		} else if model.mode == modeCompose || model.mode == modeFile || model.replySelect.valid {
 			escapeAction = "Esc cancel"
 		}
 		putText(screen, 0, height-2, width, escapeAction, styles.status.Dim(true))
@@ -162,6 +162,8 @@ func drawNarrow(screen tcell.Screen, model *viewModel, width, height int) {
 		footer = narrowNavigationFooter(model, width)
 	} else if model.mode == modeCompose {
 		footer = narrowComposeFooter(width)
+	} else if model.mode == modeFile {
+		footer = narrowFileFooter(width)
 	}
 	putText(screen, 0, height-1, width, footer, styles.status.Dim(true))
 }
@@ -252,6 +254,8 @@ func drawTwoPane(screen tcell.Screen, model *viewModel, width, height int) {
 		footer = navigationFooter(model, false)
 	} else if model.mode == modeCompose {
 		footer = "↑/↓ scroll  Enter send  Ctrl-R reply  Ctrl-E emoji  Ctrl-P settings  Esc cancel"
+	} else if model.mode == modeFile {
+		footer = "Enter send file  Ctrl-P settings  Esc cancel"
 	}
 	putText(screen, 2, height-2, width-2, footer, styles.status.Dim(true))
 }
@@ -263,7 +267,7 @@ func drawComposer(screen tcell.Screen, model *viewModel, x, y, limit int) {
 	}
 	putText(screen, x, y, limit, "> ", styles.composer)
 	inputX := x + 2
-	if model.mode != modeCompose {
+	if model.mode != modeCompose && model.mode != modeFile {
 		putText(screen, inputX, y, limit, "Write a message…", styles.composer.Dim(true))
 		return
 	}
@@ -292,9 +296,9 @@ func navigationFooter(model *viewModel, narrow bool) string {
 		return "↑/↓ message  P preview  S save  Enter reply  Esc cancel"
 	}
 	if narrow {
-		return "↑/↓ scroll  j/k chat  O older  P/S media  Enter  Ctrl-P  Esc quit"
+		return "↑/↓ scroll  j/k chat  O older  P/S media  F file  Enter  Ctrl-P  Esc quit"
 	}
-	return "↑/↓ scroll  j/k chats  O older  P preview  S save  Enter compose  Ctrl-P settings  Esc quit"
+	return "↑/↓ scroll  j/k chats  O older  P/S media  F file  Enter compose  Ctrl-P settings  Esc quit"
 }
 
 func narrowNavigationFooter(model *viewModel, width int) string {
@@ -314,6 +318,14 @@ func narrowComposeFooter(width int) string {
 		return footer
 	}
 	return "↑/↓  Enter send  Ctrl-R  Ctrl-E  Esc"
+}
+
+func narrowFileFooter(width int) string {
+	footer := "Enter send file  Ctrl-P settings  Esc cancel"
+	if uniseg.StringWidth(footer) <= width {
+		return footer
+	}
+	return "Enter send  Esc cancel"
 }
 
 func visibleDraftSpan(composer *composerState, width int) (start, end, cursorCells int) {

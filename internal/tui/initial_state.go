@@ -79,6 +79,7 @@ type LiveMessage struct {
 type SendRequest struct {
 	ChatID         string
 	Text           string
+	FilePath       string
 	ReplyToID      string
 	ReplyToText    string
 	ReplyToFromMe  bool

@@ -37,6 +37,13 @@ type TextSender interface {
 	SendText(context.Context, model.ChatID, string, ...model.TextQuote) (model.Event, error)
 }
 
+// MediaSender uploads and sends one already-inspected local media file. It
+// returns transport-owned identity, time, and remote download metadata, but
+// does not persist or publish the event itself.
+type MediaSender interface {
+	SendMedia(context.Context, model.ChatID, string, model.Media, uint64) (model.Event, error)
+}
+
 // MessageStore is the persistence contract consumed by coordination.
 type MessageStore interface {
 	EnsureChat(context.Context, model.Chat) error

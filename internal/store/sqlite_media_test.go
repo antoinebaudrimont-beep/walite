@@ -121,3 +121,34 @@ func TestSQLiteDownloadDescriptorSurvivesRestartAndDuplicateCannotDowngradeIt(t 
 		t.Fatalf("media=%+v download=%+v", got.Media(), download)
 	}
 }
+
+func TestSQLiteOutgoingMediaDirectionAndPlaceholderMetadataSurviveRestart(t *testing.T) {
+	ctx := context.Background()
+	path := testSQLitePath(t)
+	disk, err := OpenSQLite(ctx, SQLiteOptions{Path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	media, _ := model.NewDownloadableMedia(model.MediaDocument, "sent report.pdf", "application/pdf", "/outgoing/document",
+		[]byte("key"), []byte("hash"), []byte("encrypted"), 123)
+	want, _ := model.NewMessage(model.MessageInput{ChatID: "chat", MessageID: "sent-media", SentAt: time.Unix(3, 0).UTC(), FromMe: true, Media: media})
+	if err := disk.PutMessage(ctx, want); err != nil {
+		t.Fatal(err)
+	}
+	if err := disk.Close(); err != nil {
+		t.Fatal(err)
+	}
+	disk, err = OpenSQLite(ctx, SQLiteOptions{Path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer disk.Close()
+	got, err := disk.Message(ctx, want.ChatID(), want.MessageID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertMessagesEqual(t, got, want)
+	if !got.FromMe() || got.Media().Kind() != model.MediaDocument || got.Media().Name() != "sent report.pdf" {
+		t.Fatalf("outgoing media=%+v from_me=%t", got.Media(), got.FromMe())
+	}
+}

@@ -13,6 +13,9 @@ const (
 	MaxMediaDirectPathBytes = 3072
 	MaxMediaKeyBytes        = 64
 	MaxMediaHashBytes       = 64
+	// MaxOutgoingMediaBytes matches walite's existing explicit-save ceiling.
+	// It bounds one user-selected upload without implying an upstream limit.
+	MaxOutgoingMediaBytes = 100 << 20
 )
 
 // MediaKind is a closed transport-neutral media classification. Its zero

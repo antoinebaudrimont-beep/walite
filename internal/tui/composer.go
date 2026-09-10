@@ -14,6 +14,7 @@ type inputMode uint8
 const (
 	modeNavigate inputMode = iota
 	modeCompose
+	modeFile
 )
 
 type composerState struct {

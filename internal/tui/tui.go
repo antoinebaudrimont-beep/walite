@@ -93,6 +93,8 @@ func runInitialized(
 	preferencesPath string,
 	chats *chatState,
 ) error {
+	screen.EnablePaste()
+	defer screen.DisablePaste()
 	screen.HideCursor()
 	model := viewModel{chats: chats, options: input.Options}
 	model.asyncSend = input.SendResults != nil
@@ -139,6 +141,7 @@ func runInitialized(
 	optionsResults := input.OptionsResults
 	mediaResults := input.MediaResults
 	olderResults := input.OlderResults
+	paste := pasteRoutingState{}
 
 	for {
 		select {
@@ -226,6 +229,13 @@ func runInitialized(
 			}
 			switch event := event.(type) {
 			case *tcell.EventKey:
+				if handled, changed := paste.routeKey(&model, event); handled {
+					if changed {
+						draw(screen, &model)
+						screen.Show()
+					}
+					continue
+				}
 				width, height := screen.Size()
 				selectedBefore := ""
 				if selected, ok := model.chats.selectedChat(); ok {
@@ -245,6 +255,8 @@ func runInitialized(
 					draw(screen, &model)
 					screen.Show()
 				}
+			case *tcell.EventPaste:
+				paste.transition(&model, event)
 			case *tcell.EventResize:
 				closeMedia(&model)
 				screen.Sync()

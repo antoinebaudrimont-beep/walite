@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 
 const sendMailboxCapacity = 1
 const sendTimeout = 30 * time.Second
+const mediaSendTimeout = 5 * time.Minute
 
 type applicationTextValidator interface {
 	ValidateText(service.SendTextRequest) error
@@ -49,6 +51,17 @@ func (worker *sendWorker) admit(ctx context.Context, request tui.SendRequest) er
 	if worker.busy || len(worker.results) != 0 {
 		return &service.CoreError{Kind: service.CoreBusy}
 	}
+	if request.FilePath != "" {
+		if request.Text != "" || request.ReplyToID != "" {
+			return &service.CoreError{Kind: service.CoreMalformed}
+		}
+		if _, ok := worker.application.(applicationMediaSender); !ok {
+			return wa.ErrMediaUnavailable
+		}
+		worker.busy = true
+		worker.requests <- tui.SendRequest{ChatID: strings.Clone(request.ChatID), FilePath: strings.Clone(request.FilePath)}
+		return nil
+	}
 	if _, ok := worker.application.(applicationTextSender); !ok {
 		return wa.ErrTextUnavailable
 	}
@@ -79,18 +92,26 @@ func (worker *sendWorker) run() {
 		case <-worker.ctx.Done():
 			return
 		case request := <-worker.requests:
-			ctx, cancel := context.WithTimeout(worker.ctx, sendTimeout)
+			timeout := sendTimeout
+			if request.FilePath != "" {
+				timeout = mediaSendTimeout
+			}
+			ctx, cancel := context.WithTimeout(worker.ctx, timeout)
 			err := ctx.Err()
 			if err == nil {
-				err = sendTextFromTUI(ctx, worker.application, request)
+				if request.FilePath != "" {
+					err = sendMediaFromTUI(ctx, worker.application, request)
+				} else {
+					err = sendTextFromTUI(ctx, worker.application, request)
+				}
 			}
 			cancel()
 			// Transport uncertainty must survive CoreCancelled wrapping: Core
 			// may expose only ctx.Err when cancellation races an upstream error.
-			uncertain := errors.Is(err, wa.ErrTextUncertain) || errors.Is(err, &service.CoreError{Kind: service.CoreCancelled}) ||
+			uncertain := errors.Is(err, wa.ErrTextUncertain) || errors.Is(err, wa.ErrMediaSendUncertain) || errors.Is(err, &service.CoreError{Kind: service.CoreCancelled}) ||
 				errors.Is(err, &service.CoreError{Kind: service.CoreInvariant}) || errors.Is(err, &service.CoreError{Kind: service.CoreMalformed})
 			worker.mu.Lock()
-			worker.results <- tui.SendResult{Failed: err != nil, Uncertain: err != nil && uncertain}
+			worker.results <- tui.SendResult{Failed: err != nil, Uncertain: err != nil && uncertain, Media: request.FilePath != ""}
 			worker.busy = false
 			worker.mu.Unlock()
 		}

@@ -32,6 +32,10 @@ type applicationTextSender interface {
 	SendText(context.Context, service.SendTextRequest) error
 }
 
+type applicationMediaSender interface {
+	SendMedia(context.Context, service.SendMediaRequest) error
+}
+
 type cacheUpdateApplication interface {
 	CacheUpdates() <-chan struct{}
 }
@@ -301,6 +305,18 @@ func sendTextFromTUI(ctx context.Context, application applicationService, reques
 		return err
 	}
 	return sender.SendText(ctx, serviceRequest)
+}
+
+func sendMediaFromTUI(ctx context.Context, application applicationService, request tui.SendRequest) error {
+	sender, ok := application.(applicationMediaSender)
+	if !ok {
+		return wa.ErrMediaUnavailable
+	}
+	serviceRequest, err := service.NewSendMediaRequest(request.ChatID, request.FilePath)
+	if err != nil {
+		return err
+	}
+	return sender.SendMedia(ctx, serviceRequest)
 }
 
 func sendRequestFromTUI(request tui.SendRequest) (service.SendTextRequest, error) {
