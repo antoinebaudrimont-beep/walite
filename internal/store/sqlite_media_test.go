@@ -152,3 +152,34 @@ func TestSQLiteOutgoingMediaDirectionAndPlaceholderMetadataSurviveRestart(t *tes
 		t.Fatalf("outgoing media=%+v from_me=%t", got.Media(), got.FromMe())
 	}
 }
+
+func TestSQLiteOutgoingStickerSurvivesRestart(t *testing.T) {
+	ctx := context.Background()
+	path := testSQLitePath(t)
+	disk, err := OpenSQLite(ctx, SQLiteOptions{Path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	media, _ := model.NewDownloadableMedia(model.MediaSticker, "sent sticker.webp", "image/webp", "/outgoing/sticker",
+		[]byte("key"), []byte("hash"), []byte("encrypted"), 321)
+	want, _ := model.NewMessage(model.MessageInput{ChatID: "chat", MessageID: "sent-sticker", SentAt: time.Unix(4, 0).UTC(), FromMe: true, Media: media})
+	if err := disk.PutMessage(ctx, want); err != nil {
+		t.Fatal(err)
+	}
+	if err := disk.Close(); err != nil {
+		t.Fatal(err)
+	}
+	disk, err = OpenSQLite(ctx, SQLiteOptions{Path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer disk.Close()
+	got, err := disk.Message(ctx, want.ChatID(), want.MessageID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertMessagesEqual(t, got, want)
+	if !got.FromMe() || got.Media().Kind() != model.MediaSticker || got.Media().MIMEType() != "image/webp" {
+		t.Fatalf("outgoing sticker=%+v from_me=%t", got.Media(), got.FromMe())
+	}
+}

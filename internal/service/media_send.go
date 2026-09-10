@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -20,14 +21,19 @@ const (
 
 var ErrLocalMediaRejected = errors.New("local media file rejected")
 
+// ErrStickerRejected identifies a WebP file that does not meet the bounded
+// WhatsApp sticker constraints enforced before upload.
+var ErrStickerRejected = fmt.Errorf("%w: sticker must be a compatible 512x512 WebP", ErrLocalMediaRejected)
+
 // SendMediaRequest is an immutable description of one inspected regular
 // local file. File contents remain outside the request and are streamed by the
 // transport only after Core reserves bounded realtime capacity.
 type SendMediaRequest struct {
-	chatID model.ChatID
-	path   string
-	media  model.Media
-	size   uint64
+	chatID  model.ChatID
+	path    string
+	media   model.Media
+	size    uint64
+	sticker StickerMetadata
 }
 
 // NewSendMediaRequest validates, stats and content-sniffs one local file.
@@ -52,11 +58,23 @@ func NewSendMediaRequest(chatID, path string) (SendMediaRequest, error) {
 	}
 	mimeType := http.DetectContentType(header[:read])
 	kind := classifyOutgoingMedia(mimeType)
+	var sticker StickerMetadata
+	if mimeType == "image/webp" {
+		sticker, err = inspectStickerWebP(file, uint64(info.Size()))
+		if err != nil {
+			return SendMediaRequest{}, ErrStickerRejected
+		}
+		kind = model.MediaSticker
+	} else if strings.EqualFold(filepath.Ext(path), ".webp") {
+		// The suffix identifies sticker intent, but never overrides content
+		// inspection: renamed non-WebP data must not be uploaded as a sticker.
+		return SendMediaRequest{}, ErrStickerRejected
+	}
 	media, err := model.NewMedia(kind, filepath.Base(path), mimeType)
 	if err != nil {
 		return SendMediaRequest{}, ErrLocalMediaRejected
 	}
-	return SendMediaRequest{chatID: ownedChatID, path: strings.Clone(path), media: media, size: uint64(info.Size())}, nil
+	return SendMediaRequest{chatID: ownedChatID, path: strings.Clone(path), media: media, size: uint64(info.Size()), sticker: sticker}, nil
 }
 
 func classifyOutgoingMedia(mimeType string) model.MediaKind {
@@ -72,10 +90,11 @@ func classifyOutgoingMedia(mimeType string) model.MediaKind {
 	}
 }
 
-func (request SendMediaRequest) ChatID() model.ChatID { return request.chatID }
-func (request SendMediaRequest) Path() string         { return request.path }
-func (request SendMediaRequest) Media() model.Media   { return request.media }
-func (request SendMediaRequest) Size() uint64         { return request.size }
+func (request SendMediaRequest) ChatID() model.ChatID     { return request.chatID }
+func (request SendMediaRequest) Path() string             { return request.path }
+func (request SendMediaRequest) Media() model.Media       { return request.media }
+func (request SendMediaRequest) Size() uint64             { return request.size }
+func (request SendMediaRequest) Sticker() StickerMetadata { return request.sticker }
 
 // SendMedia shares text sending's one-in-flight gate and reserves the same
 // bounded realtime path before upload or SendMessage can be invoked.
@@ -115,7 +134,7 @@ func (core *Core) SendMedia(ctx context.Context, request SendMediaRequest) error
 	if err := ctx.Err(); err != nil {
 		return &CoreError{Kind: CoreCancelled, Operation: CoreOperationSend, Cause: err}
 	}
-	event, err := core.mediaSender.SendMedia(ctx, owned.ChatID(), owned.Path(), owned.Media(), owned.Size())
+	event, err := core.mediaSender.SendMedia(ctx, owned.ChatID(), owned.Path(), owned.Media(), owned.Size(), owned.Sticker())
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
 			cause := ctx.Err()
@@ -148,8 +167,9 @@ func cloneSendMediaRequest(request SendMediaRequest) (SendMediaRequest, error) {
 		return SendMediaRequest{}, &CoreError{Kind: CoreMalformed, Operation: CoreOperationSend}
 	}
 	media, err := model.NewMedia(request.Media().Kind(), request.Media().Name(), request.Media().MIMEType())
-	if err != nil || media.Kind() == model.MediaSticker {
+	if err != nil || media.Kind() == model.MediaSticker && !request.Sticker().ValidFor(request.Size()) ||
+		media.Kind() != model.MediaSticker && !request.Sticker().IsZero() {
 		return SendMediaRequest{}, &CoreError{Kind: CoreMalformed, Operation: CoreOperationSend}
 	}
-	return SendMediaRequest{chatID: chatID, path: strings.Clone(request.Path()), media: media, size: request.Size()}, nil
+	return SendMediaRequest{chatID: chatID, path: strings.Clone(request.Path()), media: media, size: request.Size(), sticker: request.Sticker()}, nil
 }

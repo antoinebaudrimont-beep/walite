@@ -55,6 +55,17 @@ func TestFileModeEscapeCancelsWithoutSending(t *testing.T) {
 	}
 }
 
+func TestRejectedStickerKeepsPathWithClearStatus(t *testing.T) {
+	model := defaultDemoView()
+	model.mode = modeFile
+	model.sendPending = true
+	model.composer.insertText("/tmp/invalid.webp")
+	if !applySendResult(&model, SendResult{Failed: true, Media: true, StickerRejected: true}) ||
+		!strings.Contains(model.sendStatus, "512x512 WebP") || !strings.Contains(model.sendStatus, "path kept") || model.composer.text() != "/tmp/invalid.webp" {
+		t.Fatalf("status=%q path=%q", model.sendStatus, model.composer.text())
+	}
+}
+
 func TestFileModeRendersPathFooterAndCompactCancel(t *testing.T) {
 	model := defaultDemoView()
 	model.mode = modeFile
@@ -98,5 +109,23 @@ func TestCommittedOutgoingMediaRendersThroughLivePresentation(t *testing.T) {
 	screen.Show()
 	if text := screenText(screen); !strings.Contains(text, "[Document: report Café.pdf]") {
 		t.Fatalf("outgoing placeholder missing:\n%s", text)
+	}
+}
+
+func TestCommittedOutgoingStickerRendersThroughLivePresentation(t *testing.T) {
+	model := defaultDemoView()
+	chat, _ := model.chats.selectedChat()
+	at := time.Date(2200, 1, 2, 11, 1, 0, 0, time.UTC)
+	if !applyLiveMessage(&model, LiveMessage{
+		ChatID: chat.id, MessageID: "outgoing-sticker", SentAt: at, FromMe: true, BodyRetained: true,
+		MediaKind: mediaSticker, MediaMIME: "image/webp", ActivityTime: at,
+	}) {
+		t.Fatal("committed outgoing sticker rejected")
+	}
+	screen := initializedSimulationScreen(t, 100, 30)
+	draw(screen, &model)
+	screen.Show()
+	if text := screenText(screen); !strings.Contains(text, "[Sticker]") {
+		t.Fatalf("outgoing sticker placeholder missing:\n%s", text)
 	}
 }

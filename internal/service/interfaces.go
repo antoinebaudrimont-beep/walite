@@ -41,7 +41,7 @@ type TextSender interface {
 // returns transport-owned identity, time, and remote download metadata, but
 // does not persist or publish the event itself.
 type MediaSender interface {
-	SendMedia(context.Context, model.ChatID, string, model.Media, uint64) (model.Event, error)
+	SendMedia(context.Context, model.ChatID, string, model.Media, uint64, StickerMetadata) (model.Event, error)
 }
 
 // MessageStore is the persistence contract consumed by coordination.

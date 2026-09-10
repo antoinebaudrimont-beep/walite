@@ -74,6 +74,12 @@ func TestRealMediaSenderUploadsAndBuildsEachNeutralKind(t *testing.T) {
 				t.Fatalf("document=%+v", document)
 			}
 		}},
+		{model.MediaSticker, "image/webp", whatsmeow.MediaImage, func(t *testing.T, message *waE2E.Message, name, mime string) {
+			if sticker := message.GetStickerMessage(); sticker == nil || sticker.GetMimetype() != mime || sticker.GetFileLength() == 0 ||
+				sticker.GetWidth() != model.StickerWidth || sticker.GetHeight() != model.StickerHeight || sticker.GetIsAnimated() {
+				t.Fatalf("sticker=%+v", sticker)
+			}
+		}},
 	}
 	for _, test := range tests {
 		t.Run(test.kind.String(), func(t *testing.T) {
@@ -84,6 +90,10 @@ func TestRealMediaSenderUploadsAndBuildsEachNeutralKind(t *testing.T) {
 				t.Fatal(err)
 			}
 			media, _ := model.NewMedia(test.kind, name, test.mime)
+			var sticker model.StickerSendMetadata
+			if test.kind == model.MediaSticker {
+				sticker, _ = model.NewStickerSendMetadata(model.StickerWidth, model.StickerHeight, false, uint64(len(data)))
+			}
 			at := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
 			client := &fakeMediaSendClient{connected: true, loggedIn: true}
 			client.upload = func(_ context.Context, got []byte, kind whatsmeow.MediaType) (whatsmeow.UploadResponse, error) {
@@ -101,7 +111,7 @@ func TestRealMediaSenderUploadsAndBuildsEachNeutralKind(t *testing.T) {
 			}
 			sender := &realTextSender{client: client}
 			chatID, _ := model.NewChatID("123@lid")
-			event, err := sender.SendMedia(context.Background(), chatID, path, media, uint64(len(data)))
+			event, err := sender.SendMedia(context.Background(), chatID, path, media, uint64(len(data)), sticker)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -131,7 +141,7 @@ func TestRealMediaSenderFailuresDoNotSendOrInventCommittedEvent(t *testing.T) {
 	client.send = func(context.Context, types.JID, *waE2E.Message) (whatsmeow.SendResponse, error) {
 		return whatsmeow.SendResponse{}, errors.New("must not send")
 	}
-	event, err := (&realTextSender{client: client}).SendMedia(context.Background(), chatID, path, media, uint64(len(data)))
+	event, err := (&realTextSender{client: client}).SendMedia(context.Background(), chatID, path, media, uint64(len(data)), model.StickerSendMetadata{})
 	if !errors.Is(err, ErrMediaUnavailable) || event.Message().MessageID().String() != "" || client.uploadCalls.Load() != 1 || client.sendCalls.Load() != 0 {
 		t.Fatalf("upload failure event=%+v err=%v upload=%d send=%d", event, err, client.uploadCalls.Load(), client.sendCalls.Load())
 	}
@@ -142,38 +152,50 @@ func TestRealMediaSenderFailuresDoNotSendOrInventCommittedEvent(t *testing.T) {
 	client.send = func(context.Context, types.JID, *waE2E.Message) (whatsmeow.SendResponse, error) {
 		return whatsmeow.SendResponse{}, errors.New("private send failure")
 	}
-	event, err = (&realTextSender{client: client}).SendMedia(context.Background(), chatID, path, media, uint64(len(data)))
+	event, err = (&realTextSender{client: client}).SendMedia(context.Background(), chatID, path, media, uint64(len(data)), model.StickerSendMetadata{})
 	if !errors.Is(err, ErrMediaSendUncertain) || event.Message().MessageID().String() != "" || client.uploadCalls.Load() != 2 || client.sendCalls.Load() != 1 {
 		t.Fatalf("send failure event=%+v err=%v upload=%d send=%d", event, err, client.uploadCalls.Load(), client.sendCalls.Load())
 	}
 }
 
-func TestRealMediaSenderRejectsStickerSizeMismatchAndCancellationBeforeUpload(t *testing.T) {
+func TestRealMediaSenderAnimatedStickerAndRejectionsBeforeUpload(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "media.webp")
 	if err := os.WriteFile(path, []byte("webp"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	client := &fakeMediaSendClient{connected: true, loggedIn: true, upload: func(context.Context, []byte, whatsmeow.MediaType) (whatsmeow.UploadResponse, error) {
-		return successfulUpload(4), nil
-	}, send: func(context.Context, types.JID, *waE2E.Message) (whatsmeow.SendResponse, error) {
-		return whatsmeow.SendResponse{}, nil
+	client := &fakeMediaSendClient{connected: true, loggedIn: true, upload: func(_ context.Context, data []byte, kind whatsmeow.MediaType) (whatsmeow.UploadResponse, error) {
+		if kind != whatsmeow.MediaImage {
+			t.Fatalf("sticker upload kind=%q", kind)
+		}
+		return successfulUpload(uint64(len(data))), nil
+	}, send: func(_ context.Context, _ types.JID, message *waE2E.Message) (whatsmeow.SendResponse, error) {
+		sticker := message.GetStickerMessage()
+		if sticker == nil || !sticker.GetIsAnimated() || sticker.GetWidth() != 512 || sticker.GetHeight() != 512 {
+			t.Fatalf("animated sticker=%+v", sticker)
+		}
+		return whatsmeow.SendResponse{ID: "animated-sticker", Timestamp: time.Unix(1, 0)}, nil
 	}}
 	sender := &realTextSender{client: client}
 	chatID, _ := model.NewChatID("123@lid")
 	sticker, _ := model.NewMedia(model.MediaSticker, "media.webp", "image/webp")
-	if _, err := sender.SendMedia(context.Background(), chatID, path, sticker, 4); !errors.Is(err, ErrMediaSendRejected) {
+	animated, _ := model.NewStickerSendMetadata(512, 512, true, 4)
+	event, err := sender.SendMedia(context.Background(), chatID, path, sticker, 4, animated)
+	if err != nil || event.Message().Media().Kind() != model.MediaSticker || client.uploadCalls.Load() != 1 || client.sendCalls.Load() != 1 {
+		t.Fatalf("animated event=%+v err=%v upload=%d send=%d", event, err, client.uploadCalls.Load(), client.sendCalls.Load())
+	}
+	if _, err := sender.SendMedia(context.Background(), chatID, path, sticker, 4, model.StickerSendMetadata{}); !errors.Is(err, ErrMediaSendRejected) {
 		t.Fatal(err)
 	}
 	image, _ := model.NewMedia(model.MediaImage, "media.webp", "image/webp")
-	if _, err := sender.SendMedia(context.Background(), chatID, path, image, 5); !errors.Is(err, ErrMediaSendRejected) {
+	if _, err := sender.SendMedia(context.Background(), chatID, path, image, 5, model.StickerSendMetadata{}); !errors.Is(err, ErrMediaSendRejected) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := sender.SendMedia(ctx, chatID, path, image, 4); !errors.Is(err, context.Canceled) {
+	if _, err := sender.SendMedia(ctx, chatID, path, image, 4, model.StickerSendMetadata{}); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
-	if client.uploadCalls.Load() != 0 || client.sendCalls.Load() != 0 {
+	if client.uploadCalls.Load() != 1 || client.sendCalls.Load() != 1 {
 		t.Fatal("rejected media reached network")
 	}
 }

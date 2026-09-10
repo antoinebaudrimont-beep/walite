@@ -111,7 +111,8 @@ func (worker *sendWorker) run() {
 			uncertain := errors.Is(err, wa.ErrTextUncertain) || errors.Is(err, wa.ErrMediaSendUncertain) || errors.Is(err, &service.CoreError{Kind: service.CoreCancelled}) ||
 				errors.Is(err, &service.CoreError{Kind: service.CoreInvariant}) || errors.Is(err, &service.CoreError{Kind: service.CoreMalformed})
 			worker.mu.Lock()
-			worker.results <- tui.SendResult{Failed: err != nil, Uncertain: err != nil && uncertain, Media: request.FilePath != ""}
+			worker.results <- tui.SendResult{Failed: err != nil, Uncertain: err != nil && uncertain, Media: request.FilePath != "",
+				StickerRejected: errors.Is(err, service.ErrStickerRejected)}
 			worker.busy = false
 			worker.mu.Unlock()
 		}

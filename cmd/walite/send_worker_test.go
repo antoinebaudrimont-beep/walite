@@ -217,6 +217,25 @@ func TestSendWorkerInvalidFileCreatesControlledFailureWithoutTransport(t *testin
 	}
 }
 
+func TestSendWorkerReportsIncompatibleStickerWithoutTransport(t *testing.T) {
+	application := &workerMediaApplication{workerTestApplication: newWorkerTestApplication(), media: func(context.Context, service.SendMediaRequest) error {
+		return errors.New("must not be called")
+	}}
+	path := filepath.Join(t.TempDir(), "invalid.webp")
+	if err := os.WriteFile(path, []byte("not WebP content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	worker := newSendWorker(context.Background(), application)
+	if err := worker.admit(context.Background(), tui.SendRequest{ChatID: "123@lid", FilePath: path}); err != nil {
+		t.Fatal(err)
+	}
+	result := <-worker.results
+	worker.stop()
+	if !result.Failed || result.Uncertain || !result.Media || !result.StickerRejected || application.mediaCalls.Load() != 0 {
+		t.Fatalf("result=%+v media calls=%d", result, application.mediaCalls.Load())
+	}
+}
+
 func TestOutgoingTUIStaysResponsiveDuringBlockedSendAndShutsDown(t *testing.T) {
 	isolateApplicationFiles(t)
 	application := newWorkerTestApplication()

@@ -25,8 +25,9 @@ type mediaUploadClient interface {
 // SendMedia uses the connection-owned client. It streams the selected local
 // file through whatsmeow's bounded temporary-file upload path, then invokes
 // SendMessage exactly once.
-func (sender *realTextSender) SendMedia(ctx context.Context, chatID model.ChatID, path string, media model.Media, size uint64) (model.Event, error) {
-	if ctx == nil || path == "" || size == 0 || size > model.MaxOutgoingMediaBytes || media.Kind() == 0 || media.Kind() == model.MediaSticker {
+func (sender *realTextSender) SendMedia(ctx context.Context, chatID model.ChatID, path string, media model.Media, size uint64, sticker model.StickerSendMetadata) (model.Event, error) {
+	if ctx == nil || path == "" || size == 0 || size > model.MaxOutgoingMediaBytes || media.Kind() == 0 ||
+		media.Kind() == model.MediaSticker && !sticker.ValidFor(size) || media.Kind() != model.MediaSticker && !sticker.IsZero() {
 		return model.Event{}, ErrMediaSendRejected
 	}
 	if err := ctx.Err(); err != nil {
@@ -88,7 +89,7 @@ func (sender *realTextSender) SendMedia(ctx context.Context, chatID model.ChatID
 	if err != nil {
 		return model.Event{}, ErrMediaSendRejected
 	}
-	payload := outgoingMediaMessage(committedMedia, upload)
+	payload := outgoingMediaMessage(committedMedia, upload, sticker)
 	if payload == nil {
 		return model.Event{}, ErrMediaSendRejected
 	}
@@ -113,7 +114,7 @@ func (sender *realTextSender) SendMedia(ctx context.Context, chatID model.ChatID
 	return event, nil
 }
 
-func outgoingMediaMessage(media model.Media, upload whatsmeow.UploadResponse) *waE2E.Message {
+func outgoingMediaMessage(media model.Media, upload whatsmeow.UploadResponse, sticker model.StickerSendMetadata) *waE2E.Message {
 	url, directPath, mimeType, size := upload.URL, upload.DirectPath, media.MIMEType(), upload.FileLength
 	switch media.Kind() {
 	case model.MediaImage:
@@ -136,6 +137,13 @@ func outgoingMediaMessage(media model.Media, upload whatsmeow.UploadResponse) *w
 		return &waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{
 			URL: &url, DirectPath: &directPath, Mimetype: &mimeType, FileName: &name, FileLength: &size,
 			MediaKey: upload.MediaKey, FileSHA256: upload.FileSHA256, FileEncSHA256: upload.FileEncSHA256,
+		}}
+	case model.MediaSticker:
+		width, height, animated := sticker.Width(), sticker.Height(), sticker.Animated()
+		return &waE2E.Message{StickerMessage: &waE2E.StickerMessage{
+			URL: &url, DirectPath: &directPath, Mimetype: &mimeType, FileLength: &size,
+			MediaKey: upload.MediaKey, FileSHA256: upload.FileSHA256, FileEncSHA256: upload.FileEncSHA256,
+			Width: &width, Height: &height, IsAnimated: &animated,
 		}}
 	default:
 		return nil
