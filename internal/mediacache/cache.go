@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"os"
 	"path/filepath"
 	"sort"
@@ -170,6 +171,10 @@ type cacheEntry struct {
 }
 
 func (cache *Cache) prune(keep string) error {
+	return cache.pruneKeeping(keep)
+}
+
+func (cache *Cache) pruneKeeping(keep ...string) error {
 	entries, err := os.ReadDir(cache.root)
 	if err != nil {
 		return err
@@ -203,7 +208,7 @@ func (cache *Cache) prune(keep string) error {
 		if remaining <= MaxCacheFiles && total <= MaxCacheBytes {
 			break
 		}
-		if item.path == keep {
+		if containsPath(keep, item.path) {
 			continue
 		}
 		if err := os.Remove(item.path); err != nil {
@@ -213,6 +218,15 @@ func (cache *Cache) prune(keep string) error {
 		remaining--
 	}
 	return nil
+}
+
+func containsPath(paths []string, target string) bool {
+	for _, path := range paths {
+		if path == target {
+			return true
+		}
+	}
+	return false
 }
 
 func cacheName(chatID, messageID string, media model.Media) string {
@@ -245,6 +259,118 @@ func trustedExtension(media model.Media) string {
 	default:
 		return ".bin"
 	}
+}
+
+// TypedView returns a private cache artifact whose extension is derived only
+// from the trusted MIME type. It never changes the canonical cached download.
+// A hard link reuses the existing bytes where supported; the atomic-copy
+// fallback remains under the same file/count bounds and pruning policy.
+func (cache *Cache) TypedView(cachedPath string, mediaValue model.Media) (string, error) {
+	if cache == nil || !filepath.IsAbs(cachedPath) {
+		return "", ErrUnsafePath
+	}
+	extension, ok := viewExtension(mediaValue.MIMEType())
+	if !ok {
+		return "", ErrUnavailable
+	}
+	resolved, err := filepath.EvalSymlinks(cachedPath)
+	if err != nil || filepath.Dir(resolved) != cache.root {
+		return "", ErrUnsafePath
+	}
+	info, err := os.Stat(resolved)
+	if err != nil || !info.Mode().IsRegular() {
+		return "", ErrUnsafePath
+	}
+	if strings.EqualFold(filepath.Ext(resolved), extension) {
+		return resolved, nil
+	}
+	base := strings.TrimSuffix(filepath.Base(resolved), filepath.Ext(resolved))
+	target := filepath.Join(cache.root, base+".view"+extension)
+	if targetInfo, statErr := os.Lstat(target); statErr == nil {
+		if !targetInfo.Mode().IsRegular() || targetInfo.Mode()&os.ModeSymlink != 0 {
+			return "", ErrUnsafePath
+		}
+		if err := os.Remove(target); err != nil {
+			return "", err
+		}
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return "", statErr
+	}
+	if err := os.Link(resolved, target); err != nil {
+		if err := copyViewArtifact(resolved, target, cache.root); err != nil {
+			return "", err
+		}
+	}
+	if err := os.Chmod(target, 0o600); err != nil {
+		return "", err
+	}
+	if err := syncDirectory(cache.root); err != nil {
+		return "", err
+	}
+	if err := cache.pruneKeeping(resolved, target); err != nil {
+		return "", err
+	}
+	return target, nil
+}
+
+func viewExtension(mimeType string) (string, bool) {
+	mediaType, _, err := mime.ParseMediaType(mimeType)
+	if err != nil {
+		return "", false
+	}
+	switch strings.ToLower(mediaType) {
+	case "image/jpeg":
+		return ".jpg", true
+	case "image/png":
+		return ".png", true
+	case "image/gif":
+		return ".gif", true
+	case "image/webp":
+		return ".webp", true
+	case "audio/ogg":
+		return ".ogg", true
+	case "audio/mpeg":
+		return ".mp3", true
+	case "audio/mp4":
+		return ".m4a", true
+	case "audio/aac":
+		return ".aac", true
+	case "audio/wav", "audio/x-wav", "audio/vnd.wave":
+		return ".wav", true
+	case "video/mp4":
+		return ".mp4", true
+	case "video/quicktime":
+		return ".mov", true
+	case "application/pdf":
+		return ".pdf", true
+	default:
+		return "", false
+	}
+}
+
+func copyViewArtifact(sourcePath, targetPath, directory string) error {
+	source, err := os.Open(sourcePath)
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+	temporary, err := os.CreateTemp(directory, ".view-")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	_, copyErr := io.Copy(temporary, source)
+	syncErr := temporary.Sync()
+	closeErr := temporary.Close()
+	if copyErr != nil || syncErr != nil || closeErr != nil {
+		return errors.Join(copyErr, syncErr, closeErr)
+	}
+	return os.Rename(temporaryPath, targetPath)
 }
 
 func (cache *Cache) Save(cachedPath, directory string, media model.Media) (string, error) {

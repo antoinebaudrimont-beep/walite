@@ -284,7 +284,8 @@ func (worker *mediaWorker) handle(ctx context.Context, request tui.MediaRequest,
 	}
 	if worker.systemMedia {
 		label := systemMediaLabel(message.Media())
-		if worker.opener == nil || worker.opener.Open(ctx, path) != nil {
+		viewPath, viewErr := worker.cache.TypedView(path, message.Media())
+		if viewErr != nil || worker.opener == nil || worker.opener.Open(ctx, viewPath) != nil {
 			result.Status = label + " preview could not be opened"
 			return result
 		}

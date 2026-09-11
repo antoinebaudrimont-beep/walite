@@ -269,15 +269,17 @@ func TestMediaWorkerFallsBackToSystemViewerWhenInlineCapabilityIsUnavailable(t *
 
 func TestDarwinMediaUsesSystemOpenerForEveryPreviewableKind(t *testing.T) {
 	tests := []struct {
-		name, file, mime, status string
-		kind                     model.MediaKind
+		name, file, mime, extension, status string
+		kind                                model.MediaKind
 	}{
-		{name: "image", file: "photo.jpg", mime: "image/jpeg", kind: model.MediaImage, status: "Opened image with system viewer"},
-		{name: "GIF", file: "animation.gif", mime: "image/gif", kind: model.MediaImage, status: "Opened image with system viewer"},
-		{name: "sticker", file: "sticker.webp", mime: "image/webp", kind: model.MediaSticker, status: "Opened sticker with system viewer"},
-		{name: "video", file: "clip.mp4", mime: "video/mp4", kind: model.MediaVideo, status: "Opened video with system viewer"},
-		{name: "audio", file: "voice.ogg", mime: "audio/ogg", kind: model.MediaAudio, status: "Opened audio with system viewer"},
-		{name: "PDF", file: "report.pdf", mime: "application/pdf", kind: model.MediaDocument, status: "Opened pdf with system viewer"},
+		{name: "image", file: "photo.bin", mime: "image/jpeg", extension: ".jpg", kind: model.MediaImage, status: "Opened image with system viewer"},
+		{name: "GIF", file: "animation.bin", mime: "image/gif", extension: ".gif", kind: model.MediaImage, status: "Opened image with system viewer"},
+		{name: "sticker", file: "sticker.bin", mime: "image/webp", extension: ".webp", kind: model.MediaSticker, status: "Opened sticker with system viewer"},
+		{name: "video", file: "clip.bin", mime: "video/mp4", extension: ".mp4", kind: model.MediaVideo, status: "Opened video with system viewer"},
+		{name: "audio Ogg voice note", file: "voice.bin", mime: "audio/ogg; codecs=opus", extension: ".ogg", kind: model.MediaAudio, status: "Opened audio with system viewer"},
+		{name: "audio MPEG", file: "audio.bin", mime: "audio/mpeg", extension: ".mp3", kind: model.MediaAudio, status: "Opened audio with system viewer"},
+		{name: "audio MP4", file: "audio.bin", mime: "audio/mp4", extension: ".m4a", kind: model.MediaAudio, status: "Opened audio with system viewer"},
+		{name: "PDF", file: "report.bin", mime: "application/pdf", extension: ".pdf", kind: model.MediaDocument, status: "Opened pdf with system viewer"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -292,10 +294,27 @@ func TestDarwinMediaUsesSystemOpenerForEveryPreviewableKind(t *testing.T) {
 			defer worker.stop()
 			worker.admit(tui.MediaRequest{Action: tui.MediaPreview, ChatID: "chat", MessageID: "media", Kind: test.kind.String()})
 			result := awaitMediaResult(t, worker)
-			if result.Status != test.status || len(opener.opened()) != 1 || len(external.shown()) != 0 || len(overlay.shown) != 0 {
+			opened := opener.opened()
+			if result.Status != test.status || len(opened) != 1 || filepath.Ext(opened[0]) != test.extension ||
+				len(external.shown()) != 0 || len(overlay.shown) != 0 {
 				t.Fatalf("result=%+v opened=%v external=%v overlay=%v", result, opener.opened(), external.shown(), overlay.shown)
 			}
 		})
+	}
+}
+
+func TestLinuxVideoPathAndDedicatedViewerRemainUnchanged(t *testing.T) {
+	payload := []byte("video")
+	application := &fakeMediaApplication{message: mediaWorkerMessage(t, model.MediaVideo, "clip.bin", "video/mp4", payload), payload: payload}
+	cache, _ := mediacache.New(filepath.Join(t.TempDir(), "cache"))
+	opener, external := &fakeSystemOpener{}, &fakeExternalPreviewer{}
+	worker := newMediaWorkerWithPlatform(context.Background(), application, cache, t.TempDir(), &fakePreviewer{}, external, opener)
+	defer worker.stop()
+	worker.admit(tui.MediaRequest{Action: tui.MediaPreview, ChatID: "chat", MessageID: "media", Kind: "video"})
+	result := awaitMediaResult(t, worker)
+	shown := external.shown()
+	if result.Status != "Opened video in mpv" || len(shown) != 1 || filepath.Ext(shown[0].path) != ".bin" || len(opener.opened()) != 0 {
+		t.Fatalf("result=%+v external=%v opened=%v", result, shown, opener.opened())
 	}
 }
 

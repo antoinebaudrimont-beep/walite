@@ -58,6 +58,89 @@ func TestEnsureIsExplicitAtomicPrivateAndReusesCache(t *testing.T) {
 	}
 }
 
+func TestViewExtensionUsesTrustedMIME(t *testing.T) {
+	tests := []struct {
+		mime, extension string
+	}{
+		{"audio/ogg", ".ogg"},
+		{"audio/ogg; codecs=opus", ".ogg"},
+		{"audio/mpeg", ".mp3"},
+		{"audio/mp4", ".m4a"},
+		{"audio/aac", ".aac"},
+		{"audio/wav", ".wav"},
+		{"video/mp4", ".mp4"},
+		{"video/quicktime", ".mov"},
+		{"image/webp", ".webp"},
+		{"application/pdf", ".pdf"},
+	}
+	for _, test := range tests {
+		extension, ok := viewExtension(test.mime)
+		if !ok || extension != test.extension {
+			t.Errorf("viewExtension(%q)=(%q,%t), want %q", test.mime, extension, ok, test.extension)
+		}
+	}
+	if extension, ok := viewExtension("application/octet-stream"); ok || extension != "" {
+		t.Fatalf("unsupported extension=%q ok=%t", extension, ok)
+	}
+}
+
+func TestTypedViewCreatesPrivateMIMEAliasWithoutRedownloadOrUnsafeName(t *testing.T) {
+	tests := []struct {
+		name, mime, extension string
+		kind                  model.MediaKind
+	}{
+		{"../../hostile --archive.bin", "audio/ogg; codecs=opus", ".ogg", model.MediaAudio},
+		{"voice.bin", "audio/mpeg", ".mp3", model.MediaAudio},
+		{"voice.bin", "audio/mp4", ".m4a", model.MediaAudio},
+		{"$(touch-pwned).zip", "video/mp4", ".mp4", model.MediaVideo},
+		{"clip.bin", "video/quicktime", ".mov", model.MediaVideo},
+	}
+	for _, test := range tests {
+		t.Run(test.mime, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "private", "media")
+			cache, err := New(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			payload := []byte("typed media bytes")
+			media := downloadableMedia(t, test.kind, test.name, test.mime, uint64(len(payload)))
+			calls := 0
+			cached, _, err := cache.Ensure(context.Background(), "chat", "message", media, MaxPreviewBytes,
+				func(_ context.Context, _ model.Media, file File) error {
+					calls++
+					_, err := file.Write(payload)
+					return err
+				})
+			if err != nil {
+				t.Fatal(err)
+			}
+			view, err := cache.TypedView(cached, media)
+			if err != nil {
+				t.Fatal(err)
+			}
+			contents, readErr := os.ReadFile(view)
+			viewInfo, statErr := os.Stat(view)
+			directoryInfo, directoryErr := os.Stat(root)
+			if readErr != nil || statErr != nil || directoryErr != nil {
+				t.Fatalf("read=%v stat=%v directory=%v", readErr, statErr, directoryErr)
+			}
+			if string(contents) != string(payload) ||
+				filepath.Ext(view) != test.extension || filepath.Dir(view) != root || strings.Contains(filepath.Base(view), "hostile") ||
+				strings.Contains(filepath.Base(view), "touch") || viewInfo.Mode().Perm() != 0o600 || directoryInfo.Mode().Perm() != 0o700 {
+				t.Fatalf("cached=%q view=%q data=%q modes=%v/%v", cached, view, contents, viewInfo.Mode(), directoryInfo.Mode())
+			}
+			if _, hit, err := cache.Ensure(context.Background(), "chat", "message", media, MaxPreviewBytes,
+				func(context.Context, model.Media, File) error { calls++; return errors.New("unexpected redownload") }); err != nil || !hit || calls != 1 {
+				t.Fatalf("hit=%t calls=%d err=%v", hit, calls, err)
+			}
+			entries, _ := os.ReadDir(root)
+			if len(entries) > MaxCacheFiles {
+				t.Fatalf("cache entries=%d", len(entries))
+			}
+		})
+	}
+}
+
 func TestEnsureRejectsDeclaredAndActualOversizeWithoutPublishingPartial(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "media")
 	cache, _ := New(root)
