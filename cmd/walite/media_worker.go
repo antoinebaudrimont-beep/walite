@@ -41,8 +41,7 @@ type mediaWorker struct {
 	preview               mediaPreviewer
 	external              externalMediaPreviewer
 	opener                systemOpener
-	mediaFallback         bool
-	systemPDF             bool
+	systemMedia           bool
 	requests              chan mediaWorkItem
 	results               chan tui.MediaResult
 	done                  chan struct{}
@@ -89,8 +88,7 @@ func newMediaWorkerForCapabilities(ctx context.Context, application applicationS
 		external = newProcessExternalPreviewer()
 	}
 	worker := newMediaWorkerWithPlatform(ctx, capability, cache, savePath, preview, external, capabilities.opener)
-	worker.mediaFallback = capabilities.mediaFallback
-	worker.systemPDF = capabilities.systemPDF
+	worker.systemMedia = capabilities.systemMedia
 	return worker, nil
 }
 
@@ -284,6 +282,15 @@ func (worker *mediaWorker) handle(ctx context.Context, request tui.MediaRequest,
 		result.Status = "Saved to ~/Downloads/walite/" + filepath.Base(saved)
 		return result
 	}
+	if worker.systemMedia {
+		label := systemMediaLabel(message.Media())
+		if worker.opener == nil || worker.opener.Open(ctx, path) != nil {
+			result.Status = label + " preview could not be opened"
+			return result
+		}
+		result.Status = "Opened " + strings.ToLower(label) + " with system viewer"
+		return result
+	}
 	if backend == previewBackendImage {
 		if request.Width < 1 || request.Height < 1 {
 			result.Status = "Terminal too small for image preview"
@@ -321,23 +328,8 @@ func (worker *mediaWorker) handle(ctx context.Context, request tui.MediaRequest,
 		externalKind = externalViewerZathura
 		label = "PDF"
 	}
-	if backend == previewBackendPDF && worker.systemPDF {
-		if worker.opener == nil || worker.opener.Open(ctx, path) != nil {
-			result.Status = "PDF preview could not be opened"
-			return result
-		}
-		result.Status = "Opened PDF with system viewer"
-		return result
-	}
 	err = worker.showExternalPreview(ctx, generation, externalPreview{kind: externalKind, path: path, chatID: request.ChatID, messageID: request.MessageID})
 	if err != nil {
-		if worker.mediaFallback && worker.opener != nil &&
-			(errors.Is(err, errMPVUnavailable) || errors.Is(err, errZathuraUnavailable)) {
-			if openErr := worker.opener.Open(ctx, path); openErr == nil {
-				result.Status = "Opened " + strings.ToLower(label) + " with system viewer"
-				return result
-			}
-		}
 		result.Status = externalPreviewFailureStatus(label, err)
 		return result
 	}
@@ -347,6 +339,23 @@ func (worker *mediaWorker) handle(ctx context.Context, request tui.MediaRequest,
 		result.Status = "Opened " + strings.ToLower(label) + " in mpv"
 	}
 	return result
+}
+
+func systemMediaLabel(mediaValue model.Media) string {
+	switch mediaValue.Kind() {
+	case model.MediaImage:
+		return "Image"
+	case model.MediaSticker:
+		return "Sticker"
+	case model.MediaVideo:
+		return "Video"
+	case model.MediaAudio:
+		return "Audio"
+	case model.MediaDocument:
+		return "PDF"
+	default:
+		return "Media"
+	}
 }
 
 type previewBackend uint8

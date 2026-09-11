@@ -82,7 +82,7 @@ func TestDarwinCapabilitySelectionUsesBuiltInToolsWithoutITerm(t *testing.T) {
 	opener, openerOK := capabilities.opener.(commandSystemOpener)
 	clipboard, clipboardOK := capabilities.clipboard.(commandClipboard)
 	if !pairingOK || pairing.command != available["osascript"] || !openerOK || opener.command != available["open"] ||
-		!clipboardOK || clipboard.command != available["pbcopy"] || !capabilities.mediaFallback || !capabilities.systemPDF ||
+		!clipboardOK || clipboard.command != available["pbcopy"] || !capabilities.systemMedia ||
 		capabilities.platformError != nil {
 		t.Fatalf("capabilities=%+v", capabilities)
 	}

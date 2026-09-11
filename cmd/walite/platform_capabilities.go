@@ -35,8 +35,7 @@ type platformCapabilities struct {
 	clipboard     clipboard
 	inlineImage   mediaPreviewer
 	newExternal   func() externalMediaPreviewer
-	mediaFallback bool
-	systemPDF     bool
+	systemMedia   bool
 	platformError error
 }
 
@@ -121,8 +120,7 @@ func selectPlatformCapabilities(goos string, lookup executableLookup) platformCa
 		}
 		if command, err := lookup("open"); err == nil {
 			capabilities.opener = commandSystemOpener{command: command, run: runLinkCommand}
-			capabilities.mediaFallback = true
-			capabilities.systemPDF = true
+			capabilities.systemMedia = true
 		}
 		if command, err := lookup("pbcopy"); err == nil {
 			capabilities.clipboard = commandClipboard{command: command, run: runLinkCommand}

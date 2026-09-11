@@ -267,15 +267,17 @@ func TestMediaWorkerFallsBackToSystemViewerWhenInlineCapabilityIsUnavailable(t *
 	}
 }
 
-func TestDarwinMediaUsesSystemPDFAndFallsBackWhenMPVIsUnavailable(t *testing.T) {
+func TestDarwinMediaUsesSystemOpenerForEveryPreviewableKind(t *testing.T) {
 	tests := []struct {
 		name, file, mime, status string
 		kind                     model.MediaKind
-		externalErr              error
 	}{
-		{name: "PDF", file: "report.pdf", mime: "application/pdf", kind: model.MediaDocument, status: "Opened PDF with system viewer"},
-		{name: "video", file: "clip.mp4", mime: "video/mp4", kind: model.MediaVideo, externalErr: errMPVUnavailable, status: "Opened video with system viewer"},
-		{name: "audio", file: "voice.ogg", mime: "audio/ogg", kind: model.MediaAudio, externalErr: errMPVUnavailable, status: "Opened audio with system viewer"},
+		{name: "image", file: "photo.jpg", mime: "image/jpeg", kind: model.MediaImage, status: "Opened image with system viewer"},
+		{name: "GIF", file: "animation.gif", mime: "image/gif", kind: model.MediaImage, status: "Opened image with system viewer"},
+		{name: "sticker", file: "sticker.webp", mime: "image/webp", kind: model.MediaSticker, status: "Opened sticker with system viewer"},
+		{name: "video", file: "clip.mp4", mime: "video/mp4", kind: model.MediaVideo, status: "Opened video with system viewer"},
+		{name: "audio", file: "voice.ogg", mime: "audio/ogg", kind: model.MediaAudio, status: "Opened audio with system viewer"},
+		{name: "PDF", file: "report.pdf", mime: "application/pdf", kind: model.MediaDocument, status: "Opened pdf with system viewer"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -283,34 +285,17 @@ func TestDarwinMediaUsesSystemPDFAndFallsBackWhenMPVIsUnavailable(t *testing.T) 
 			application := &fakeMediaApplication{message: mediaWorkerMessage(t, test.kind, test.file, test.mime, payload), payload: payload}
 			cache, _ := mediacache.New(filepath.Join(t.TempDir(), "cache"))
 			opener := &fakeSystemOpener{}
-			external := &fakeExternalPreviewer{err: test.externalErr}
-			worker := newMediaWorkerWithPlatform(context.Background(), application, cache, t.TempDir(), &fakePreviewer{}, external, opener)
-			worker.mediaFallback, worker.systemPDF = true, true
+			external := &fakeExternalPreviewer{err: errors.New("external viewer must not be called on darwin")}
+			overlay := &fakePreviewer{err: errors.New("inline viewer must not be called on darwin")}
+			worker := newMediaWorkerWithPlatform(context.Background(), application, cache, t.TempDir(), overlay, external, opener)
+			worker.systemMedia = true
 			defer worker.stop()
 			worker.admit(tui.MediaRequest{Action: tui.MediaPreview, ChatID: "chat", MessageID: "media", Kind: test.kind.String()})
 			result := awaitMediaResult(t, worker)
-			if result.Status != test.status || len(opener.opened()) != 1 {
-				t.Fatalf("result=%+v opened=%v", result, opener.opened())
-			}
-			if test.kind == model.MediaDocument && len(external.shown()) != 0 {
-				t.Fatalf("PDF unexpectedly used external backend: %+v", external.shown())
+			if result.Status != test.status || len(opener.opened()) != 1 || len(external.shown()) != 0 || len(overlay.shown) != 0 {
+				t.Fatalf("result=%+v opened=%v external=%v overlay=%v", result, opener.opened(), external.shown(), overlay.shown)
 			}
 		})
-	}
-}
-
-func TestDarwinMediaPrefersAvailableMPV(t *testing.T) {
-	payload := []byte("video")
-	application := &fakeMediaApplication{message: mediaWorkerMessage(t, model.MediaVideo, "clip.mp4", "video/mp4", payload), payload: payload}
-	cache, _ := mediacache.New(filepath.Join(t.TempDir(), "cache"))
-	opener, external := &fakeSystemOpener{}, &fakeExternalPreviewer{}
-	worker := newMediaWorkerWithPlatform(context.Background(), application, cache, t.TempDir(), &fakePreviewer{}, external, opener)
-	worker.mediaFallback, worker.systemPDF = true, true
-	defer worker.stop()
-	worker.admit(tui.MediaRequest{Action: tui.MediaPreview, ChatID: "chat", MessageID: "media", Kind: "video"})
-	result := awaitMediaResult(t, worker)
-	if result.Status != "Opened video in mpv" || len(external.shown()) != 1 || len(opener.opened()) != 0 {
-		t.Fatalf("result=%+v external=%v opened=%v", result, external.shown(), opener.opened())
 	}
 }
 

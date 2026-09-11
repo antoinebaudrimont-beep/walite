@@ -47,7 +47,7 @@ These screenshots were AI-edited for privacy using demo names and messages. Text
 
 ## Installation and build
 
-Building walite requires Go 1.26.0 or newer. MX Linux with XFCE/X11 on linux/amd64 is the currently validated runtime environment. macOS/Apple Silicon support is implemented, with native runtime validation pending.
+Building walite requires Go 1.26.0 or newer. MX Linux with XFCE/X11 on linux/amd64 and macOS on Apple Silicon are the currently validated runtime environments.
 
 ```sh
 git clone https://github.com/antoinebaudrimont-beep/walite.git
@@ -64,9 +64,9 @@ go run ./cmd/walite
 
 ## First pairing
 
-On first launch, walite links to WhatsApp using a QR code. Linux/XFCE opens a temporary `xfce4-terminal`; macOS uses a temporary built-in Terminal.app window. Both are sized to render the QR without distortion, and neither affects the terminal used for normal chat operation. On your phone, open **WhatsApp → Linked devices → Link a device**, then scan the code.
+On first launch, walite links to WhatsApp using a QR code. Linux/XFCE opens a temporary `xfce4-terminal`; macOS can use a temporary built-in Terminal.app window. Neither affects the terminal used for normal chat operation. On macOS, the reliable explicit path is `./walite --pair` in a terminal enlarged enough to display the complete QR. On your phone, open **WhatsApp → Linked devices → Link a device**, then scan the code.
 
-The pairing window closes after a successful link. Later launches reuse the persisted session and reconnect without another QR code. If the helper cannot be launched, walite prints a manual `walite --pair` fallback command.
+After pairing succeeds, normal `./walite` launches reuse the persisted session and reconnect without another QR code. If the automatic helper cannot be launched, walite prints the same manual `walite --pair` fallback command.
 
 ## Usage
 
@@ -104,7 +104,7 @@ In reply selection, use `↑`/`↓` or `j`/`k`, then `Enter` to confirm. Press `
 
 Press `F`, type or safely paste a local path, then press `Enter` to send an image, video, audio file, document, or compatible WebP sticker. Regular outgoing media is limited to 100 MiB and is shown locally only after successful WhatsApp transport and cache commit. Stickers must already be valid 512×512 WebP files: static stickers are limited to 100 KiB; animated stickers are limited to 500 KiB, 10 seconds, and structurally valid bounded frames. walite does not convert ordinary images into stickers.
 
-Media is never downloaded in the background. Scroll until the intended media placeholder is the newest visible media row, or focus it with `Ctrl-R` and the arrow keys, then press `P` to preview or `S` to save. On Linux/X11, images, ordinary GIFs, and WebP stickers prefer an inline `ueberzugpp` overlay; video (including WhatsApp GifPlayback MP4) and audio prefer `mpv`; PDFs use `zathura`. On macOS, images, stickers, and PDFs use the system `open` handler; video and audio prefer `mpv` when installed and otherwise use `open`. Other document types remain save-only. Inline overlays close with `P`, `Esc`, navigation, resize, or application shutdown. walite-owned mpv/zathura viewers can be closed with `Esc`; applications launched through macOS `open` are not terminated because walite does not own them. All viewer helpers are optional and do not block startup.
+Media is never downloaded in the background. Scroll until the intended media placeholder is the newest visible media row, or focus it with `Ctrl-R` and the arrow keys, then press `P` to preview or `S` to save. On Linux/X11, images, ordinary GIFs, and WebP stickers prefer an inline `ueberzugpp` overlay; video (including WhatsApp GifPlayback MP4) and audio use `mpv`; PDFs use `zathura`. On macOS, every previewable image, sticker, GIF, video, audio file, and PDF uses the system `open` handler with no optional viewer dependency. Other document types remain save-only. Inline overlays close with `P`, `Esc`, navigation, resize, or application shutdown. walite-owned Linux viewers can be closed with `Esc`; applications launched through macOS `open` are not terminated because walite does not own them. Missing optional Linux viewer helpers do not block startup.
 
 ## Settings
 
@@ -159,7 +159,7 @@ The UI and service use transport-neutral application data. WhatsApp-specific typ
 - Some identities remain opaque when WhatsApp provides no usable authoritative local metadata.
 - Linux/amd64 is the validated platform.
 - Automatic pairing uses the validated XFCE helper on Linux and built-in Terminal.app on macOS; iTerm2 is optional and is not required.
-- macOS/Apple Silicon runtime validation is still pending, so macOS is not yet an officially validated platform.
+- macOS/Apple Silicon core operation and explicit `--pair` linking have been manually validated; the terminal must be large enough to display the complete pairing QR.
 
 ## Roadmap
 
