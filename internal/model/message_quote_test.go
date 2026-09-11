@@ -60,6 +60,7 @@ func TestMessageQuoteKeepsMaximumBatchBounded(t *testing.T) {
 	id := strings.Repeat("i", MaxIdentifierBytes)
 	quoteMedia, _ := NewMedia(MediaDocument, strings.Repeat("r", MaxMediaNameBytes), strings.Repeat("t", MaxMediaMIMEBytes))
 	quote, _ := NewMediaQuote(id, strings.Repeat("q", MaxQuoteTextBytes), true, quoteMedia)
+	quote, _ = quote.WithParticipant(id)
 	media, _ := NewDownloadableMedia(MediaDocument, strings.Repeat("n", MaxMediaNameBytes), strings.Repeat("m", MaxMediaMIMEBytes),
 		"/"+strings.Repeat("p", MaxMediaDirectPathBytes-1), []byte(strings.Repeat("k", MaxMediaKeyBytes)),
 		[]byte(strings.Repeat("h", MaxMediaHashBytes)), []byte(strings.Repeat("e", MaxMediaHashBytes)), 1)

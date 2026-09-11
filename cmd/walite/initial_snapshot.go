@@ -84,6 +84,7 @@ func buildInitialTUIState(ctx context.Context, source applicationService) (tui.I
 			IsGroup:      chat.IsGroup(),
 			UnreadCount:  chat.UnreadCount(),
 			ActivityTime: chat.LastMessageAt(),
+			ReadOnly:     !wa.ChatSendable(chat.ID()),
 		}
 		result.Chats[index] = initialChat
 	}

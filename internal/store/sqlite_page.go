@@ -105,7 +105,7 @@ func scanSQLitePageMessage(scanner sqliteScanner) (model.Message, error) {
 		&values.body,
 		&values.bodyTruncated,
 		&values.retainedBody,
-		&values.senderID, &values.isGroup, &values.quoteID, &values.quoteText, &values.quoteFromMe,
+		&values.senderID, &values.isGroup, &values.quoteID, &values.quoteText, &values.quoteFromMe, &values.quoteParticipantID,
 		&values.quoteMediaKind, &values.quoteMediaName, &values.quoteMediaMIME,
 		&values.mediaKind, &values.mediaName, &values.mediaMIME, &values.mediaDeclaredBytes, &values.mediaDownloadRef,
 	); err != nil {
@@ -115,7 +115,7 @@ func scanSQLitePageMessage(scanner sqliteScanner) (model.Message, error) {
 }
 
 const sqliteMessageValueColumns = `sent_at, from_me, body, body_truncated, retained_body,
-sender_id, is_group, quote_id, quote_text, quote_from_me,
+sender_id, is_group, quote_id, quote_text, quote_from_me, quote_participant_id,
 quote_media_kind, quote_media_name, quote_media_mime, kind,
 COALESCE((SELECT display_name FROM attachments AS media_attachment
     WHERE media_attachment.chat_id = messages.chat_id

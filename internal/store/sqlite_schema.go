@@ -1,5 +1,11 @@
 package store
 
+// V5 retains the bounded transport-neutral author identity needed by group
+// quotes. It contains no WhatsApp protobuf or media bytes.
+var sqliteSchemaV5 = []string{
+	`ALTER TABLE messages ADD COLUMN quote_participant_id TEXT NOT NULL DEFAULT ''`,
+}
+
 // V4 stores only bounded, transport-neutral latest reaction state. The target
 // is intentionally not a foreign key: WhatsApp may deliver a reaction before
 // its base message, and the later message/history import will make it visible.

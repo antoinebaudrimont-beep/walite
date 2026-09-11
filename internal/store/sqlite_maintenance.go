@@ -331,6 +331,7 @@ WITH ranked AS (
     FROM messages
 ), eligible AS (
     SELECT message.body_bytes + length(CAST(message.quote_text AS BLOB)) + length(CAST(message.quote_id AS BLOB))
+           + length(CAST(message.quote_participant_id AS BLOB))
            + length(CAST(message.quote_media_name AS BLOB)) + length(CAST(message.quote_media_mime AS BLOB)) AS body_bytes
     FROM messages AS message
     JOIN ranked
@@ -371,6 +372,7 @@ SET body = NULL,
     quote_id = '',
     quote_text = '',
     quote_from_me = 0,
+	quote_participant_id = '',
 	quote_media_kind = 0,
 	quote_media_name = '',
 	quote_media_mime = '',

@@ -74,6 +74,7 @@ type chatView struct {
 	unreadCount  uint32
 	activityTime time.Time
 	revision     uint64
+	readOnly     bool
 }
 
 type chatState struct {

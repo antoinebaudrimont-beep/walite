@@ -97,16 +97,14 @@ func (worker *sendWorker) admit(ctx context.Context, request tui.SendRequest) er
 	}
 	if validator, ok := worker.application.(applicationTextValidator); ok {
 		if err := validator.ValidateText(validated); err != nil {
-			if errors.Is(err, wa.ErrGroupReplyUnavailable) {
-				return tui.ErrGroupReplyUnavailable
-			}
 			return err
 		}
 	}
 	worker.busy = true
 	quote := validated.Reply()
 	worker.requests <- tui.SendRequest{ChatID: validated.ChatID().String(), Text: validated.Text(), ReplyToID: quote.MessageID().String(), ReplyToText: quote.Text(), ReplyToFromMe: quote.FromMe(),
-		ReplyMediaKind: quote.Media().Kind().String(), ReplyMediaName: quote.Media().Name(), ReplyMediaMIME: quote.Media().MIMEType()}
+		ReplyMediaKind: quote.Media().Kind().String(), ReplyMediaName: quote.Media().Name(), ReplyMediaMIME: quote.Media().MIMEType(),
+		ReplyTargetSenderID: quote.ParticipantID().String(), ReplyIsGroup: request.ReplyIsGroup}
 	return nil
 }
 

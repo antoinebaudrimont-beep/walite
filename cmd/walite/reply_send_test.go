@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 
@@ -39,18 +38,23 @@ func TestReplyWorkerPreservesBoundedQuoteThroughAdmission(t *testing.T) {
 	}
 }
 
-func TestReplyWorkerGroupRejectionIsControlledBeforeSend(t *testing.T) {
+func TestReplyWorkerPreservesGroupParticipantThroughSend(t *testing.T) {
 	application := newWorkerTestApplication()
-	application.validate = func(request service.SendTextRequest) error {
-		if request.Reply().MessageID().String() != "quoted-ID" {
-			t.Error("preflight lost quote")
+	application.send = func(_ context.Context, request service.SendTextRequest) error {
+		if request.Reply().MessageID().String() != "quoted-ID" || request.Reply().ParticipantID().String() != "55555@lid" {
+			t.Error("send lost group quote participant")
 		}
-		return wa.ErrGroupReplyUnavailable
+		return nil
 	}
 	worker := newSendWorker(context.Background(), application)
-	defer worker.stop()
-	err := worker.admit(context.Background(), tui.SendRequest{ChatID: "123-456@g.us", Text: "reply", ReplyToID: "quoted-ID", ReplyToText: "original"})
-	if !errors.Is(err, tui.ErrGroupReplyUnavailable) || application.calls.Load() != 0 {
-		t.Fatalf("err=%v calls=%d", err, application.calls.Load())
+	err := worker.admit(context.Background(), tui.SendRequest{ChatID: "123-456@g.us", Text: "reply", ReplyToID: "quoted-ID", ReplyToText: "original", ReplyTargetSenderID: "55555@lid", ReplyIsGroup: true})
+	if err != nil {
+		worker.stop()
+		t.Fatal(err)
+	}
+	result := <-worker.results
+	worker.stop()
+	if result.Failed || application.calls.Load() != 1 {
+		t.Fatalf("result=%+v calls=%d", result, application.calls.Load())
 	}
 }

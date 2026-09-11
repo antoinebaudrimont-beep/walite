@@ -1,10 +1,5 @@
 package tui
 
-import "errors"
-
-// ErrGroupReplyUnavailable is a safe application-to-view rejection reason.
-var ErrGroupReplyUnavailable = errors.New("group replies not available yet")
-
 // SendResult completes one admitted request, not a chat-data mutation. Only
 // LiveEvents can add the resulting message. Uncertain disables Enter-to-retry.
 type SendResult struct{ Failed, Uncertain, Media, Reaction, StickerRejected bool }

@@ -99,6 +99,7 @@ func runInitialized(
 	model := viewModel{chats: chats, options: input.Options}
 	model.asyncSend = input.SendResults != nil
 	model.media, model.closeMedia = input.Media, input.CloseMedia
+	model.links = input.Links
 	model.closeExternalPreview = input.CloseExternalPreview
 	model.loadOlder = input.OlderHistory
 	defer closeMedia(&model)
@@ -141,6 +142,7 @@ func runInitialized(
 	chatLoads := input.ChatLoads
 	optionsResults := input.OptionsResults
 	mediaResults := input.MediaResults
+	linkResults := input.LinkResults
 	olderResults := input.OlderResults
 	paste := pasteRoutingState{}
 
@@ -206,6 +208,14 @@ func runInitialized(
 				draw(screen, &model)
 				screen.Show()
 			}
+		case result, ok := <-linkResults:
+			if !ok {
+				linkResults = nil
+				continue
+			}
+			model.sendStatus = result.Status
+			draw(screen, &model)
+			screen.Show()
 		case result, ok := <-olderResults:
 			if !ok {
 				olderResults = nil

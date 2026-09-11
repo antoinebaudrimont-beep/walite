@@ -118,24 +118,41 @@ func TestRealMediaRepliesBuildMatchingQuotedMessageShape(t *testing.T) {
 	}
 }
 
-func TestRealQuotedTextRejectsGroupsAndMissingParticipantBeforeTransport(t *testing.T) {
+func TestRealQuotedTextSupportsGroupsAndRejectsMissingParticipantBeforeTransport(t *testing.T) {
 	quote, _ := model.NewTextQuote("id", "quoted", false)
 	media, _ := model.NewMedia(model.MediaImage, "", "image/jpeg")
 	mediaQuote, _ := model.NewMediaQuote("media-id", "", false, media)
-	own, _ := model.NewTextQuote("id", "quoted", true)
-	client := &fakeTextClient{connected: true, loggedIn: true}
-	sender := &realTextSender{client: client}
+	own, _ := model.NewTextQuote("own-id", "quoted", true)
+	participant := "55555@lid"
+	quote, _ = quote.WithParticipant(participant)
+	mediaQuote, _ = mediaQuote.WithParticipant(participant)
+	client := &fakeTextClient{connected: true, loggedIn: true, send: func(_ context.Context, jid types.JID, payload *waE2E.Message) (whatsmeow.SendResponse, error) {
+		info := payload.GetExtendedTextMessage().GetContextInfo()
+		wantParticipant := participant
+		if info.GetStanzaID() == "own-id" {
+			wantParticipant = "99999@lid"
+		}
+		if info.GetParticipant() != wantParticipant || info.GetStanzaID() == "" || info.GetQuotedMessage() == nil {
+			t.Fatalf("jid=%s context=%+v", jid, info)
+		}
+		return whatsmeow.SendResponse{ID: "group-outgoing", Timestamp: time.Unix(2, 0).UTC()}, nil
+	}}
+	sender := &realTextSender{client: client, aliases: &chatAliases{}, ownJID: func() types.JID { return types.NewJID("99999", types.HiddenUserServer) }}
 	group := aliasID(t, "12345-67890@g.us")
-	if err := sender.ValidateText(group, "reply", quote); !errors.Is(err, ErrGroupReplyUnavailable) {
+	if err := sender.ValidateText(group, "reply", quote); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sender.SendText(context.Background(), group, "reply", quote); !errors.Is(err, ErrGroupReplyUnavailable) {
+	if _, err := sender.SendText(context.Background(), group, "reply", quote); err != nil {
 		t.Fatal(err)
 	}
-	if err := sender.ValidateText(group, "reply", mediaQuote); !errors.Is(err, ErrGroupReplyUnavailable) {
+	if _, err := sender.SendText(context.Background(), group, "reply", mediaQuote); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sender.SendText(context.Background(), aliasID(t, "12345@lid"), "reply", own); !errors.Is(err, ErrTextUnavailable) {
+	if _, err := sender.SendText(context.Background(), group, "reply", own); err != nil {
+		t.Fatal(err)
+	}
+	missing, _ := model.NewTextQuote("missing", "quoted", false)
+	if err := sender.ValidateText(group, "reply", missing); !errors.Is(err, ErrTextRejected) {
 		t.Fatal(err)
 	}
 	for _, quotes := range [][]model.TextQuote{{{}}, {quote, quote}} {
@@ -143,8 +160,8 @@ func TestRealQuotedTextRejectsGroupsAndMissingParticipantBeforeTransport(t *test
 			t.Fatal("invalid quote accepted")
 		}
 	}
-	if client.calls.Load() != 0 {
-		t.Fatal("rejected reply called transport")
+	if client.calls.Load() != 3 {
+		t.Fatalf("calls=%d", client.calls.Load())
 	}
 }
 
@@ -197,5 +214,34 @@ func TestReplyParticipantUsesExistingDeviceIdentity(t *testing.T) {
 	device.LID = lid
 	if sender.ownJID() != lid {
 		t.Fatal("existing own LID not used")
+	}
+}
+
+func TestChatSendableAllowsCurrentConversationDomainsOnly(t *testing.T) {
+	for _, test := range []struct {
+		id   string
+		want bool
+	}{
+		{"12345@s.whatsapp.net", true}, {"12345@lid", true}, {"12345-67890@g.us", true},
+		{"status@broadcast", false}, {"list@broadcast", false}, {"channel@newsletter", false},
+	} {
+		id, err := model.NewChatID(test.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := ChatSendable(id); got != test.want {
+			t.Fatalf("ChatSendable(%q)=%t want %t", test.id, got, test.want)
+		}
+	}
+}
+
+func TestGroupQuoteParticipantAcceptsPNAndLIDIdentity(t *testing.T) {
+	for _, participant := range []string{"55555@s.whatsapp.net", "55555@lid"} {
+		quote, _ := model.NewTextQuote("quoted", "text", false)
+		quote, _ = quote.WithParticipant(participant)
+		jid, err := groupQuoteParticipant(quote)
+		if err != nil || jid.String() != participant {
+			t.Fatalf("participant=%q jid=%s err=%v", participant, jid, err)
+		}
 	}
 }

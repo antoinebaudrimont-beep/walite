@@ -16,7 +16,7 @@ const (
 
 	writeBatchRecordBytes = 32
 	maxWriteBatchBytes    = MaxWriteBatchMessages *
-		(4*MaxIdentifierBytes + MaxRetainedTextBytes + MaxQuoteTextBytes + 2*MaxMediaNameBytes + 2*MaxMediaMIMEBytes + MaxMediaDirectPathBytes + MaxMediaKeyBytes + 2*MaxMediaHashBytes + writeBatchRecordBytes)
+		(5*MaxIdentifierBytes + MaxRetainedTextBytes + MaxQuoteTextBytes + 2*MaxMediaNameBytes + 2*MaxMediaMIMEBytes + MaxMediaDirectPathBytes + MaxMediaKeyBytes + 2*MaxMediaHashBytes + writeBatchRecordBytes)
 )
 
 // ContactInput is the unvalidated input accepted by NewContact.

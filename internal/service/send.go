@@ -37,10 +37,17 @@ func NewSendTextRequest(chatID, text string, quotes ...model.TextQuote) (SendTex
 }
 
 func cloneSendQuote(quote model.TextQuote) (model.TextQuote, error) {
+	var owned model.TextQuote
+	var err error
 	if quote.Media().Kind() != 0 {
-		return model.NewMediaQuote(quote.MessageID().String(), quote.Text(), quote.FromMe(), quote.Media())
+		owned, err = model.NewMediaQuote(quote.MessageID().String(), quote.Text(), quote.FromMe(), quote.Media())
+	} else {
+		owned, err = model.NewTextQuote(quote.MessageID().String(), quote.Text(), quote.FromMe())
 	}
-	return model.NewTextQuote(quote.MessageID().String(), quote.Text(), quote.FromMe())
+	if err != nil || quote.ParticipantID().String() == "" {
+		return owned, err
+	}
+	return owned.WithParticipant(quote.ParticipantID().String())
 }
 
 // ChatID returns the stable selected-chat identity.

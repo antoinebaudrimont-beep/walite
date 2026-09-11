@@ -195,6 +195,8 @@ func runStartedApplication(
 		return fmt.Errorf("construct media worker: %w", err)
 	}
 	defer media.stop()
+	links := newDefaultLinkWorker(runCtx)
+	defer links.stop()
 
 	serviceDone := make(chan error, 1)
 	go func() { serviceDone <- serviceCore.Run(runCtx) }()
@@ -286,6 +288,7 @@ func runStartedApplication(
 			SendReadReceipt:  readReceipts.admit,
 			Media:            media.admit, MediaResults: media.results, CloseMedia: media.close,
 			CloseExternalPreview: media.closeExternal,
+			Links:                links.admit, LinkResults: links.results,
 		})
 	}()
 
@@ -379,6 +382,12 @@ func sendRequestFromTUI(request tui.SendRequest) (service.SendTextRequest, error
 	}
 	if err != nil {
 		return service.SendTextRequest{}, err
+	}
+	if request.ReplyIsGroup && !request.ReplyToFromMe {
+		quote, err = quote.WithParticipant(request.ReplyTargetSenderID)
+		if err != nil {
+			return service.SendTextRequest{}, err
+		}
 	}
 	return service.NewSendTextRequest(request.ChatID, request.Text, quote)
 }
@@ -475,7 +484,7 @@ func adaptLiveMessage(event model.LiveEvent) (tui.LiveMessage, bool) {
 		MediaKind: message.Media().Kind().String(), MediaName: message.Media().Name(), MediaMIME: message.Media().MIMEType(),
 		ReplyToID: message.Quote().MessageID().String(), ReplyToText: message.Quote().Text(), ReplyToFromMe: message.Quote().FromMe(),
 		ReplyMediaKind: message.Quote().Media().Kind().String(), ReplyMediaName: message.Quote().Media().Name(), ReplyMediaMIME: message.Quote().Media().MIMEType(),
-		SenderID: message.SenderID().String(), IsGroup: message.IsGroup(),
+		SenderID: message.SenderID().String(), IsGroup: message.IsGroup(), ReadOnly: !wa.ChatSendable(message.ChatID()),
 	}, true
 }
 

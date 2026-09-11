@@ -28,6 +28,7 @@ type InitialChat struct {
 	UnreadCount  uint32
 	ActivityTime time.Time
 	Messages     []InitialMessage
+	ReadOnly     bool
 }
 
 // InitialMessage is ordered oldest-first within InitialChat.Messages.
@@ -87,6 +88,7 @@ type LiveMessage struct {
 	ActivityTime   time.Time
 	SenderID       string
 	IsGroup        bool
+	ReadOnly       bool
 }
 
 // SendRequest is an immutable-by-convention outgoing presentation request.
@@ -101,6 +103,8 @@ type SendRequest struct {
 	ReplyMediaKind         string
 	ReplyMediaName         string
 	ReplyMediaMIME         string
+	ReplyTargetSenderID    string
+	ReplyIsGroup           bool
 	ReactionTargetID       string
 	ReactionTargetSenderID string
 	ReactionTargetFromMe   bool
@@ -128,6 +132,8 @@ type Input struct {
 	SendReadReceipt  func(ReadReceiptRequest) bool
 	Media            func(MediaRequest) bool
 	MediaResults     <-chan MediaResult
+	Links            func(LinkRequest) bool
+	LinkResults      <-chan LinkResult
 	CloseMedia       func()
 	// CloseExternalPreview admits asynchronous termination and reports whether
 	// an active viewer consumed Escape.
@@ -254,6 +260,7 @@ func chatStateFromInitial(initial InitialState) (*chatState, error) {
 		chat.isGroup = sourceChat.IsGroup
 		chat.unreadCount = sourceChat.UnreadCount
 		chat.activityTime = sourceChat.ActivityTime
+		chat.readOnly = sourceChat.ReadOnly
 		chat.messageCount = len(sourceChat.Messages)
 		if chat.messageCount > 0 {
 			chat.messages = make([]messageView, maxMessages)

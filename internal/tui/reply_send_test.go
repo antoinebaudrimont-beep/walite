@@ -1,9 +1,6 @@
 package tui
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
 func TestReplySendCapturesRetainedTargetAndClearsOnlyOnSuccess(t *testing.T) {
 	for _, fromMe := range []bool{false, true} {
@@ -36,25 +33,5 @@ func TestReplySendCapturesRetainedTargetAndClearsOnlyOnSuccess(t *testing.T) {
 		if !applySendResult(&model, SendResult{}) || model.replyTarget.valid || model.composer.length != 0 || model.chatView.scrollOffset != 0 || !chatStatesEqual(*model.chats, beforeChats) {
 			t.Fatal("success did not clear quote or appended optimistic message")
 		}
-	}
-}
-
-func TestGroupReplyRejectionShowsReasonAndPreservesState(t *testing.T) {
-	model := defaultDemoView()
-	model.mode = modeCompose
-	model.asyncSend = true
-	model.composer.insertText("kept draft")
-	model.composer.cursor = 2
-	model.replyTarget = replyTarget{valid: true, id: model.chats.chats[0].messages[0].id}
-	beforeDraft, beforeReply := model.composer, model.replyTarget
-	model.send = func(SendRequest) error { return ErrGroupReplyUnavailable }
-	if !submitOutgoingMessage(&model) || model.sendPending || model.composer != beforeDraft || model.replyTarget != beforeReply {
-		t.Fatal("group rejection changed state")
-	}
-	screen := initializedSimulationScreen(t, 100, 24)
-	draw(screen, &model)
-	screen.Show()
-	if !strings.Contains(screenText(screen), "Group replies not available yet") {
-		t.Fatal(screenText(screen))
 	}
 }

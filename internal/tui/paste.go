@@ -33,7 +33,7 @@ func (paste *pasteRoutingState) routeKey(model *viewModel, event *tcell.EventKey
 }
 
 func acceptsPastedText(model *viewModel) bool {
-	if model == nil || model.settingsOpen || model.emojiPicker.open || model.replySelect.valid || model.quitConfirm ||
+	if model == nil || model.settingsOpen || model.emojiPicker.open || model.linkPicker.open || model.replySelect.valid || model.quitConfirm ||
 		model.sendPending || model.sendUncertain {
 		return false
 	}

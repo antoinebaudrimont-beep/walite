@@ -49,6 +49,8 @@ type viewModel struct {
 	selectionEpoch       uint64
 	pendingReactions     [64]ReactionUpdate
 	pendingReactionCount int
+	linkPicker           linkPickerState
+	links                func(LinkRequest) bool
 }
 
 func draw(screen tcell.Screen, model *viewModel) {
@@ -79,6 +81,10 @@ func draw(screen tcell.Screen, model *viewModel) {
 	}
 	if model.emojiPicker.open {
 		drawEmojiPicker(screen, model, width, height)
+	}
+	if model.linkPicker.open {
+		screen.HideCursor()
+		drawLinkPicker(screen, model, width, height)
 	}
 	if model.settingsOpen {
 		screen.HideCursor()
@@ -127,7 +133,7 @@ func drawCompact(screen tcell.Screen, model *viewModel, width, height int) {
 	}
 	if height > 4 {
 		escapeAction := "Esc quit"
-		if model.settingsOpen || model.emojiPicker.open {
+		if model.settingsOpen || model.emojiPicker.open || model.linkPicker.open {
 			escapeAction = "Esc close"
 		} else if model.mode == modeCompose || model.mode == modeFile || model.replySelect.valid {
 			escapeAction = "Esc cancel"
@@ -151,7 +157,7 @@ func drawNarrow(screen tcell.Screen, model *viewModel, width, height int) {
 		replyRows = 1
 	}
 	composeSeparator := height - 3 - replyRows
-	putText(screen, 0, 2, width, chat.title, styles.normal.Bold(true))
+	putText(screen, 0, 2, width, chatHeaderTitle(chat), styles.normal.Bold(true))
 	drawNewerMessagesIndicator(screen, model, width, height, 0, 3, width)
 	start, end := visibleMessageRange(model, width, height)
 	drawMessages(screen, model, selectedIndex, chat, start, end, 0, 4, width, composeSeparator)
@@ -211,7 +217,7 @@ func drawTwoPane(screen tcell.Screen, model *viewModel, width, height int) {
 		putText(screen, 2, footerTop+1, width-3, navigationFooter(model, false), styles.status.Dim(true))
 		return
 	}
-	putText(screen, separator+2, 1, width-2, chat.title, styles.normal.Bold(true))
+	putText(screen, separator+2, 1, width-2, chatHeaderTitle(chat), styles.normal.Bold(true))
 	drawNewerMessagesIndicator(screen, model, width, height, separator+2, 2, width-2)
 
 	chatY := 3
@@ -263,6 +269,16 @@ func drawTwoPane(screen tcell.Screen, model *viewModel, width, height int) {
 	putText(screen, 2, height-2, width-2, footer, styles.status.Dim(true))
 }
 
+func chatHeaderTitle(chat *chatView) string {
+	if chat != nil && chat.readOnly {
+		return chat.title + "  [read-only]"
+	}
+	if chat == nil {
+		return ""
+	}
+	return chat.title
+}
+
 func drawComposer(screen tcell.Screen, model *viewModel, x, y, limit int) {
 	styles := model.styles()
 	if x >= limit {
@@ -294,9 +310,9 @@ func drawComposer(screen tcell.Screen, model *viewModel, x, y, limit int) {
 func navigationFooter(model *viewModel, narrow bool) string {
 	if model.replySelect.valid {
 		if narrow {
-			return "↑/↓ msg  R react  P/S media  Enter reply  Esc cancel"
+			return "↑/↓ msg  L link  R react  P/S media  Enter reply  Esc cancel"
 		}
-		return "↑/↓ message  R react  P preview  S save  Enter reply  Esc cancel"
+		return "↑/↓ message  L link  R react  P preview  S save  Enter reply  Esc cancel"
 	}
 	if narrow {
 		return "↑/↓ scroll  j/k chat  O older  P/S media  F file  Enter  Ctrl-P  Esc quit"

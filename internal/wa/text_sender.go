@@ -17,7 +17,6 @@ import (
 var (
 	ErrTextRejected          = errors.New("WhatsApp text request rejected")
 	ErrTextUnavailable       = errors.New("WhatsApp text sending unavailable")
-	ErrGroupReplyUnavailable = errors.New("group replies not available yet")
 	// ErrTextUncertain means transport was invoked but no usable successful
 	// result exists. The remote side may have accepted it: never auto-retry.
 	ErrTextUncertain = errors.New("WhatsApp delivery unknown; check recipient before composing another message")
@@ -80,6 +79,22 @@ func textRecipient(chatID model.ChatID) (types.JID, error) {
 	}
 }
 
+// ChatSendable reports whether a presentation chat may expose send actions.
+// Opaque synthetic IDs remain usable by the offline application; canonical
+// WhatsApp special-chat domains are read-only. Real transports still perform
+// their stricter request validation before admission.
+func ChatSendable(chatID model.ChatID) bool {
+	if _, err := textRecipient(chatID); err == nil {
+		return true
+	}
+	raw := chatID.String()
+	jid, err := types.ParseJID(raw)
+	if err != nil || jid.User == "" || jid.Device != 0 || jid.RawAgent != 0 || jid.String() != raw {
+		return true
+	}
+	return jid.Server != types.BroadcastServer && jid.Server != types.NewsletterServer
+}
+
 func (sender *realTextSender) ValidateText(chatID model.ChatID, text string, quotes ...model.TextQuote) error {
 	jid, err := textRecipient(chatID)
 	if err != nil {
@@ -92,10 +107,8 @@ func (sender *realTextSender) ValidateText(chatID model.ChatID, text string, quo
 		return ErrTextRejected
 	}
 	if len(quotes) == 1 {
-		if jid.Server == types.GroupServer {
-			return ErrGroupReplyUnavailable
-		}
-		if _, err := ownedTextQuote(quotes[0]); err != nil {
+		quote, err := ownedTextQuote(quotes[0])
+		if err != nil || jid.Server == types.GroupServer && !validGroupQuoteParticipant(quote) {
 			return ErrTextRejected
 		}
 	}
@@ -175,7 +188,15 @@ func (sender *realTextSender) SendText(ctx context.Context, chatID model.ChatID,
 // credentials, bytes, and original protobufs are not retained.
 func (sender *realTextSender) quotedText(peer types.JID, alternate model.ChatID, text string, quote model.TextQuote) (*waE2E.Message, error) {
 	participant := peer
-	if other, ok := directChatJID(alternate); ok && other.Server == types.HiddenUserServer {
+	if peer.Server == types.GroupServer {
+		if !quote.FromMe() {
+			var err error
+			participant, err = groupQuoteParticipant(quote)
+			if err != nil {
+				return nil, err
+			}
+		}
+	} else if other, ok := directChatJID(alternate); ok && other.Server == types.HiddenUserServer {
 		participant = other
 	}
 	if quote.FromMe() {
@@ -188,7 +209,11 @@ func (sender *realTextSender) quotedText(peer types.JID, alternate model.ChatID,
 	if err != nil {
 		return nil, ErrTextUnavailable
 	}
-	if _, ok := directChatJID(id); !ok {
+	if peer.Server != types.GroupServer {
+		if _, ok := directChatJID(id); !ok {
+			return nil, ErrTextUnavailable
+		}
+	} else if participant.Server != types.DefaultUserServer && participant.Server != types.HiddenUserServer {
 		return nil, ErrTextUnavailable
 	}
 	stanza, author := quote.MessageID().String(), participant.String()
@@ -206,10 +231,35 @@ func (sender *realTextSender) quotedText(peer types.JID, alternate model.ChatID,
 }
 
 func ownedTextQuote(quote model.TextQuote) (model.TextQuote, error) {
+	var owned model.TextQuote
+	var err error
 	if quote.Media().Kind() != 0 {
-		return model.NewMediaQuote(quote.MessageID().String(), quote.Text(), quote.FromMe(), quote.Media())
+		owned, err = model.NewMediaQuote(quote.MessageID().String(), quote.Text(), quote.FromMe(), quote.Media())
+	} else {
+		owned, err = model.NewTextQuote(quote.MessageID().String(), quote.Text(), quote.FromMe())
 	}
-	return model.NewTextQuote(quote.MessageID().String(), quote.Text(), quote.FromMe())
+	if err != nil || quote.ParticipantID().String() == "" {
+		return owned, err
+	}
+	return owned.WithParticipant(quote.ParticipantID().String())
+}
+
+func validGroupQuoteParticipant(quote model.TextQuote) bool {
+	if quote.FromMe() {
+		return true
+	}
+	_, err := groupQuoteParticipant(quote)
+	return err == nil
+}
+
+func groupQuoteParticipant(quote model.TextQuote) (types.JID, error) {
+	raw := quote.ParticipantID().String()
+	jid, err := types.ParseJID(raw)
+	if err != nil || jid.User == "" || jid.Device != 0 || jid.RawAgent != 0 || jid.String() != raw ||
+		(jid.Server != types.DefaultUserServer && jid.Server != types.HiddenUserServer) {
+		return types.JID{}, ErrTextRejected
+	}
+	return jid.ToNonAD(), nil
 }
 
 func quotedMessage(quote model.TextQuote) *waE2E.Message {

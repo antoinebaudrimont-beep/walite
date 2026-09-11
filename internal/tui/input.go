@@ -1,10 +1,6 @@
 package tui
 
-import (
-	"errors"
-
-	"github.com/gdamore/tcell/v2"
-)
+import "github.com/gdamore/tcell/v2"
 
 func handleKey(model *viewModel, event *tcell.EventKey, width, height int) (changed, exit bool) {
 	if event.Key() == tcell.KeyEscape && model.closeExternalPreview != nil && model.closeExternalPreview() {
@@ -27,6 +23,9 @@ func handleKey(model *viewModel, event *tcell.EventKey, width, height int) (chan
 	}
 	if model.settingsOpen {
 		return handleSettingsKey(model, event), false
+	}
+	if model.linkPicker.open {
+		return handleLinkPickerKey(model, event), false
 	}
 	if event.Key() == tcell.KeyCtrlP {
 		closeMedia(model)
@@ -94,8 +93,13 @@ func handleKey(model *viewModel, event *tcell.EventKey, width, height int) (chan
 		}
 		return false, true
 	case event.Key() == tcell.KeyEnter:
-		if _, ok := model.chats.selectedChat(); !ok {
+		selected, ok := model.chats.selectedChat()
+		if !ok {
 			return false, false
+		}
+		if selected.readOnly {
+			model.sendStatus = "Sending is not supported for this chat type"
+			return true, false
 		}
 		markSelectedChatReadOnInteraction(model)
 		model.mode = modeCompose
@@ -104,8 +108,13 @@ func handleKey(model *viewModel, event *tcell.EventKey, width, height int) (chan
 		model.replySelect = replySelectionState{}
 		return true, false
 	case event.Key() == tcell.KeyRune && event.Rune() == 'F':
-		if _, ok := model.chats.selectedChat(); !ok {
+		selected, ok := model.chats.selectedChat()
+		if !ok {
 			return false, false
+		}
+		if selected.readOnly {
+			model.sendStatus = "Sending is not supported for this chat type"
+			return true, false
 		}
 		closeMedia(model)
 		markSelectedChatReadOnInteraction(model)
@@ -152,7 +161,7 @@ func closesMediaPreview(event *tcell.EventKey) bool {
 	case tcell.KeyEnter, tcell.KeyCtrlR, tcell.KeyUp, tcell.KeyDown, tcell.KeyHome, tcell.KeyEnd, tcell.KeyPgUp, tcell.KeyPgDn, tcell.KeyCtrlU, tcell.KeyCtrlD:
 		return true
 	case tcell.KeyRune:
-		return event.Rune() == 'j' || event.Rune() == 'k' || event.Rune() == 'o' || event.Rune() == 'O' || event.Rune() == 'F'
+		return event.Rune() == 'j' || event.Rune() == 'k' || event.Rune() == 'o' || event.Rune() == 'O' || event.Rune() == 'F' || event.Rune() == 'L' || event.Rune() == 'l'
 	default:
 		return false
 	}
@@ -214,6 +223,10 @@ func handleReplySelectionKey(model *viewModel, event *tcell.EventKey, width, hei
 	case event.Key() == tcell.KeyEnter:
 		closeMedia(model)
 		read := markSelectedChatReadOnInteraction(model)
+		if selected, ok := model.chats.selectedChat(); ok && selected.readOnly {
+			model.sendStatus = "Sending is not supported for this chat type"
+			return true
+		}
 		return chooseReplyTarget(model) || read
 	case event.Key() == tcell.KeyUp || event.Key() == tcell.KeyRune && event.Rune() == 'k':
 		closeMedia(model)
@@ -225,8 +238,14 @@ func handleReplySelectionKey(model *viewModel, event *tcell.EventKey, width, hei
 		return requestMediaAt(model, MediaPreview, model.replySelect.index, width, height)
 	case event.Key() == tcell.KeyRune && (event.Rune() == 'S' || event.Rune() == 's'):
 		return requestMediaAt(model, MediaSave, model.replySelect.index, width, height)
+	case event.Key() == tcell.KeyRune && (event.Rune() == 'L' || event.Rune() == 'l'):
+		return openFocusedLinks(model)
 	case event.Key() == tcell.KeyRune && event.Rune() == 'R':
 		closeMedia(model)
+		if selected, ok := model.chats.selectedChat(); ok && selected.readOnly {
+			model.sendStatus = "Sending is not supported for this chat type"
+			return true
+		}
 		return beginReaction(model)
 	}
 	return false
@@ -283,6 +302,10 @@ func handleComposeReplySelectionKey(model *viewModel, event *tcell.EventKey, wid
 	case event.Key() == tcell.KeyEnter:
 		closeMedia(model)
 		read := markSelectedChatReadOnInteraction(model)
+		if selected, ok := model.chats.selectedChat(); ok && selected.readOnly {
+			model.sendStatus = "Sending is not supported for this chat type"
+			return true
+		}
 		return chooseReplyTarget(model) || read
 	case event.Key() == tcell.KeyUp || event.Key() == tcell.KeyRune && event.Rune() == 'k':
 		closeMedia(model)
@@ -294,8 +317,14 @@ func handleComposeReplySelectionKey(model *viewModel, event *tcell.EventKey, wid
 		return requestMediaAt(model, MediaPreview, model.replySelect.index, width, height)
 	case event.Key() == tcell.KeyRune && (event.Rune() == 'S' || event.Rune() == 's'):
 		return requestMediaAt(model, MediaSave, model.replySelect.index, width, height)
+	case event.Key() == tcell.KeyRune && (event.Rune() == 'L' || event.Rune() == 'l'):
+		return openFocusedLinks(model)
 	case event.Key() == tcell.KeyRune && event.Rune() == 'R':
 		closeMedia(model)
+		if selected, ok := model.chats.selectedChat(); ok && selected.readOnly {
+			model.sendStatus = "Sending is not supported for this chat type"
+			return true
+		}
 		return beginReaction(model)
 	}
 	return false
@@ -366,20 +395,22 @@ func submitOutgoingMessage(model *viewModel) bool {
 	if !ok {
 		return false
 	}
+	if selected.readOnly {
+		model.sendStatus = "Sending is not supported for this chat type"
+		return true
+	}
 	request := SendRequest{ChatID: selected.id, Text: model.composer.text()}
 	if model.replyTarget.valid {
 		request.ReplyToID = string(model.replyTarget.id)
 		if target, found := model.chats.findMessageByID(model.chats.selectedIndex(), model.replyTarget.id); found && (target.bodyRetained || target.mediaKind != "") {
 			request.ReplyToText, request.ReplyToFromMe = target.text, target.fromMe
 			request.ReplyMediaKind, request.ReplyMediaName, request.ReplyMediaMIME = target.mediaKind, target.mediaName, target.mediaMIME
+			request.ReplyTargetSenderID, request.ReplyIsGroup = target.senderID, target.isGroup
 		}
 	}
 	if err := model.send(request); err != nil {
 		if model.asyncSend {
 			model.sendStatus = "Send unavailable or rejected; draft kept"
-			if errors.Is(err, ErrGroupReplyUnavailable) {
-				model.sendStatus = "Group replies not available yet; draft kept"
-			}
 			return true
 		}
 		return false
@@ -404,6 +435,10 @@ func submitOutgoingFile(model *viewModel) bool {
 	selected, ok := model.chats.selectedChat()
 	if !ok {
 		return false
+	}
+	if selected.readOnly {
+		model.sendStatus = "Sending is not supported for this chat type"
+		return true
 	}
 	if err := model.send(SendRequest{ChatID: selected.id, FilePath: model.composer.text()}); err != nil {
 		if model.asyncSend {

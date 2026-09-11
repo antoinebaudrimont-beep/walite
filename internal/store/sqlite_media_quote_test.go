@@ -17,6 +17,7 @@ func TestSQLiteCommittedMediaQuoteSurvivesRestartAndQuoteLessDuplicate(t *testin
 	}
 	media, _ := model.NewMedia(model.MediaDocument, "report Café 日本語.pdf", "application/pdf")
 	quote, _ := model.NewMediaQuote("media-original", "", false, media)
+	quote, _ = quote.WithParticipant("55555@lid")
 	message, err := model.NewMessage(model.MessageInput{ChatID: "chat", MessageID: "reply", SentAt: time.Unix(2, 0).UTC(), FromMe: true, Text: "reply", Quote: quote})
 	if err != nil {
 		t.Fatal(err)

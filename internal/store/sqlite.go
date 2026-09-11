@@ -20,7 +20,7 @@ import (
 
 // All application-cache timestamp columns use signed Unix milliseconds.
 const (
-	currentSQLiteSchemaVersion = 4
+	currentSQLiteSchemaVersion = 5
 	defaultSQLiteBusyTimeout   = time.Second
 	defaultSQLiteCacheKiB      = 2048
 	messageKindUnknown         = 0
@@ -392,9 +392,12 @@ func migrateSQLite(ctx context.Context, database *sql.DB, version int, hook migr
 			_ = transaction.Rollback()
 		}
 	}()
-	statements := sqliteSchemaV4
+	statements := sqliteSchemaV5
+	if version <= 3 {
+		statements = append(append([]string(nil), sqliteSchemaV4...), statements...)
+	}
 	if version <= 2 {
-		statements = append(append([]string(nil), sqliteSchemaV3...), sqliteSchemaV4...)
+		statements = append(append([]string(nil), sqliteSchemaV3...), statements...)
 	}
 	if version <= 1 {
 		statements = append(append([]string(nil), sqliteSchemaV2...), statements...)
@@ -412,7 +415,7 @@ func migrateSQLite(ctx context.Context, database *sql.DB, version int, hook migr
 			return err
 		}
 	}
-	if _, err := transaction.ExecContext(ctx, "PRAGMA user_version = 4"); err != nil {
+	if _, err := transaction.ExecContext(ctx, "PRAGMA user_version = 5"); err != nil {
 		return err
 	}
 	if err := transaction.Commit(); err != nil {
@@ -759,7 +762,7 @@ func writeSQLiteMessage(ctx context.Context, transaction *sql.Tx, message model.
 		bodyBytes, bodyTruncated, retainedBody,
 		message.SenderID().String(), sqliteBool(message.IsGroup()),
 		message.Quote().MessageID().String(), message.Quote().Text(), sqliteBool(message.Quote().FromMe()),
-		int(message.Quote().Media().Kind()), message.Quote().Media().Name(), message.Quote().Media().MIMEType(),
+		message.Quote().ParticipantID().String(), int(message.Quote().Media().Kind()), message.Quote().Media().Name(), message.Quote().Media().MIMEType(),
 	)
 	if err != nil {
 		return fmt.Errorf("ingest message: %w", sqliteOperationError(err))
@@ -777,7 +780,7 @@ func writeSQLiteMessage(ctx context.Context, transaction *sql.Tx, message model.
 			int(message.Media().Kind()),
 			retainedBody, message.SenderID().String(), retainedBody, sqliteBool(message.IsGroup()),
 			message.Quote().MessageID().String(), message.Quote().Text(), sqliteBool(message.Quote().FromMe()),
-			int(message.Quote().Media().Kind()), message.Quote().Media().Name(), message.Quote().Media().MIMEType(),
+			message.Quote().ParticipantID().String(), int(message.Quote().Media().Kind()), message.Quote().Media().Name(), message.Quote().Media().MIMEType(),
 			message.ChatID().String(), message.MessageID().String(),
 			message.SentAt().UnixMilli(), fromMe,
 		)
@@ -860,7 +863,7 @@ func (store *SQLiteStore) Message(ctx context.Context, chatID model.ChatID, mess
 		&values.body,
 		&values.bodyTruncated,
 		&values.retainedBody,
-		&values.senderID, &values.isGroup, &values.quoteID, &values.quoteText, &values.quoteFromMe,
+		&values.senderID, &values.isGroup, &values.quoteID, &values.quoteText, &values.quoteFromMe, &values.quoteParticipantID,
 		&values.quoteMediaKind, &values.quoteMediaName, &values.quoteMediaMIME,
 		&values.mediaKind, &values.mediaName, &values.mediaMIME, &values.mediaDeclaredBytes, &values.mediaDownloadRef,
 	)
@@ -887,6 +890,7 @@ type sqliteMessageValues struct {
 	isGroup            int
 	quoteID, quoteText string
 	quoteFromMe        int
+	quoteParticipantID string
 	quoteMediaKind     int
 	quoteMediaName     string
 	quoteMediaMIME     string
@@ -903,7 +907,7 @@ func sqliteMessageFromValues(chatID, messageID string, values sqliteMessageValue
 		values.retainedBody < 0 || values.retainedBody > 1 ||
 		!sqliteBoolean(values.isGroup) || !sqliteBoolean(values.quoteFromMe) ||
 		(values.retainedBody == 1 && !values.body.Valid) ||
-		(values.quoteID == "" && (values.quoteText != "" || values.quoteFromMe != 0 || values.quoteMediaKind != 0 || values.quoteMediaName != "" || values.quoteMediaMIME != "")) ||
+		(values.quoteID == "" && (values.quoteText != "" || values.quoteFromMe != 0 || values.quoteParticipantID != "" || values.quoteMediaKind != 0 || values.quoteMediaName != "" || values.quoteMediaMIME != "")) ||
 		(values.retainedBody == 0 && values.quoteID != "") {
 		return model.Message{}, newSQLiteError(ErrCorruptCache, nil)
 	}
@@ -959,6 +963,12 @@ func sqliteMessageFromValues(chatID, messageID string, values sqliteMessageValue
 		}
 		if err != nil || len(values.quoteText) > model.MaxQuoteTextBytes {
 			return model.Message{}, newSQLiteError(ErrCorruptCache, err)
+		}
+		if values.quoteParticipantID != "" {
+			quote, err = quote.WithParticipant(values.quoteParticipantID)
+			if err != nil {
+				return model.Message{}, newSQLiteError(ErrCorruptCache, err)
+			}
 		}
 		message = message.WithQuote(quote)
 	}
@@ -1049,10 +1059,10 @@ const insertMessageSQL = `
 INSERT INTO messages(
     chat_id, message_id, sent_at, from_me, kind, body, body_bytes,
     body_truncated, local_revision, ingest_seq, retained_body,
-    sender_id, is_group, quote_id, quote_text, quote_from_me,
+	sender_id, is_group, quote_id, quote_text, quote_from_me, quote_participant_id,
 	quote_media_kind, quote_media_name, quote_media_mime
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(chat_id, message_id) DO NOTHING`
 
 const updateMessageSQL = `
@@ -1076,6 +1086,7 @@ UPDATE messages SET
 	quote_id = CASE WHEN quote_id != '' THEN quote_id ELSE ? END,
 	quote_text = CASE WHEN quote_id != '' THEN quote_text ELSE ? END,
 	quote_from_me = CASE WHEN quote_id != '' THEN quote_from_me ELSE ? END,
+	quote_participant_id = CASE WHEN quote_id != '' THEN quote_participant_id ELSE ? END,
 	quote_media_kind = CASE WHEN quote_id != '' THEN quote_media_kind ELSE ? END,
 	quote_media_name = CASE WHEN quote_id != '' THEN quote_media_name ELSE ? END,
 	quote_media_mime = CASE WHEN quote_id != '' THEN quote_media_mime ELSE ? END

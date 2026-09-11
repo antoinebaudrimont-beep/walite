@@ -13,10 +13,11 @@ const MaxQuoteTextBytes = 1024
 // Media contains only a bounded presentation descriptor for a quoted media
 // message; it never retains download metadata, bytes, or protocol types.
 type TextQuote struct {
-	id     MessageID
-	text   string
-	fromMe bool
-	media  Media
+	id            MessageID
+	text          string
+	fromMe        bool
+	media         Media
+	participantID ChatID
 }
 
 func NewTextQuote(id, text string, fromMe bool) (TextQuote, error) {
@@ -65,6 +66,21 @@ func (quote TextQuote) Text() string         { return quote.text }
 func (quote TextQuote) FromMe() bool         { return quote.fromMe }
 func (quote TextQuote) Media() Media         { return quote.media }
 
+// ParticipantID identifies the quoted author when a group reply requires it.
+// The zero value remains valid for direct-chat quotes.
+func (quote TextQuote) ParticipantID() ChatID { return quote.participantID }
+
+// WithParticipant returns an owned quote carrying the transport-neutral quoted
+// author identity. Protocol JIDs remain confined to the WhatsApp adapter.
+func (quote TextQuote) WithParticipant(id string) (TextQuote, error) {
+	participant, err := NewChatID(id)
+	if err != nil {
+		return TextQuote{}, err
+	}
+	quote.participantID = participant
+	return quote, nil
+}
+
 func cloneTextQuote(quote TextQuote) (TextQuote, error) {
 	if quote == (TextQuote{}) {
 		return TextQuote{}, nil
@@ -72,8 +88,15 @@ func cloneTextQuote(quote TextQuote) (TextQuote, error) {
 	if len(quote.text) > MaxQuoteTextBytes {
 		return TextQuote{}, newValidationError(TooLong, "quote_text", MaxQuoteTextBytes)
 	}
+	var owned TextQuote
+	var err error
 	if quote.media.Kind() != 0 {
-		return NewMediaQuote(quote.id.value, quote.text, quote.fromMe, quote.media)
+		owned, err = NewMediaQuote(quote.id.value, quote.text, quote.fromMe, quote.media)
+	} else {
+		owned, err = NewTextQuote(quote.id.value, quote.text, quote.fromMe)
 	}
-	return NewTextQuote(quote.id.value, quote.text, quote.fromMe)
+	if err != nil || quote.participantID.String() == "" {
+		return owned, err
+	}
+	return owned.WithParticipant(quote.participantID.String())
 }

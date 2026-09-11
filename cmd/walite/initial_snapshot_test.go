@@ -143,6 +143,21 @@ func TestInitialSnapshotUsesReadablePNFallbackForExistingCache(t *testing.T) {
 	}
 }
 
+func TestInitialSnapshotKeepsUnsupportedSpecialChatsVisibleAndReadOnly(t *testing.T) {
+	activity := time.Date(2026, 9, 1, 7, 0, 0, 0, time.UTC)
+	stub := &snapshotStub{chats: []model.Chat{
+		mustSnapshotChat(t, "status@broadcast", "Status", false, 1, activity),
+		mustSnapshotChat(t, "12345-67890@g.us", "Group", true, 0, activity.Add(-time.Minute)),
+	}}
+	initial, err := buildInitialTUIState(context.Background(), stub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(initial.Chats) != 2 || !initial.Chats[0].ReadOnly || initial.Chats[1].ReadOnly {
+		t.Fatalf("chats=%+v", initial.Chats)
+	}
+}
+
 func TestSelectedCachedDirectChatRequestsNameUpgradeWithoutMessages(t *testing.T) {
 	id := "218699835404531@lid"
 	stub := &snapshotStub{chats: []model.Chat{mustSnapshotChat(t, id, "", false, 0, time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC))}}

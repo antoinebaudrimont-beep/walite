@@ -57,6 +57,7 @@ func applyLiveMessage(model *viewModel, event LiveMessage) bool {
 	mutation := model.chats.applyLiveMessage(chatIndex, event)
 	if chat, ok := model.chats.chatAt(chatIndex); ok {
 		chat.isGroup = chat.isGroup || event.IsGroup
+		chat.readOnly = event.ReadOnly
 		if enrichChatDisplay(chat, &model.display) {
 			mutation.changed = true
 		}
@@ -98,7 +99,7 @@ func (state *chatState) admitLiveChat(event LiveMessage) (int, bool) {
 	if state == nil || state.chatCount < 0 || state.chatCount > len(state.chats) {
 		return 0, false
 	}
-	incoming := chatView{id: event.ChatID, title: event.ChatID, activityTime: event.ActivityTime}
+	incoming := chatView{id: event.ChatID, title: event.ChatID, activityTime: event.ActivityTime, readOnly: event.ReadOnly}
 	if state.chatCount < len(state.chats) {
 		index := state.chatCount
 		state.chats[index] = incoming

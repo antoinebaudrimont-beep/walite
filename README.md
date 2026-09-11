@@ -30,9 +30,11 @@ These screenshots were AI-edited for privacy using demo names and messages. Text
 - Cached startup without waiting for a complete HistorySync
 - Explicit bounded older-history paging
 - Incoming and outgoing text messages
+- Compact incoming/outgoing reactions and direct/group quoted replies
+- Bounded HTTP(S) link opening and clipboard copy from a focused message
 - Image, video, document, audio, and sticker messages shown as lightweight placeholders
 - Explicit media download/save, plus inline image/GIF and WebP sticker preview through optional `ueberzugpp` X11 overlays
-- One-to-one text replies—including replies to media placeholders—and incoming quote rendering
+- Text replies—including group and media-placeholder replies—and incoming quote rendering
 - Contact, group, and group-participant names when authoritative local metadata is available
 - Readable phone-number fallbacks plus PN/LID identity handling and deduplication
 - Directional incoming/outgoing layout and date separators
@@ -96,7 +98,7 @@ The pairing window closes after a successful link. Later launches reuse the pers
 | `Ctrl-P` | Open settings |
 | `Esc` | Cancel the current mode or close a popup |
 
-In reply selection, use `↑`/`↓` or `j`/`k`, then `Enter` to confirm. In the emoji picker, use the arrow keys or `h`/`j`/`k`/`l`; `Tab` and `Shift-Tab` switch categories, and `Enter` inserts the selected emoji.
+In reply selection, use `↑`/`↓` or `j`/`k`, then `Enter` to confirm. Press `L` on the focused message to open its sole HTTP(S) link, or choose among multiple links with `↑`/`↓` and `Enter`; `C` copies the selected link through `xclip` or `xsel`. Other URL schemes are ignored. In the emoji picker, use the arrow keys or `h`/`j`/`k`/`l`; `Tab` and `Shift-Tab` switch categories, and `Enter` inserts the selected emoji.
 
 Media is never downloaded in the background. Scroll until the intended media placeholder is the newest visible media row, or focus it with `Ctrl-R` and the arrow keys, then press `P` to preview or `S` to save. Images, ordinary GIFs, and WebP stickers use an inline `ueberzugpp` X11 overlay; video (including WhatsApp GifPlayback MP4) and audio open in `mpv`; PDF documents open in `zathura`. Other document types remain save-only. Video/GifPlayback previews loop continuously; audio plays once. Inline overlays close with `P`, `Esc`, navigation, resize, or application shutdown. External viewers survive navigation; `Esc` in walite closes the active viewer without quitting walite. Once it closes, `P` can reopen the same media and `Esc` resumes its normal behavior. One external viewer is allowed at a time and is also closed on application shutdown. All viewers are optional, and a missing backend is reported without blocking the TUI.
 
@@ -146,11 +148,10 @@ The UI and service use transport-neutral application data. WhatsApp-specific typ
 
 ## Current limitations
 
-- Preview backends are optional: image/GIF and WebP sticker overlays require Linux/X11 and `ueberzugpp`, video/audio require `mpv`, and PDF documents require `zathura`. Other document formats remain save-only.
+- Preview backends are optional: image/GIF and WebP sticker overlays require Linux/X11 and `ueberzugpp`, video/audio require `mpv`, and PDF documents require `zathura`. Animated WebP playback depends on the installed `ueberzugpp` backend and may appear as a static frame. Other document formats remain save-only.
 - Expired WhatsApp media references are reported as unavailable; media-retry refresh is not implemented yet.
-- Reactions, typing indicators, and presence are not implemented.
-- Quoted-reply sending is supported for one-to-one chats, not groups.
-- Status and broadcast handling remains limited.
+- Typing indicators and presence are not implemented.
+- Status, broadcast-list, newsletter, and other unsupported special chats remain visible from cache but are read-only; sending text, files, replies, or reactions is rejected locally.
 - Some identities remain opaque when WhatsApp provides no usable authoritative local metadata.
 - Linux/amd64 is the validated platform.
 - Automatic pairing-window launch is currently specific to XFCE and `xfce4-terminal`.
@@ -213,3 +214,5 @@ git diff --check
 ## Disclaimer
 
 walite is an unofficial project and is not affiliated with, endorsed by, or sponsored by WhatsApp or Meta. It uses the independent [whatsmeow](https://github.com/tulir/whatsmeow) library to connect to WhatsApp.
+
+walite is released under the [MIT License](LICENSE).

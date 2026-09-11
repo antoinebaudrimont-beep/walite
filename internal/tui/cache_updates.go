@@ -30,7 +30,7 @@ func applyChatLoad(model *viewModel, result ChatLoadResult) bool {
 	}
 	loaded, err := chatStateFromInitial(InitialState{Chats: []InitialChat{{
 		ID: chat.id, Title: chat.title, IsGroup: chat.isGroup, UnreadCount: chat.unreadCount,
-		ActivityTime: chat.activityTime, Messages: result.Messages,
+		ActivityTime: chat.activityTime, Messages: result.Messages, ReadOnly: chat.readOnly,
 	}}})
 	if err != nil {
 		return false
@@ -105,7 +105,7 @@ func applyChatSummaries(model *viewModel, update InitialState) bool {
 	if !changed {
 		for index := 0; index < fresh.chatCount; index++ {
 			left, right := fresh.chats[index], model.chats.chats[index]
-			if left.id != right.id || left.title != right.title || left.isGroup != right.isGroup ||
+			if left.id != right.id || left.title != right.title || left.isGroup != right.isGroup || left.readOnly != right.readOnly ||
 				left.unreadCount != right.unreadCount || !left.activityTime.Equal(right.activityTime) {
 				changed = true
 				break
