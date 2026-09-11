@@ -20,7 +20,7 @@ import (
 
 // All application-cache timestamp columns use signed Unix milliseconds.
 const (
-	currentSQLiteSchemaVersion = 3
+	currentSQLiteSchemaVersion = 4
 	defaultSQLiteBusyTimeout   = time.Second
 	defaultSQLiteCacheKiB      = 2048
 	messageKindUnknown         = 0
@@ -392,9 +392,12 @@ func migrateSQLite(ctx context.Context, database *sql.DB, version int, hook migr
 			_ = transaction.Rollback()
 		}
 	}()
-	statements := sqliteSchemaV3
+	statements := sqliteSchemaV4
+	if version <= 2 {
+		statements = append(append([]string(nil), sqliteSchemaV3...), sqliteSchemaV4...)
+	}
 	if version <= 1 {
-		statements = append(append([]string(nil), sqliteSchemaV2...), sqliteSchemaV3...)
+		statements = append(append([]string(nil), sqliteSchemaV2...), statements...)
 	}
 	if version == 0 {
 		statements = append(append([]string(nil), sqliteSchemaV1...), statements...)
@@ -409,7 +412,7 @@ func migrateSQLite(ctx context.Context, database *sql.DB, version int, hook migr
 			return err
 		}
 	}
-	if _, err := transaction.ExecContext(ctx, "PRAGMA user_version = 3"); err != nil {
+	if _, err := transaction.ExecContext(ctx, "PRAGMA user_version = 4"); err != nil {
 		return err
 	}
 	if err := transaction.Commit(); err != nil {
@@ -627,6 +630,13 @@ func (store *SQLiteStore) commitPendingWrites(requests *[sqliteMaxBatchWrites]pe
 			if err := writeSQLiteLocalRead(ctx, transaction, request.chatID, request.readThrough); err != nil {
 				return time.Since(started), err
 			}
+			continue
+		case pendingReactionWrite:
+			summary, err := writeSQLiteReaction(ctx, transaction, request.reaction, now)
+			if err != nil {
+				return time.Since(started), err
+			}
+			request.result.reaction = summary
 			continue
 		case pendingMessageWrite:
 		default:

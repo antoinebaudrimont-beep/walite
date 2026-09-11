@@ -38,6 +38,19 @@ type messageView struct {
 	senderName     string
 	senderQuality  uint8
 	isGroup        bool
+	reactions      [maxReactionGroups]reactionGroupView
+	reactionCount  int
+}
+
+const (
+	maxReactionGroups     = 16
+	maxReactionEmojiBytes = 64
+)
+
+type reactionGroupView struct {
+	emoji string
+	count uint16
+	own   bool
 }
 
 // Presentation mirrors the application's bounded quote fields without an

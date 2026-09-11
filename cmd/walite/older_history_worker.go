@@ -19,9 +19,10 @@ type olderHistoryApplication interface {
 // olderHistoryWorker owns one in-flight request and one coalesced pending slot.
 // It never starts a goroutine per request.
 type olderHistoryWorker struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	source olderHistoryApplication
+	ctx       context.Context
+	cancel    context.CancelFunc
+	source    olderHistoryApplication
+	reactions reactionSummaryApplication
 
 	mu             sync.Mutex
 	active         bool
@@ -37,8 +38,9 @@ type olderHistoryWorker struct {
 func newOlderHistoryWorker(parent context.Context, application applicationService) *olderHistoryWorker {
 	ctx, cancel := context.WithCancel(parent)
 	source, _ := application.(olderHistoryApplication)
+	reactions, _ := application.(reactionSummaryApplication)
 	worker := &olderHistoryWorker{
-		ctx: ctx, cancel: cancel, source: source,
+		ctx: ctx, cancel: cancel, source: source, reactions: reactions,
 		wake: make(chan struct{}, 1), results: make(chan tui.OlderHistoryResult, 1), done: make(chan struct{}),
 	}
 	go worker.run()
@@ -163,6 +165,15 @@ func (worker *olderHistoryWorker) load(request tui.OlderHistoryRequest) (tui.Old
 	result.Messages = make([]tui.InitialMessage, len(messages))
 	for index, message := range messages {
 		result.Messages[index] = initialMessageFromModel(message)
+		if worker.reactions != nil {
+			summary, err := worker.reactions.ReactionSummary(worker.ctx, message.ChatID(), message.MessageID())
+			if err != nil {
+				result.Kind = tui.OlderHistoryFailed
+				result.Messages = nil
+				return result, true
+			}
+			result.Messages[index].Reactions = reactionGroupsFromModel(summary)
+		}
 	}
 	result.Kind = tui.OlderHistoryLoaded
 	return result, true

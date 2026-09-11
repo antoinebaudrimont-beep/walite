@@ -150,6 +150,9 @@ func (store *SQLiteStore) ApplyPrune(ctx context.Context, plan model.PrunePlan) 
 	deleted, bodies := 0, 0
 	for i := 0; i < owned.DeleteLen(); i++ {
 		id, _ := owned.DeleteAt(i)
+		if _, err := tx.ExecContext(ctx, `DELETE FROM reactions WHERE chat_id = ? AND target_message_id = ?`, owned.ChatID().String(), id.String()); err != nil {
+			return result, sqliteOperationError(err)
+		}
 		var retained int
 		err := tx.QueryRowContext(ctx, `DELETE FROM messages WHERE chat_id = ? AND message_id = ? RETURNING retained_body`, owned.ChatID().String(), id.String()).Scan(&retained)
 		if errors.Is(err, sql.ErrNoRows) {

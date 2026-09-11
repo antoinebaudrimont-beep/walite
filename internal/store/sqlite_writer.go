@@ -22,6 +22,7 @@ const (
 	pendingChatWrite
 	pendingDisplayWrite
 	pendingLocalReadWrite
+	pendingReactionWrite
 )
 
 // A single mailbox carries only this request's definitive transaction outcome.
@@ -29,6 +30,7 @@ const (
 type sqliteWriteResult struct {
 	committed *model.LiveEventBatch
 	display   model.DisplayMetadata
+	reaction  model.ReactionSummary
 	err       error
 }
 
@@ -40,6 +42,7 @@ type pendingWrite struct {
 	display     model.DisplayMetadata
 	chatID      model.ChatID
 	readThrough time.Time
+	reaction    model.Reaction
 	emitLive    bool
 	result      sqliteWriteResult
 	ack         chan sqliteWriteResult
@@ -60,6 +63,10 @@ func newPendingChat(chat model.Chat) pendingWrite {
 
 func newPendingLocalRead(chatID model.ChatID, through time.Time) pendingWrite {
 	return pendingWrite{kind: pendingLocalReadWrite, chatID: chatID, readThrough: through}
+}
+
+func newPendingReaction(reaction model.Reaction) pendingWrite {
+	return pendingWrite{kind: pendingReactionWrite, reaction: reaction}
 }
 
 func (pending pendingWrite) logicalWrites() int {

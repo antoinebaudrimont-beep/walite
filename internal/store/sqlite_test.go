@@ -65,13 +65,13 @@ func TestOpenSQLiteCreatesCurrentSchema(t *testing.T) {
 	if got := pragmaInt(t, store.db, "user_version"); got != currentSQLiteSchemaVersion {
 		t.Fatalf("user_version=%d", got)
 	}
-	wantTables := []string{"app_meta", "attachments", "chats", "contacts", "display_metadata", "messages", "sync_checkpoints"}
+	wantTables := []string{"app_meta", "attachments", "chats", "contacts", "display_metadata", "messages", "reactions", "sync_checkpoints"}
 	if got := schemaNames(t, store.db, "table"); !equalStrings(got, wantTables) {
 		t.Fatalf("tables=%v want=%v", got, wantTables)
 	}
 	wantIndexes := []string{
 		"attachments_local_idx", "chats_recent_idx", "messages_page_idx",
-		"messages_prune_idx", "sync_checkpoint_chat_idx",
+		"messages_prune_idx", "reactions_target_idx", "sync_checkpoint_chat_idx",
 	}
 	gotIndexes := schemaNames(t, store.db, "index")
 	for _, name := range wantIndexes {

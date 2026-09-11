@@ -19,6 +19,10 @@ type offlineApplicationService struct {
 	chats []model.Chat
 }
 
+type reactionSummaryApplication interface {
+	ReactionSummary(context.Context, model.ChatID, model.MessageID) (model.ReactionSummary, error)
+}
+
 func (application *offlineApplicationService) Run(ctx context.Context) error {
 	return application.core.Run(ctx)
 }
@@ -129,8 +133,24 @@ func buildChatLoadResult(ctx context.Context, source applicationService, request
 	result := tui.ChatLoadResult{ChatID: request.ChatID, Revision: request.Revision, Messages: make([]tui.InitialMessage, len(messages))}
 	for index, message := range messages {
 		result.Messages[index] = initialMessageFromModel(message)
+		if reactions, ok := source.(reactionSummaryApplication); ok {
+			summary, err := reactions.ReactionSummary(ctx, message.ChatID(), message.MessageID())
+			if err != nil {
+				return tui.ChatLoadResult{}, err
+			}
+			result.Messages[index].Reactions = reactionGroupsFromModel(summary)
+		}
 	}
 	return result, nil
+}
+
+func reactionGroupsFromModel(summary model.ReactionSummary) []tui.ReactionGroup {
+	groups := make([]tui.ReactionGroup, summary.Len())
+	for index := range groups {
+		group, _ := summary.At(index)
+		groups[index] = tui.ReactionGroup{Emoji: group.Emoji(), Count: group.Count(), Own: group.Own()}
+	}
+	return groups
 }
 
 func initialMessageFromModel(message model.Message) tui.InitialMessage {

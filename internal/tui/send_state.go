@@ -7,7 +7,7 @@ var ErrGroupReplyUnavailable = errors.New("group replies not available yet")
 
 // SendResult completes one admitted request, not a chat-data mutation. Only
 // LiveEvents can add the resulting message. Uncertain disables Enter-to-retry.
-type SendResult struct{ Failed, Uncertain, Media, StickerRejected bool }
+type SendResult struct{ Failed, Uncertain, Media, Reaction, StickerRejected bool }
 
 func applySendResult(model *viewModel, result SendResult) bool {
 	if !model.sendPending {
@@ -20,6 +20,9 @@ func applySendResult(model *viewModel, result SendResult) bool {
 		if result.Media {
 			model.sendStatus = "Send failed; path kept"
 		}
+		if result.Reaction {
+			model.sendStatus = "Reaction failed; target kept"
+		}
 		if result.StickerRejected {
 			model.sendStatus = "Sticker rejected; use a 512x512 WebP within the sticker size limit; path kept"
 		}
@@ -29,6 +32,11 @@ func applySendResult(model *viewModel, result SendResult) bool {
 		return true
 	}
 	model.sendStatus = ""
+	if result.Reaction {
+		model.reactionTarget = reactionTargetState{}
+		model.replySelect = replySelectionState{}
+		return true
+	}
 	clearSentDraft(model)
 	if result.Media {
 		model.mode = modeNavigate

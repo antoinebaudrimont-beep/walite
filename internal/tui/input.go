@@ -50,6 +50,11 @@ func handleKey(model *viewModel, event *tcell.EventKey, width, height int) (chan
 		case tcell.KeyEscape:
 			if model.sendUncertain {
 				model.sendUncertain, model.sendStatus = false, ""
+				if model.reactionTarget.valid {
+					model.reactionTarget = reactionTargetState{}
+					model.replySelect = replySelectionState{}
+					return true, false
+				}
 				model.composer.clear()
 				model.mode = modeNavigate
 				return true, false
@@ -220,6 +225,9 @@ func handleReplySelectionKey(model *viewModel, event *tcell.EventKey, width, hei
 		return requestMediaAt(model, MediaPreview, model.replySelect.index, width, height)
 	case event.Key() == tcell.KeyRune && (event.Rune() == 'S' || event.Rune() == 's'):
 		return requestMediaAt(model, MediaSave, model.replySelect.index, width, height)
+	case event.Key() == tcell.KeyRune && event.Rune() == 'R':
+		closeMedia(model)
+		return beginReaction(model)
 	}
 	return false
 }
@@ -286,6 +294,9 @@ func handleComposeReplySelectionKey(model *viewModel, event *tcell.EventKey, wid
 		return requestMediaAt(model, MediaPreview, model.replySelect.index, width, height)
 	case event.Key() == tcell.KeyRune && (event.Rune() == 'S' || event.Rune() == 's'):
 		return requestMediaAt(model, MediaSave, model.replySelect.index, width, height)
+	case event.Key() == tcell.KeyRune && event.Rune() == 'R':
+		closeMedia(model)
+		return beginReaction(model)
 	}
 	return false
 }
@@ -295,6 +306,7 @@ func handleEmojiKey(model *viewModel, event *tcell.EventKey, width, height int) 
 	switch event.Key() {
 	case tcell.KeyEscape, tcell.KeyCtrlE:
 		model.emojiPicker.close()
+		model.reactionTarget = reactionTargetState{}
 		return true
 	case tcell.KeyLeft:
 		return model.emojiPicker.moveHorizontal(-1)
@@ -310,6 +322,9 @@ func handleEmojiKey(model *viewModel, event *tcell.EventKey, width, height int) 
 		return model.emojiPicker.moveCategory(-1)
 	case tcell.KeyEnter:
 		value := model.emojiPicker.selectedEmoji()
+		if model.reactionTarget.valid {
+			return submitOutgoingReaction(model, value)
+		}
 		if !model.composer.insertText(value) {
 			return false
 		}
@@ -319,6 +334,11 @@ func handleEmojiKey(model *viewModel, event *tcell.EventKey, width, height int) 
 		}
 		model.emojiPicker.close()
 		return true
+	case tcell.KeyDelete, tcell.KeyBackspace, tcell.KeyBackspace2:
+		if model.reactionTarget.valid {
+			return submitOutgoingReaction(model, "")
+		}
+		return false
 	case tcell.KeyRune:
 		switch event.Rune() {
 		case 'h':

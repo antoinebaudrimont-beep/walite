@@ -315,6 +315,9 @@ func drawEmojiPicker(screen tcell.Screen, model *viewModel, width, height int) {
 		model.emojiPicker.focus == emojiFocusCategory, contentLeft, layout.top+3,
 		contentRight, layout.gridRows, layout.columns, styles)
 	footer := "arrows  Tab category  Enter  Esc close"
+	if model.reactionTarget.valid {
+		footer = "Enter react  Del remove  Esc close"
+	}
 	if contentRight-contentLeft < uniseg.StringWidth(footer) {
 		footer = "arrows  Tab category  Enter  Esc"
 	}

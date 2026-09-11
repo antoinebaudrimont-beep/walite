@@ -48,6 +48,21 @@ type InitialMessage struct {
 	ReplyMediaMIME string
 	SenderID       string
 	IsGroup        bool
+	Reactions      []ReactionGroup
+}
+
+// ReactionGroup is one bounded presentation aggregate. Count includes the
+// linked account when Own is true.
+type ReactionGroup struct {
+	Emoji string
+	Count uint16
+	Own   bool
+}
+
+// ReactionUpdate replaces the complete visible aggregate for one message.
+type ReactionUpdate struct {
+	ChatID, TargetMessageID string
+	Groups                  []ReactionGroup
 }
 
 // LiveMessage is an immutable-by-convention committed message presentation
@@ -77,23 +92,29 @@ type LiveMessage struct {
 // SendRequest is an immutable-by-convention outgoing presentation request.
 // Stable IDs, never presentation indexes, cross the application boundary.
 type SendRequest struct {
-	ChatID         string
-	Text           string
-	FilePath       string
-	ReplyToID      string
-	ReplyToText    string
-	ReplyToFromMe  bool
-	ReplyMediaKind string
-	ReplyMediaName string
-	ReplyMediaMIME string
+	ChatID                 string
+	Text                   string
+	FilePath               string
+	ReplyToID              string
+	ReplyToText            string
+	ReplyToFromMe          bool
+	ReplyMediaKind         string
+	ReplyMediaName         string
+	ReplyMediaMIME         string
+	ReactionTargetID       string
+	ReactionTargetSenderID string
+	ReactionTargetFromMe   bool
+	ReactionIsGroup        bool
+	ReactionEmoji          string
 }
 
 // Input supplies configuration and application-owned initial/live data to Run.
 type Input struct {
-	Options      Options
-	InitialState InitialState
-	LiveEvents   <-chan LiveMessage
-	Send         func(context.Context, SendRequest) error
+	Options         Options
+	InitialState    InitialState
+	LiveEvents      <-chan LiveMessage
+	ReactionUpdates <-chan ReactionUpdate
+	Send            func(context.Context, SendRequest) error
 	// When non-nil, Send performs bounded admission only; completion arrives
 	// here and the draft remains protected until that result is processed.
 	SendResults      <-chan SendResult
@@ -261,14 +282,14 @@ func messageViewFromInitial(source InitialMessage) (messageView, error) {
 		!utf8.ValidString(source.MediaKind) || !utf8.ValidString(source.MediaName) || !validMediaMIME(source.MediaMIME) ||
 		!validMediaPresentation(source.MediaKind, source.MediaName) ||
 		!validReplyMetadata(source.ReplyToID, source.ReplyToText, source.ReplyToFromMe, source.ReplyMediaKind, source.ReplyMediaName, source.ReplyMediaMIME) ||
-		source.ID == "" || !utf8.ValidString(source.ID) || !utf8.ValidString(source.Text) {
+		source.ID == "" || !utf8.ValidString(source.ID) || !utf8.ValidString(source.Text) || !validReactionGroups(source.Reactions) {
 		return messageView{}, errors.New("tui initial message rejected")
 	}
 	text := source.Text
 	if !source.BodyRetained {
 		text = ""
 	}
-	return messageView{
+	message := messageView{
 		id:             messageID(source.ID),
 		sentAt:         source.SentAt,
 		time:           localMessageTime(source.SentAt),
@@ -287,5 +308,27 @@ func messageViewFromInitial(source InitialMessage) (messageView, error) {
 		hasReply:       source.ReplyToID != "",
 		senderID:       source.SenderID,
 		isGroup:        source.IsGroup,
-	}, nil
+	}
+	message.reactionCount = len(source.Reactions)
+	for index, group := range source.Reactions {
+		message.reactions[index] = reactionGroupView{emoji: group.Emoji, count: group.Count, own: group.Own}
+	}
+	return message, nil
+}
+
+func validReactionGroups(groups []ReactionGroup) bool {
+	if len(groups) > maxReactionGroups {
+		return false
+	}
+	seen := make(map[string]struct{}, len(groups))
+	for _, group := range groups {
+		if len(group.Emoji) > maxReactionEmojiBytes || !validEmojiPreference(group.Emoji) || group.Count == 0 || group.Count > 64 {
+			return false
+		}
+		if _, duplicate := seen[group.Emoji]; duplicate {
+			return false
+		}
+		seen[group.Emoji] = struct{}{}
+	}
+	return true
 }

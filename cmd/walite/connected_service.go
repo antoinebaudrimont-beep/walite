@@ -19,17 +19,19 @@ const connectedShutdownGrace = 2 * time.Second
 // client. Chat data passes through the SQLite application cache, the writer,
 // and LiveEvents; the WhatsApp session database remains separately owned.
 type connectedApplicationService struct {
-	core         *service.Core
-	store        *store.SQLiteStore
-	sender       wa.TextSender
-	readReceipts wa.ReadReceiptSender
-	media        wa.MediaDownloader
-	history      wa.HistoryRequester
-	display      displaySource
-	source       service.EventSource
-	policy       service.RetentionPolicy
-	cacheUpdates chan struct{}
-	onDemandDone chan struct{}
+	core            *service.Core
+	store           *store.SQLiteStore
+	sender          wa.TextSender
+	reactions       wa.ReactionSender
+	readReceipts    wa.ReadReceiptSender
+	media           wa.MediaDownloader
+	history         wa.HistoryRequester
+	display         displaySource
+	source          service.EventSource
+	policy          service.RetentionPolicy
+	cacheUpdates    chan struct{}
+	onDemandDone    chan struct{}
+	reactionUpdates chan model.ReactionSummary
 }
 
 func newConnectedApplicationService(source service.EventSource, sender wa.TextSender, readReceipts wa.ReadReceiptSender, cache *store.SQLiteStore) (applicationService, error) {
@@ -70,10 +72,12 @@ func newConnectedApplicationServiceWithCapabilities(source service.EventSource, 
 		return nil, err
 	}
 	display, _ := source.(displaySource)
+	reactionSender, _ := sender.(wa.ReactionSender)
 	return &connectedApplicationService{
 		core: core, store: cache, sender: sender, readReceipts: readReceipts, media: media, history: history,
-		display: display, source: source, policy: policy,
-		cacheUpdates: make(chan struct{}, 1), onDemandDone: make(chan struct{}, 1),
+		reactions: reactionSender,
+		display:   display, source: source, policy: policy,
+		cacheUpdates: make(chan struct{}, 1), onDemandDone: make(chan struct{}, 1), reactionUpdates: make(chan model.ReactionSummary, wa.RealtimeSourceCapacity),
 	}, nil
 }
 
@@ -177,6 +181,47 @@ func (application *connectedApplicationService) SendMedia(ctx context.Context, r
 	return application.core.SendMedia(ctx, request)
 }
 
+func (application *connectedApplicationService) ValidateReaction(request model.SendReactionRequest) error {
+	if application == nil || application.reactions == nil {
+		return wa.ErrReactionUnavailable
+	}
+	return application.reactions.ValidateReaction(request)
+}
+
+func (application *connectedApplicationService) SendReaction(ctx context.Context, request model.SendReactionRequest) error {
+	if err := application.ValidateReaction(request); err != nil {
+		return err
+	}
+	reaction, err := application.reactions.SendReaction(ctx, request)
+	if err != nil {
+		return err
+	}
+	summary, err := application.store.ApplyReaction(context.Background(), reaction)
+	if err != nil {
+		return wa.ErrReactionUncertain
+	}
+	application.publishReaction(ctx, summary)
+	return nil
+}
+
+func (application *connectedApplicationService) ReactionUpdates() <-chan model.ReactionSummary {
+	if application == nil {
+		return nil
+	}
+	return application.reactionUpdates
+}
+
+func (application *connectedApplicationService) ReactionSummary(ctx context.Context, chat model.ChatID, target model.MessageID) (model.ReactionSummary, error) {
+	return application.store.ReactionSummary(ctx, chat, target)
+}
+
+func (application *connectedApplicationService) publishReaction(ctx context.Context, summary model.ReactionSummary) {
+	select {
+	case application.reactionUpdates <- summary:
+	case <-ctx.Done():
+	}
+}
+
 func (application *connectedApplicationService) MarkChatLocallyRead(ctx context.Context, id model.ChatID, through time.Time) error {
 	return application.store.MarkChatLocallyRead(ctx, id, through)
 }
@@ -199,13 +244,41 @@ func (application *connectedApplicationService) Run(ctx context.Context) error {
 	} else {
 		bootstrapDone <- nil
 	}
+	reactionDone := make(chan error, 1)
+	go func() { reactionDone <- application.runReactions(runCtx) }()
 	coreErr := application.core.Run(runCtx)
 	cancel()
 	bootstrapErr := <-bootstrapDone
+	reactionErr := <-reactionDone
 	if bootstrapErr != nil && !errors.Is(bootstrapErr, context.Canceled) {
 		return errors.Join(coreErr, bootstrapErr)
 	}
+	if reactionErr != nil && !errors.Is(reactionErr, context.Canceled) {
+		return errors.Join(coreErr, reactionErr)
+	}
 	return coreErr
+}
+
+func (application *connectedApplicationService) runReactions(ctx context.Context) error {
+	source, ok := application.source.(interface{ ReactionEvents() <-chan model.Reaction })
+	if !ok || source.ReactionEvents() == nil {
+		return nil
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case reaction, open := <-source.ReactionEvents():
+			if !open {
+				return nil
+			}
+			summary, err := application.store.ApplyReaction(ctx, reaction)
+			if err != nil {
+				return err
+			}
+			application.publishReaction(ctx, summary)
+		}
+	}
 }
 
 func (application *connectedApplicationService) runBootstrap(ctx context.Context, records <-chan model.BootstrapRecord) error {
@@ -272,23 +345,31 @@ func (application *connectedApplicationService) runBootstrap(ctx context.Context
 			if err := application.store.EnsureChat(ctx, chat); err != nil {
 				return err
 			}
-			if record.Len() == 0 {
-				continue
-			}
-			messages := make([]model.Message, record.Len())
-			for index := range messages {
-				message, ok := record.At(index)
-				if !ok {
-					return errors.New("bootstrap record corrupted")
+			if record.Len() > 0 {
+				messages := make([]model.Message, record.Len())
+				for index := range messages {
+					message, ok := record.At(index)
+					if !ok {
+						return errors.New("bootstrap record corrupted")
+					}
+					messages[index] = message
 				}
-				messages[index] = message
+				batch, err := model.NewWriteBatch(model.WriteHistory, messages)
+				if err != nil {
+					return err
+				}
+				if err := application.store.Write(ctx, batch); err != nil {
+					return err
+				}
 			}
-			batch, err := model.NewWriteBatch(model.WriteHistory, messages)
-			if err != nil {
-				return err
-			}
-			if err := application.store.Write(ctx, batch); err != nil {
-				return err
+			for index := 0; index < record.ReactionLen(); index++ {
+				reaction, ok := record.ReactionAt(index)
+				if !ok {
+					return errors.New("bootstrap reaction record corrupted")
+				}
+				if _, err := application.store.ApplyReaction(ctx, reaction); err != nil {
+					return err
+				}
 			}
 			if application.policy != nil {
 				snapshot, err := application.store.RetentionSnapshot(ctx, chat.ID())

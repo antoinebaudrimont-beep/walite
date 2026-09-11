@@ -6,6 +6,10 @@ import "errors"
 // from one transport bootstrap conversation into walite-owned memory.
 const MaxBootstrapMessagesPerChat = 50
 
+// MaxBootstrapReactionsPerChat bounds attached HistorySync reaction state by
+// the retained message and per-message reaction bounds.
+const MaxBootstrapReactionsPerChat = MaxBootstrapMessagesPerChat * MaxReactionsPerMessage
+
 // MaxChatSummaries is the fixed application/TUI chat-list bound.
 const MaxChatSummaries = 10_000
 
@@ -25,6 +29,7 @@ const (
 type BootstrapRecord struct {
 	chat                Chat
 	messages            []Message
+	reactions           []Reaction
 	category            BootstrapCategory
 	complete            bool
 	unreadAuthoritative bool
@@ -66,6 +71,38 @@ func (record BootstrapRecord) UnreadAuthoritative() bool   { return record.unrea
 func (record BootstrapRecord) WithUnreadAuthoritative(authoritative bool) BootstrapRecord {
 	record.unreadAuthoritative = authoritative
 	return record
+}
+
+// WithReactions takes bounded ownership of HistorySync reactions for this
+// conversation. Base messages and mutations are committed in that order.
+func (record BootstrapRecord) WithReactions(reactions []Reaction) (BootstrapRecord, error) {
+	if len(reactions) > MaxBootstrapReactionsPerChat || record.chat.ID().String() == "" {
+		return BootstrapRecord{}, errors.New("bootstrap reactions rejected")
+	}
+	owned := make([]Reaction, len(reactions))
+	for index, reaction := range reactions {
+		if reaction.ChatID() != record.chat.ID() {
+			return BootstrapRecord{}, errors.New("bootstrap reactions rejected")
+		}
+		var err error
+		owned[index], err = NewReaction(ReactionInput{
+			ChatID: reaction.ChatID().String(), TargetMessageID: reaction.TargetMessageID().String(),
+			ReactorID: reaction.ReactorID().String(), Emoji: reaction.Emoji(), UpdatedAt: reaction.UpdatedAt(),
+		})
+		if err != nil {
+			return BootstrapRecord{}, errors.New("bootstrap reactions rejected")
+		}
+	}
+	record.reactions = owned
+	return record, nil
+}
+
+func (record BootstrapRecord) ReactionLen() int { return len(record.reactions) }
+func (record BootstrapRecord) ReactionAt(index int) (Reaction, bool) {
+	if index < 0 || index >= len(record.reactions) {
+		return Reaction{}, false
+	}
+	return record.reactions[index], true
 }
 func (record BootstrapRecord) At(index int) (Message, bool) {
 	if index < 0 || index >= len(record.messages) {

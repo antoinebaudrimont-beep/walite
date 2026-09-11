@@ -24,6 +24,7 @@ type viewModel struct {
 	emojiPicker          emojiPickerState
 	replySelect          replySelectionState
 	replyTarget          replyTarget
+	reactionTarget       reactionTargetState
 	options              Options
 	settingsOpen         bool
 	settings             settingsState
@@ -46,6 +47,8 @@ type viewModel struct {
 	loadOlder            func(OlderHistoryRequest) bool
 	olderHistory         olderHistoryState
 	selectionEpoch       uint64
+	pendingReactions     [64]ReactionUpdate
+	pendingReactionCount int
 }
 
 func draw(screen tcell.Screen, model *viewModel) {
@@ -291,9 +294,9 @@ func drawComposer(screen tcell.Screen, model *viewModel, x, y, limit int) {
 func navigationFooter(model *viewModel, narrow bool) string {
 	if model.replySelect.valid {
 		if narrow {
-			return "↑/↓ msg  P/S media  Enter reply  Esc cancel"
+			return "↑/↓ msg  R react  P/S media  Enter reply  Esc cancel"
 		}
-		return "↑/↓ message  P preview  S save  Enter reply  Esc cancel"
+		return "↑/↓ message  R react  P preview  S save  Enter reply  Esc cancel"
 	}
 	if narrow {
 		return "↑/↓ scroll  j/k chat  O older  P/S media  F file  Enter  Ctrl-P  Esc quit"
@@ -461,6 +464,11 @@ func drawMessage(screen tcell.Screen, model *viewModel, chatIndex int, message m
 		remaining = rest
 		rows++
 	}
+	if reactions := messageReactionText(message); reactions != "" && y+rows < bottom {
+		fillMessageRow(screen, paneLeft, y+rows, limit, style)
+		putText(screen, bodyX, y+rows, limit, truncateDisplayWidth(reactions, limit-bodyX), style.Bold(true))
+		rows++
+	}
 	if rows == 0 {
 		return 1
 	}
@@ -624,10 +632,14 @@ func wrappedMessageLines(message messageView, width int, showTimestamps bool) in
 	}
 	displayText := messageDisplayText(message)
 	if displayText == "" {
+		lines := extra
 		if message.hasReply {
-			return 1 + extra
+			lines++
 		}
-		return 1
+		if message.reactionCount > 0 {
+			lines++
+		}
+		return max(1, lines)
 	}
 	lines := 0
 	remaining := displayText
@@ -636,6 +648,9 @@ func wrappedMessageLines(message messageView, width int, showTimestamps bool) in
 		lines++
 	}
 	if message.hasReply {
+		lines++
+	}
+	if message.reactionCount > 0 {
 		lines++
 	}
 	return lines + extra

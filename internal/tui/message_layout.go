@@ -27,6 +27,7 @@ func messageBlockLeft(message messageView, left, right, bodyWidth, timestampPref
 		return left
 	}
 	widest := uniseg.StringWidth(quoteLine)
+	widest = max(widest, uniseg.StringWidth(messageReactionText(message)))
 	for remaining := messageDisplayText(message); remaining != "" && widest < bodyWidth; {
 		var line string
 		line, remaining = nextWrappedLine(remaining, bodyWidth)

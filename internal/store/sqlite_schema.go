@@ -1,5 +1,21 @@
 package store
 
+// V4 stores only bounded, transport-neutral latest reaction state. The target
+// is intentionally not a foreign key: WhatsApp may deliver a reaction before
+// its base message, and the later message/history import will make it visible.
+var sqliteSchemaV4 = []string{
+	`CREATE TABLE reactions (
+		chat_id TEXT NOT NULL REFERENCES chats(chat_id) ON DELETE CASCADE,
+		target_message_id TEXT NOT NULL,
+		reactor_id TEXT NOT NULL,
+		emoji TEXT NOT NULL DEFAULT '',
+		updated_at INTEGER NOT NULL,
+		PRIMARY KEY (chat_id, target_message_id, reactor_id)
+	)`,
+	`CREATE INDEX reactions_target_idx
+		ON reactions(chat_id, target_message_id, emoji)`,
+}
+
 // V3 adds only the bounded presentation descriptor required to reconstruct a
 // media quote after restart. Media bytes and download metadata remain absent.
 var sqliteSchemaV3 = []string{

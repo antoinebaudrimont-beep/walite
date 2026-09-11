@@ -36,6 +36,18 @@ type applicationMediaSender interface {
 	SendMedia(context.Context, service.SendMediaRequest) error
 }
 
+type applicationReactionSender interface {
+	SendReaction(context.Context, model.SendReactionRequest) error
+}
+
+type applicationReactionValidator interface {
+	ValidateReaction(model.SendReactionRequest) error
+}
+
+type reactionUpdateApplication interface {
+	ReactionUpdates() <-chan model.ReactionSummary
+}
+
 type cacheUpdateApplication interface {
 	CacheUpdates() <-chan struct{}
 }
@@ -238,6 +250,16 @@ func runStartedApplication(
 		defer close(liveDone)
 		forwardLiveMessages(runCtx, serviceLiveEvents, liveMessages)
 	}()
+	var reactionUpdates chan tui.ReactionUpdate
+	if reactions, ok := serviceCore.(reactionUpdateApplication); ok && reactions.ReactionUpdates() != nil {
+		reactionUpdates = make(chan tui.ReactionUpdate, wa.RealtimeSourceCapacity)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			forwardReactionUpdates(runCtx, reactions.ReactionUpdates(), reactionUpdates)
+		}()
+		defer func() { cancel(); <-done }()
+	}
 
 	sender := newSendWorker(runCtx, serviceCore)
 	defer sender.stop()
@@ -255,7 +277,7 @@ func runStartedApplication(
 	tuiDone := make(chan error, 1)
 	go func() {
 		tuiDone <- runTUI(runCtx, screen, tui.Input{
-			Options: options, InitialState: initialState, LiveEvents: liveMessages,
+			Options: options, InitialState: initialState, LiveEvents: liveMessages, ReactionUpdates: reactionUpdates,
 			Send: sender.admit, SendResults: sender.results,
 			DisplayUpdates: displayUpdates,
 			SummaryUpdates: loader.summaries, ChatLoads: loader.chats, LoadChat: loader.requestChat,
@@ -317,6 +339,23 @@ func sendMediaFromTUI(ctx context.Context, application applicationService, reque
 		return err
 	}
 	return sender.SendMedia(ctx, serviceRequest)
+}
+
+func sendReactionFromTUI(ctx context.Context, application applicationService, request tui.SendRequest) error {
+	sender, ok := application.(applicationReactionSender)
+	if !ok {
+		return wa.ErrReactionUnavailable
+	}
+	validated, err := reactionRequestFromTUI(request)
+	if err != nil {
+		return err
+	}
+	return sender.SendReaction(ctx, validated)
+}
+
+func reactionRequestFromTUI(request tui.SendRequest) (model.SendReactionRequest, error) {
+	return model.NewSendReactionRequest(request.ChatID, request.ReactionTargetID, request.ReactionTargetSenderID,
+		request.ReactionTargetFromMe, request.ReactionIsGroup, request.ReactionEmoji)
 }
 
 func sendRequestFromTUI(request tui.SendRequest) (service.SendTextRequest, error) {
@@ -385,6 +424,35 @@ func forwardLiveMessages(ctx context.Context, source <-chan model.LiveEvent, des
 			}
 		}
 	}
+}
+
+func forwardReactionUpdates(ctx context.Context, source <-chan model.ReactionSummary, destination chan<- tui.ReactionUpdate) {
+	defer close(destination)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case summary, ok := <-source:
+			if !ok {
+				return
+			}
+			update := reactionUpdateFromModel(summary)
+			select {
+			case <-ctx.Done():
+				return
+			case destination <- update:
+			}
+		}
+	}
+}
+
+func reactionUpdateFromModel(summary model.ReactionSummary) tui.ReactionUpdate {
+	update := tui.ReactionUpdate{ChatID: summary.ChatID().String(), TargetMessageID: summary.TargetMessageID().String(), Groups: make([]tui.ReactionGroup, summary.Len())}
+	for index := range update.Groups {
+		group, _ := summary.At(index)
+		update.Groups[index] = tui.ReactionGroup{Emoji: group.Emoji(), Count: group.Count(), Own: group.Own()}
+	}
+	return update
 }
 
 func adaptLiveMessage(event model.LiveEvent) (tui.LiveMessage, bool) {

@@ -51,6 +51,32 @@ func (worker *sendWorker) admit(ctx context.Context, request tui.SendRequest) er
 	if worker.busy || len(worker.results) != 0 {
 		return &service.CoreError{Kind: service.CoreBusy}
 	}
+	if request.ReactionTargetID != "" {
+		if request.Text != "" || request.FilePath != "" || request.ReplyToID != "" {
+			return &service.CoreError{Kind: service.CoreMalformed}
+		}
+		sender, ok := worker.application.(applicationReactionSender)
+		if !ok {
+			return wa.ErrReactionUnavailable
+		}
+		validated, err := reactionRequestFromTUI(request)
+		if err != nil {
+			return err
+		}
+		if validator, ok := worker.application.(applicationReactionValidator); ok {
+			if err := validator.ValidateReaction(validated); err != nil {
+				return err
+			}
+		}
+		_ = sender
+		worker.busy = true
+		worker.requests <- tui.SendRequest{
+			ChatID: validated.ChatID().String(), ReactionTargetID: validated.TargetMessageID().String(),
+			ReactionTargetSenderID: validated.TargetSenderID().String(), ReactionTargetFromMe: validated.TargetFromMe(),
+			ReactionIsGroup: validated.IsGroup(), ReactionEmoji: strings.Clone(validated.Emoji()),
+		}
+		return nil
+	}
 	if request.FilePath != "" {
 		if request.Text != "" || request.ReplyToID != "" {
 			return &service.CoreError{Kind: service.CoreMalformed}
@@ -93,13 +119,16 @@ func (worker *sendWorker) run() {
 			return
 		case request := <-worker.requests:
 			timeout := sendTimeout
+			reaction := request.ReactionTargetID != ""
 			if request.FilePath != "" {
 				timeout = mediaSendTimeout
 			}
 			ctx, cancel := context.WithTimeout(worker.ctx, timeout)
 			err := ctx.Err()
 			if err == nil {
-				if request.FilePath != "" {
+				if reaction {
+					err = sendReactionFromTUI(ctx, worker.application, request)
+				} else if request.FilePath != "" {
 					err = sendMediaFromTUI(ctx, worker.application, request)
 				} else {
 					err = sendTextFromTUI(ctx, worker.application, request)
@@ -108,10 +137,10 @@ func (worker *sendWorker) run() {
 			cancel()
 			// Transport uncertainty must survive CoreCancelled wrapping: Core
 			// may expose only ctx.Err when cancellation races an upstream error.
-			uncertain := errors.Is(err, wa.ErrTextUncertain) || errors.Is(err, wa.ErrMediaSendUncertain) || errors.Is(err, &service.CoreError{Kind: service.CoreCancelled}) ||
+			uncertain := errors.Is(err, wa.ErrTextUncertain) || errors.Is(err, wa.ErrMediaSendUncertain) || errors.Is(err, wa.ErrReactionUncertain) || errors.Is(err, &service.CoreError{Kind: service.CoreCancelled}) ||
 				errors.Is(err, &service.CoreError{Kind: service.CoreInvariant}) || errors.Is(err, &service.CoreError{Kind: service.CoreMalformed})
 			worker.mu.Lock()
-			worker.results <- tui.SendResult{Failed: err != nil, Uncertain: err != nil && uncertain, Media: request.FilePath != "",
+			worker.results <- tui.SendResult{Failed: err != nil, Uncertain: err != nil && uncertain, Media: request.FilePath != "", Reaction: reaction,
 				StickerRejected: errors.Is(err, service.ErrStickerRejected)}
 			worker.busy = false
 			worker.mu.Unlock()

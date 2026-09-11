@@ -66,6 +66,9 @@ func applyLiveMessage(model *viewModel, event LiveMessage) bool {
 	}
 	if mutation.inserted {
 		model.chats.chats[chatIndex].revision++
+		if applyPendingReaction(model, event.ChatID, event.MessageID) {
+			mutation.changed = true
+		}
 	}
 	model.chats.sortByActivity()
 

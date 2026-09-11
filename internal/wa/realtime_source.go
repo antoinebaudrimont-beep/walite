@@ -14,8 +14,10 @@ const RealtimeSourceCapacity = 64
 const BootstrapRecordCapacity = 1
 
 type realtimeEntry struct {
-	event     model.Event
-	alternate model.ChatID
+	event      model.Event
+	reaction   model.Reaction
+	isReaction bool
+	alternate  model.ChatID
 }
 
 var errRealtimeHistoryUnavailable = errors.New("WhatsApp realtime source has no history")
@@ -38,6 +40,7 @@ type RealtimeSource struct {
 	state     chan struct{}
 	stopped   chan struct{}
 	realtime  chan model.Event
+	reactions chan model.Reaction
 	bootstrap chan model.BootstrapRecord
 	history   chan model.HistoryJob
 	status    chan struct{}
@@ -61,10 +64,25 @@ func newRealtimeSource() *RealtimeSource {
 		state:     make(chan struct{}, 1),
 		stopped:   make(chan struct{}),
 		realtime:  make(chan model.Event),
+		reactions: make(chan model.Reaction),
 		bootstrap: make(chan model.BootstrapRecord, BootstrapRecordCapacity),
 		history:   history,
 		status:    status,
 	}
+}
+
+func (source *RealtimeSource) admitReaction(reaction model.Reaction, alternate model.ChatID) bool {
+	if source == nil {
+		return false
+	}
+	owned, err := model.NewReaction(model.ReactionInput{
+		ChatID: reaction.ChatID().String(), TargetMessageID: reaction.TargetMessageID().String(),
+		ReactorID: reaction.ReactorID().String(), Emoji: reaction.Emoji(), UpdatedAt: reaction.UpdatedAt(),
+	})
+	if err != nil {
+		return false
+	}
+	return source.admitEntry(realtimeEntry{reaction: owned, isReaction: true, alternate: alternate})
 }
 
 func (source *RealtimeSource) admit(event model.Event) bool {
@@ -79,6 +97,10 @@ func (source *RealtimeSource) admitWithAlternate(event model.Event, alternate mo
 	if err != nil {
 		return false
 	}
+	return source.admitEntry(realtimeEntry{event: normalized, alternate: alternate})
+}
+
+func (source *RealtimeSource) admitEntry(entry realtimeEntry) bool {
 	waiting := false
 	for {
 		source.mu.Lock()
@@ -94,7 +116,7 @@ func (source *RealtimeSource) admitWithAlternate(event model.Event, alternate mo
 			if waiting {
 				source.waiters--
 			}
-			source.events[source.tail] = realtimeEntry{event: normalized, alternate: alternate}
+			source.events[source.tail] = entry
 			source.tail = (source.tail + 1) % len(source.events)
 			source.count++
 			signalRealtimeSource(source.notEmpty)
@@ -122,6 +144,7 @@ func (source *RealtimeSource) Run(ctx context.Context) error {
 		return errors.New("WhatsApp realtime source rejected")
 	}
 	defer close(source.realtime)
+	defer close(source.reactions)
 	defer source.closeAdmission()
 	if source.display != nil {
 		workerCtx, cancel := context.WithCancel(ctx)
@@ -137,16 +160,30 @@ func (source *RealtimeSource) Run(ctx context.Context) error {
 		if !ok {
 			return nil
 		}
-		event, err := source.resolveEntry(ctx, entry)
-		if err != nil {
-			return err
-		}
-		select {
-		case source.realtime <- event:
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-source.stopped:
-			return nil
+		if entry.isReaction {
+			reaction, err := source.resolveReactionEntry(ctx, entry)
+			if err != nil {
+				return err
+			}
+			select {
+			case source.reactions <- reaction:
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-source.stopped:
+				return nil
+			}
+		} else {
+			event, err := source.resolveEntry(ctx, entry)
+			if err != nil {
+				return err
+			}
+			select {
+			case source.realtime <- event:
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-source.stopped:
+				return nil
+			}
 		}
 	}
 }
@@ -250,6 +287,33 @@ func (source *RealtimeSource) resolveEntry(ctx context.Context, entry realtimeEn
 	return model.NewEvent(message, entry.event.ReceivedAt())
 }
 
+func (source *RealtimeSource) resolveReactionEntry(ctx context.Context, entry realtimeEntry) (model.Reaction, error) {
+	reaction := entry.reaction
+	alternate, err := lookupAlternate(ctx, reaction.ChatID(), entry.alternate, source.lookup)
+	if err != nil {
+		return model.Reaction{}, err
+	}
+	original := reaction.ChatID()
+	id, err := source.aliases.resolve(original, alternate)
+	if err != nil {
+		return model.Reaction{}, err
+	}
+	if id != original {
+		reaction, err = reaction.WithChatID(id)
+		if err != nil {
+			return model.Reaction{}, err
+		}
+	}
+	if reaction.ReactorID().String() == original.String() || reaction.ReactorID().String() == alternate.String() {
+		reactor, err := model.NewContactID(id.String())
+		if err != nil {
+			return model.Reaction{}, err
+		}
+		return reaction.WithReactorID(reactor)
+	}
+	return reaction, nil
+}
+
 func (source *RealtimeSource) closeAdmission() {
 	if source == nil {
 		return
@@ -270,6 +334,15 @@ func (source *RealtimeSource) RealtimeEvents() <-chan model.Event {
 		return nil
 	}
 	return source.realtime
+}
+
+// ReactionEvents is the lossless bounded mutation stream sharing callback
+// ordering and backpressure with RealtimeEvents.
+func (source *RealtimeSource) ReactionEvents() <-chan model.Reaction {
+	if source == nil {
+		return nil
+	}
+	return source.reactions
 }
 
 // DisplayUpdates is advisory and independently coalesced; it never masquerades

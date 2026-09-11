@@ -134,6 +134,7 @@ func runInitialized(
 		<-eventsDone
 	}()
 	liveEvents := input.LiveEvents
+	reactionUpdates := input.ReactionUpdates
 	sendResults := input.SendResults
 	displayUpdates := input.DisplayUpdates
 	summaryUpdates := input.SummaryUpdates
@@ -220,6 +221,15 @@ func runInitialized(
 				continue
 			}
 			if applyLiveMessage(&model, event) {
+				draw(screen, &model)
+				screen.Show()
+			}
+		case update, ok := <-reactionUpdates:
+			if !ok {
+				reactionUpdates = nil
+				continue
+			}
+			if applyReactionUpdate(&model, update) {
 				draw(screen, &model)
 				screen.Show()
 			}

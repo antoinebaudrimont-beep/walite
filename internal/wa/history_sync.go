@@ -6,6 +6,7 @@ import (
 
 	"github.com/antoinebaudrimont-beep/walite/internal/model"
 	waHistorySync "go.mau.fi/whatsmeow/proto/waHistorySync"
+	waWeb "go.mau.fi/whatsmeow/proto/waWeb"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 )
@@ -116,6 +117,26 @@ func (client *whatsmeowConnectionClient) adaptBootstrapConversation(category mod
 		}
 		return messages[i].SentAt().Before(messages[j].SentAt())
 	})
+	retained := make(map[string]struct{}, len(messages))
+	for _, message := range messages {
+		retained[message.MessageID().String()] = struct{}{}
+	}
+	reactions := make([]model.Reaction, 0)
+	for _, historyMessage := range conversation.GetMessages() {
+		webMessage := historyMessage.GetMessage()
+		if webMessage == nil || webMessage.GetKey() == nil {
+			continue
+		}
+		targetID := webMessage.GetKey().GetID()
+		if _, keep := retained[targetID]; !keep {
+			continue
+		}
+		for _, upstream := range webMessage.GetReactions() {
+			if reaction, ok := adaptHistoryReaction(canonical, jid.Server == types.GroupServer, targetID, upstream, receivedAt); ok {
+				reactions = retainNewestBootstrapReaction(reactions, reaction)
+			}
+		}
+	}
 	if client.realtime.display != nil {
 		people := make([]model.ChatID, 0, len(messages))
 		for _, message := range messages {
@@ -126,8 +147,73 @@ func (client *whatsmeowConnectionClient) adaptBootstrapConversation(category mod
 		client.realtime.display.requestPeople(people)
 	}
 	record, err := model.NewBootstrapRecord(category, chat, messages)
+	if err == nil {
+		record, err = record.WithReactions(reactions)
+	}
 	record = record.WithUnreadAuthoritative(conversation.UnreadCount != nil)
 	return record, err == nil
+}
+
+func adaptHistoryReaction(chatID model.ChatID, group bool, targetID string, upstream *waWeb.Reaction, fallback time.Time) (model.Reaction, bool) {
+	if upstream == nil || upstream.GetKey() == nil || targetID == "" {
+		return model.Reaction{}, false
+	}
+	key := upstream.GetKey()
+	reactor := model.SelfReactorID
+	if !key.GetFromMe() {
+		if group {
+			reactor = key.GetParticipant()
+		} else {
+			reactor = chatID.String()
+		}
+	}
+	updatedAt := fallback
+	if milliseconds := upstream.GetSenderTimestampMS(); milliseconds > 0 {
+		updatedAt = time.UnixMilli(milliseconds).UTC()
+	}
+	reaction, err := model.NewReaction(model.ReactionInput{
+		ChatID: chatID.String(), TargetMessageID: targetID, ReactorID: reactor,
+		Emoji: upstream.GetText(), UpdatedAt: updatedAt,
+	})
+	return reaction, err == nil
+}
+
+func retainNewestBootstrapReaction(reactions []model.Reaction, candidate model.Reaction) []model.Reaction {
+	oldest, targetCount := -1, 0
+	for index, existing := range reactions {
+		if existing.TargetMessageID() != candidate.TargetMessageID() {
+			continue
+		}
+		targetCount++
+		if existing.ReactorID() == candidate.ReactorID() {
+			if reactionSupersedes(candidate, existing) {
+				reactions[index] = candidate
+			}
+			return reactions
+		}
+		if oldest < 0 || existing.UpdatedAt().Before(reactions[oldest].UpdatedAt()) || existing.UpdatedAt().Equal(reactions[oldest].UpdatedAt()) && existing.ReactorID().String() > reactions[oldest].ReactorID().String() {
+			oldest = index
+		}
+	}
+	if targetCount < model.MaxReactionsPerMessage && len(reactions) < model.MaxBootstrapReactionsPerChat {
+		return append(reactions, candidate)
+	}
+	if oldest >= 0 && candidate.UpdatedAt().After(reactions[oldest].UpdatedAt()) {
+		reactions[oldest] = candidate
+	}
+	return reactions
+}
+
+func reactionSupersedes(candidate, existing model.Reaction) bool {
+	if candidate.UpdatedAt().After(existing.UpdatedAt()) {
+		return true
+	}
+	if !candidate.UpdatedAt().Equal(existing.UpdatedAt()) {
+		return false
+	}
+	// Match the SQLite upsert exactly so replay order cannot change state.
+	return candidate.Emoji() == "" && existing.Emoji() != "" ||
+		candidate.Emoji() != "" && existing.Emoji() != "" && candidate.Emoji() > existing.Emoji()
 }
 
 func bootstrapAlternate(primary model.ChatID, conversation *waHistorySync.Conversation) model.ChatID {

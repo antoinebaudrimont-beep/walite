@@ -67,6 +67,27 @@ func TestHistorySyncConversationMetadataAndNewestFiftyTextMessages(t *testing.T)
 	}
 }
 
+func TestHistorySyncAttachedReactionsUseEnclosingTargetAndParticipant(t *testing.T) {
+	now := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	client := bootstrapTestClient(now)
+	body := "group target"
+	message := bootstrapWebMessage("family@g.us", "target-id", now, false, "author@lid", &waE2E.Message{Conversation: &body})
+	message.Reactions = []*waWeb.Reaction{{
+		Key:  &waCommon.MessageKey{ID: stringPointer("reaction-id"), Participant: stringPointer("reactor@lid")},
+		Text: stringPointer("👍🏽"), SenderTimestampMS: func() *int64 { value := now.UnixMilli(); return &value }(),
+	}}
+	record, ok := client.adaptBootstrapConversation(model.BootstrapFull, &waHistorySync.Conversation{
+		ID: stringPointer("family@g.us"), Messages: []*waHistorySync.HistorySyncMsg{{Message: message}},
+	}, now)
+	if !ok || record.ReactionLen() != 1 {
+		t.Fatalf("accepted=%t reactions=%d", ok, record.ReactionLen())
+	}
+	reaction, _ := record.ReactionAt(0)
+	if reaction.TargetMessageID().String() != "target-id" || reaction.ReactorID().String() != "reactor@lid" || reaction.Emoji() != "👍🏽" {
+		t.Fatalf("reaction=%+v", reaction)
+	}
+}
+
 func TestHistorySyncGroupSenderRequestsLocalContactName(t *testing.T) {
 	now := time.Date(2100, 9, 1, 12, 0, 0, 0, time.UTC)
 	client := bootstrapTestClient(now)

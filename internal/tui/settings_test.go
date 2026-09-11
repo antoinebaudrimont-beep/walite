@@ -106,7 +106,7 @@ func TestPolishedFooterModesAndNarrowFallbacks(t *testing.T) {
 		t.Fatalf("compact compose footer=%q", got)
 	}
 	model.replySelect = replySelectionState{valid: true}
-	if got := navigationFooter(&model, false); got != "↑/↓ message  P preview  S save  Enter reply  Esc cancel" {
+	if got := navigationFooter(&model, false); got != "↑/↓ message  R react  P preview  S save  Enter reply  Esc cancel" {
 		t.Fatalf("reply footer=%q", got)
 	}
 	if got := narrowNavigationFooter(&model, 24); got != "↑/↓  Enter  Esc cancel" {

@@ -191,7 +191,9 @@ func (client *whatsmeowConnectionClient) handleEvent(raw any) {
 			// lookup or infer authorship from a contact name in the callback.
 			ownPN, ownLID = client.client.Store.GetJID(), client.client.Store.GetLID()
 		}
-		if event, recognized := adaptMessage(message, now().UTC(), ownPN, ownLID); recognized && client.realtime != nil {
+		if reaction, recognized := adaptReaction(message, now().UTC()); recognized && client.realtime != nil {
+			client.realtime.admitReaction(reaction, messageChatAlternate(message.Info))
+		} else if event, recognized := adaptMessage(message, now().UTC(), ownPN, ownLID); recognized && client.realtime != nil {
 			client.realtime.display.observeMessage(message.Info)
 			client.realtime.admitWithAlternate(event, messageChatAlternate(message.Info))
 		}
@@ -230,6 +232,36 @@ func (client *whatsmeowConnectionClient) handleEvent(raw any) {
 	case client.events <- event:
 	default:
 	}
+}
+
+func adaptReaction(incoming *events.Message, receivedAt time.Time) (model.Reaction, bool) {
+	if incoming == nil || incoming.Message == nil || incoming.SourceWebMsg != nil || incoming.NewsletterMeta != nil {
+		return model.Reaction{}, false
+	}
+	value := incoming.Message.GetReactionMessage()
+	key := value.GetKey()
+	if value == nil || key == nil || key.GetID() == "" || incoming.Info.Chat.IsEmpty() {
+		return model.Reaction{}, false
+	}
+	reactor := model.SelfReactorID
+	if !incoming.Info.IsFromMe {
+		if incoming.Info.IsGroup {
+			reactor = incoming.Info.Sender.ToNonAD().String()
+		} else {
+			reactor = incoming.Info.Chat.ToNonAD().String()
+		}
+	}
+	updatedAt := receivedAt
+	if milliseconds := value.GetSenderTimestampMS(); milliseconds > 0 {
+		updatedAt = time.UnixMilli(milliseconds).UTC()
+	} else if !incoming.Info.Timestamp.IsZero() {
+		updatedAt = incoming.Info.Timestamp.UTC()
+	}
+	reaction, err := model.NewReaction(model.ReactionInput{
+		ChatID: incoming.Info.Chat.ToNonAD().String(), TargetMessageID: key.GetID(), ReactorID: reactor,
+		Emoji: value.GetText(), UpdatedAt: updatedAt,
+	})
+	return reaction, err == nil
 }
 
 func messageChatAlternate(info types.MessageInfo) model.ChatID {
