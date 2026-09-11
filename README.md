@@ -30,6 +30,7 @@ These screenshots were AI-edited for privacy using demo names and messages. Text
 - Cached startup without waiting for a complete HistorySync
 - Explicit bounded older-history paging
 - Incoming and outgoing text messages
+- Outgoing images, video, audio, documents, and WhatsApp-compatible WebP stickers from a pasted or typed local path
 - Compact incoming/outgoing reactions and direct/group quoted replies
 - Bounded HTTP(S) link opening and clipboard copy from a focused message
 - Image, video, document, audio, and sticker messages shown as lightweight placeholders
@@ -79,6 +80,7 @@ The pairing window closes after a successful link. Later launches reuse the pers
 | `Home` / `End` | Jump to the oldest / newest loaded message |
 | `O` | Load one bounded page before the oldest loaded message |
 | `Enter` | Start composing |
+| `F` | Enter local file-path send mode |
 | `Ctrl-R` | Select a message to reply to |
 | `P` | Preview the newest visible supported media placeholder |
 | `S` | Save the newest visible media item to `~/Downloads/walite` |
@@ -98,7 +100,9 @@ The pairing window closes after a successful link. Later launches reuse the pers
 | `Ctrl-P` | Open settings |
 | `Esc` | Cancel the current mode or close a popup |
 
-In reply selection, use `↑`/`↓` or `j`/`k`, then `Enter` to confirm. Press `L` on the focused message to open its sole HTTP(S) link, or choose among multiple links with `↑`/`↓` and `Enter`; `C` copies the selected link through `xclip` or `xsel`. Other URL schemes are ignored. In the emoji picker, use the arrow keys or `h`/`j`/`k`/`l`; `Tab` and `Shift-Tab` switch categories, and `Enter` inserts the selected emoji.
+In reply selection, use `↑`/`↓` or `j`/`k`, then `Enter` to confirm. Press `L` on the focused message to open its sole HTTP(S) link, or choose among multiple links with `↑`/`↓` and `Enter`; `C` copies the selected link through `xclip` or `xsel`. Logical URLs remain intact when visually wrapped, and other URL schemes are ignored. Press `R` on a focused text or media message to open the emoji picker for an own reaction; choosing another emoji changes it, and `Delete` removes it. In the emoji picker, use the arrow keys or `h`/`j`/`k`/`l`; `Tab` and `Shift-Tab` switch categories, and `Enter` inserts the selected emoji.
+
+Press `F`, type or safely paste a local path, then press `Enter` to send an image, video, audio file, document, or compatible WebP sticker. Regular outgoing media is limited to 100 MiB and is shown locally only after successful WhatsApp transport and cache commit. Stickers must already be valid 512×512 WebP files: static stickers are limited to 100 KiB; animated stickers are limited to 500 KiB, 10 seconds, and structurally valid bounded frames. walite does not convert ordinary images into stickers.
 
 Media is never downloaded in the background. Scroll until the intended media placeholder is the newest visible media row, or focus it with `Ctrl-R` and the arrow keys, then press `P` to preview or `S` to save. Images, ordinary GIFs, and WebP stickers use an inline `ueberzugpp` X11 overlay; video (including WhatsApp GifPlayback MP4) and audio open in `mpv`; PDF documents open in `zathura`. Other document types remain save-only. Video/GifPlayback previews loop continuously; audio plays once. Inline overlays close with `P`, `Esc`, navigation, resize, or application shutdown. External viewers survive navigation; `Esc` in walite closes the active viewer without quitting walite. Once it closes, `P` can reopen the same media and `Esc` resumes its normal behavior. One external viewer is allowed at a time and is also closed on application shutdown. All viewers are optional, and a missing backend is reported without blocking the TUI.
 
@@ -178,12 +182,13 @@ image message
   → inline ueberzugpp X11 overlay opens
 ```
 
-### v0.4
+### v0.4.0
 
-- Reactions
-- Improved group behavior
-- Better status and broadcast handling
-- Additional media and document support
+- Outgoing images, video, audio, documents, and static/animated WebP stickers
+- Persistent bounded reactions, including adding, changing, and removing an own reaction
+- Bounded HTTP(S) link opening and clipboard copy from focused messages
+- Direct and group quoted replies with typed text/media quote presentation
+- Visible read-only handling for unsupported status, broadcast-list, newsletter, and other special chats
 
 ### v0.5
 
