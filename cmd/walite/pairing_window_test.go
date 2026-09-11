@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/antoinebaudrimont-beep/walite/internal/tui"
@@ -155,6 +156,30 @@ func TestXFCEPairingLauncherArgumentsAreDeterministic(t *testing.T) {
 	}
 	if err != nil || gotName != "xfce4-terminal" || !reflect.DeepEqual(gotArguments, wantArguments) {
 		t.Fatalf("err=%v name=%q arguments=%q", err, gotName, gotArguments)
+	}
+}
+
+func TestDarwinPairingUsesDedicatedTerminalAppWindowWithoutITerm(t *testing.T) {
+	const executable = "/Applications/Walite Test/walite"
+	var gotName string
+	var gotArguments []string
+	err := launchDarwinPairingWindow(context.Background(), "/usr/bin/osascript", executable,
+		func(_ context.Context, name string, arguments ...string) error {
+			gotName = name
+			gotArguments = append([]string(nil), arguments...)
+			return nil
+		})
+	if err != nil || gotName != "/usr/bin/osascript" || len(gotArguments) != 4 ||
+		gotArguments[0] != "-e" || gotArguments[1] != darwinPairingScript || gotArguments[2] != "--" || gotArguments[3] != executable {
+		t.Fatalf("err=%v name=%q arguments=%q", err, gotName, gotArguments)
+	}
+	for _, required := range []string{`application "Terminal"`, "quoted form of walitePath", "number of columns of setupWindow to 80", "number of rows of setupWindow to 46", "busy of setupTab", "close setupWindow"} {
+		if !strings.Contains(darwinPairingScript, required) {
+			t.Fatalf("pairing script missing %q", required)
+		}
+	}
+	if strings.Contains(strings.ToLower(darwinPairingScript), "iterm") {
+		t.Fatal("darwin pairing requires iTerm")
 	}
 }
 

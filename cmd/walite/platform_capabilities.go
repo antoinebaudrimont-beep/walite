@@ -35,6 +35,8 @@ type platformCapabilities struct {
 	clipboard     clipboard
 	inlineImage   mediaPreviewer
 	newExternal   func() externalMediaPreviewer
+	mediaFallback bool
+	systemPDF     bool
 	platformError error
 }
 
@@ -51,6 +53,15 @@ type unavailablePairingPresenter struct{ cause error }
 
 func (presenter unavailablePairingPresenter) Present(context.Context, string) error {
 	return errors.Join(errCapabilityUnavailable, presenter.cause)
+}
+
+type darwinPairingPresenter struct {
+	command string
+	run     pairingCommandRunner
+}
+
+func (presenter darwinPairingPresenter) Present(ctx context.Context, executable string) error {
+	return launchDarwinPairingWindow(ctx, presenter.command, executable, presenter.run)
 }
 
 type commandSystemOpener struct {
@@ -102,6 +113,20 @@ func selectPlatformCapabilities(goos string, lookup executableLookup) platformCa
 	}
 	if lookup == nil {
 		capabilities.platformError = errors.New("capability probe unavailable")
+		return capabilities
+	}
+	if goos == "darwin" {
+		if command, err := lookup("osascript"); err == nil {
+			capabilities.pairing = darwinPairingPresenter{command: command, run: runPairingCommand}
+		}
+		if command, err := lookup("open"); err == nil {
+			capabilities.opener = commandSystemOpener{command: command, run: runLinkCommand}
+			capabilities.mediaFallback = true
+			capabilities.systemPDF = true
+		}
+		if command, err := lookup("pbcopy"); err == nil {
+			capabilities.clipboard = commandClipboard{command: command, run: runLinkCommand}
+		}
 		return capabilities
 	}
 	if goos != "linux" {

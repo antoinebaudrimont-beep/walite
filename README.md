@@ -47,7 +47,7 @@ These screenshots were AI-edited for privacy using demo names and messages. Text
 
 ## Installation and build
 
-Building walite requires Go 1.26.0 or newer. MX Linux with XFCE/X11 on linux/amd64 is the currently validated runtime environment.
+Building walite requires Go 1.26.0 or newer. MX Linux with XFCE/X11 on linux/amd64 is the currently validated runtime environment. macOS/Apple Silicon support is implemented, with native runtime validation pending.
 
 ```sh
 git clone https://github.com/antoinebaudrimont-beep/walite.git
@@ -64,7 +64,7 @@ go run ./cmd/walite
 
 ## First pairing
 
-On first launch, walite links to WhatsApp using a QR code. On the current Linux/XFCE implementation, it opens a temporary `xfce4-terminal` window sized to render the QR code without distortion. On your phone, open **WhatsApp → Linked devices → Link a device**, then scan the code.
+On first launch, walite links to WhatsApp using a QR code. Linux/XFCE opens a temporary `xfce4-terminal`; macOS uses a temporary built-in Terminal.app window. Both are sized to render the QR without distortion, and neither affects the terminal used for normal chat operation. On your phone, open **WhatsApp → Linked devices → Link a device**, then scan the code.
 
 The pairing window closes after a successful link. Later launches reuse the persisted session and reconnect without another QR code. If the helper cannot be launched, walite prints a manual `walite --pair` fallback command.
 
@@ -100,11 +100,11 @@ The pairing window closes after a successful link. Later launches reuse the pers
 | `Ctrl-P` | Open settings |
 | `Esc` | Cancel the current mode or close a popup |
 
-In reply selection, use `↑`/`↓` or `j`/`k`, then `Enter` to confirm. Press `L` on the focused message to open its sole HTTP(S) link, or choose among multiple links with `↑`/`↓` and `Enter`; `C` copies the selected link through `xclip` or `xsel`. Logical URLs remain intact when visually wrapped, and other URL schemes are ignored. Press `R` on a focused text or media message to open the emoji picker for an own reaction; choosing another emoji changes it, and `Delete` removes it. In the emoji picker, use the arrow keys or `h`/`j`/`k`/`l`; `Tab` and `Shift-Tab` switch categories, and `Enter` inserts the selected emoji.
+In reply selection, use `↑`/`↓` or `j`/`k`, then `Enter` to confirm. Press `L` on the focused message to open its sole HTTP(S) link, or choose among multiple links with `↑`/`↓` and `Enter`; `C` copies the selected link through `xclip` or `xsel` on Linux and `pbcopy` on macOS. Logical URLs remain intact when visually wrapped, and other URL schemes are ignored. Press `R` on a focused text or media message to open the emoji picker for an own reaction; choosing another emoji changes it, and `Delete` removes it. In the emoji picker, use the arrow keys or `h`/`j`/`k`/`l`; `Tab` and `Shift-Tab` switch categories, and `Enter` inserts the selected emoji.
 
 Press `F`, type or safely paste a local path, then press `Enter` to send an image, video, audio file, document, or compatible WebP sticker. Regular outgoing media is limited to 100 MiB and is shown locally only after successful WhatsApp transport and cache commit. Stickers must already be valid 512×512 WebP files: static stickers are limited to 100 KiB; animated stickers are limited to 500 KiB, 10 seconds, and structurally valid bounded frames. walite does not convert ordinary images into stickers.
 
-Media is never downloaded in the background. Scroll until the intended media placeholder is the newest visible media row, or focus it with `Ctrl-R` and the arrow keys, then press `P` to preview or `S` to save. Images, ordinary GIFs, and WebP stickers use an inline `ueberzugpp` X11 overlay; video (including WhatsApp GifPlayback MP4) and audio open in `mpv`; PDF documents open in `zathura`. Other document types remain save-only. Video/GifPlayback previews loop continuously; audio plays once. Inline overlays close with `P`, `Esc`, navigation, resize, or application shutdown. External viewers survive navigation; `Esc` in walite closes the active viewer without quitting walite. Once it closes, `P` can reopen the same media and `Esc` resumes its normal behavior. One external viewer is allowed at a time and is also closed on application shutdown. All viewers are optional, and a missing backend is reported without blocking the TUI.
+Media is never downloaded in the background. Scroll until the intended media placeholder is the newest visible media row, or focus it with `Ctrl-R` and the arrow keys, then press `P` to preview or `S` to save. On Linux/X11, images, ordinary GIFs, and WebP stickers prefer an inline `ueberzugpp` overlay; video (including WhatsApp GifPlayback MP4) and audio prefer `mpv`; PDFs use `zathura`. On macOS, images, stickers, and PDFs use the system `open` handler; video and audio prefer `mpv` when installed and otherwise use `open`. Other document types remain save-only. Inline overlays close with `P`, `Esc`, navigation, resize, or application shutdown. walite-owned mpv/zathura viewers can be closed with `Esc`; applications launched through macOS `open` are not terminated because walite does not own them. All viewer helpers are optional and do not block startup.
 
 ## Settings
 
@@ -152,14 +152,14 @@ The UI and service use transport-neutral application data. WhatsApp-specific typ
 
 ## Current limitations
 
-- Preview backends are optional: image/GIF and WebP sticker overlays prefer Linux/X11 and `ueberzugpp`, with the system opener as a fallback when inline preview is unavailable; video/audio require `mpv`, and PDF documents require `zathura`. Animated WebP playback depends on the installed `ueberzugpp` backend and may appear as a static frame. Other document formats remain save-only.
+- Inline image/GIF and WebP sticker overlays remain Linux/X11-specific and require `ueberzugpp`; macOS uses system viewers. Animated WebP playback depends on the selected viewer and may appear as a static frame. Other document formats remain save-only.
 - Expired WhatsApp media references are reported as unavailable; media-retry refresh is not implemented yet.
 - Typing indicators and presence are not implemented.
 - Status, broadcast-list, newsletter, and other unsupported special chats remain visible from cache but are read-only; sending text, files, replies, or reactions is rejected locally.
 - Some identities remain opaque when WhatsApp provides no usable authoritative local metadata.
 - Linux/amd64 is the validated platform.
-- Automatic pairing-window launch is currently specific to XFCE and `xfce4-terminal`.
-- macOS is not yet officially supported.
+- Automatic pairing uses the validated XFCE helper on Linux and built-in Terminal.app on macOS; iTerm2 is optional and is not required.
+- macOS/Apple Silicon runtime validation is still pending, so macOS is not yet an officially validated platform.
 
 ## Roadmap
 

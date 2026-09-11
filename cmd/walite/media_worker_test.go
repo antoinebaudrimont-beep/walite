@@ -249,17 +249,68 @@ func TestMediaWorkerControlledPreviewFailureAndTypeGate(t *testing.T) {
 }
 
 func TestMediaWorkerFallsBackToSystemViewerWhenInlineCapabilityIsUnavailable(t *testing.T) {
-	payload := []byte("image bytes")
-	application := &fakeMediaApplication{message: mediaWorkerMessage(t, model.MediaImage, "holiday.jpg", "image/jpeg", payload), payload: payload}
+	for _, kind := range []model.MediaKind{model.MediaImage, model.MediaSticker} {
+		t.Run(kind.String(), func(t *testing.T) {
+			payload := []byte("image bytes")
+			application := &fakeMediaApplication{message: mediaWorkerMessage(t, kind, "holiday.webp", "image/webp", payload), payload: payload}
+			cache, _ := mediacache.New(filepath.Join(t.TempDir(), "cache"))
+			opener := &fakeSystemOpener{}
+			worker := newMediaWorkerWithPlatform(context.Background(), application, cache, t.TempDir(), unavailableInlinePreviewer{}, &fakeExternalPreviewer{}, opener)
+			defer worker.stop()
+			worker.admit(tui.MediaRequest{Action: tui.MediaPreview, ChatID: "chat", MessageID: "media", Kind: kind.String(), Width: 30, Height: 10})
+			result := awaitMediaResult(t, worker)
+			opened := opener.opened()
+			if result.Previewing || result.Status != "Opened image with system viewer" || len(opened) != 1 || !filepath.IsAbs(opened[0]) {
+				t.Fatalf("result=%+v opened=%v", result, opened)
+			}
+		})
+	}
+}
+
+func TestDarwinMediaUsesSystemPDFAndFallsBackWhenMPVIsUnavailable(t *testing.T) {
+	tests := []struct {
+		name, file, mime, status string
+		kind                     model.MediaKind
+		externalErr              error
+	}{
+		{name: "PDF", file: "report.pdf", mime: "application/pdf", kind: model.MediaDocument, status: "Opened PDF with system viewer"},
+		{name: "video", file: "clip.mp4", mime: "video/mp4", kind: model.MediaVideo, externalErr: errMPVUnavailable, status: "Opened video with system viewer"},
+		{name: "audio", file: "voice.ogg", mime: "audio/ogg", kind: model.MediaAudio, externalErr: errMPVUnavailable, status: "Opened audio with system viewer"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			payload := []byte(test.name)
+			application := &fakeMediaApplication{message: mediaWorkerMessage(t, test.kind, test.file, test.mime, payload), payload: payload}
+			cache, _ := mediacache.New(filepath.Join(t.TempDir(), "cache"))
+			opener := &fakeSystemOpener{}
+			external := &fakeExternalPreviewer{err: test.externalErr}
+			worker := newMediaWorkerWithPlatform(context.Background(), application, cache, t.TempDir(), &fakePreviewer{}, external, opener)
+			worker.mediaFallback, worker.systemPDF = true, true
+			defer worker.stop()
+			worker.admit(tui.MediaRequest{Action: tui.MediaPreview, ChatID: "chat", MessageID: "media", Kind: test.kind.String()})
+			result := awaitMediaResult(t, worker)
+			if result.Status != test.status || len(opener.opened()) != 1 {
+				t.Fatalf("result=%+v opened=%v", result, opener.opened())
+			}
+			if test.kind == model.MediaDocument && len(external.shown()) != 0 {
+				t.Fatalf("PDF unexpectedly used external backend: %+v", external.shown())
+			}
+		})
+	}
+}
+
+func TestDarwinMediaPrefersAvailableMPV(t *testing.T) {
+	payload := []byte("video")
+	application := &fakeMediaApplication{message: mediaWorkerMessage(t, model.MediaVideo, "clip.mp4", "video/mp4", payload), payload: payload}
 	cache, _ := mediacache.New(filepath.Join(t.TempDir(), "cache"))
-	opener := &fakeSystemOpener{}
-	worker := newMediaWorkerWithPlatform(context.Background(), application, cache, t.TempDir(), unavailableInlinePreviewer{}, &fakeExternalPreviewer{}, opener)
+	opener, external := &fakeSystemOpener{}, &fakeExternalPreviewer{}
+	worker := newMediaWorkerWithPlatform(context.Background(), application, cache, t.TempDir(), &fakePreviewer{}, external, opener)
+	worker.mediaFallback, worker.systemPDF = true, true
 	defer worker.stop()
-	worker.admit(tui.MediaRequest{Action: tui.MediaPreview, ChatID: "chat", MessageID: "media", Kind: "image", Width: 30, Height: 10})
+	worker.admit(tui.MediaRequest{Action: tui.MediaPreview, ChatID: "chat", MessageID: "media", Kind: "video"})
 	result := awaitMediaResult(t, worker)
-	opened := opener.opened()
-	if result.Previewing || result.Status != "Opened image with system viewer" || len(opened) != 1 || !filepath.IsAbs(opened[0]) {
-		t.Fatalf("result=%+v opened=%v", result, opened)
+	if result.Status != "Opened video in mpv" || len(external.shown()) != 1 || len(opener.opened()) != 0 {
+		t.Fatalf("result=%+v external=%v opened=%v", result, external.shown(), opener.opened())
 	}
 }
 

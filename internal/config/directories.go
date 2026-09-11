@@ -29,14 +29,31 @@ func DefaultUserDirectories() UserDirectories {
 type systemUserDirectories struct{ goos string }
 
 func (directories systemUserDirectories) ConfigDirectory() (string, error) {
+	if directories.goos == "darwin" {
+		home, err := absoluteHomeDirectory()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(home, "Library", "Application Support"), nil
+	}
 	return os.UserConfigDir()
 }
 
 func (directories systemUserDirectories) CacheDirectory() (string, error) {
+	if directories.goos == "darwin" {
+		home, err := absoluteHomeDirectory()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(home, "Library", "Caches"), nil
+	}
 	return os.UserCacheDir()
 }
 
 func (directories systemUserDirectories) DataDirectory() (string, error) {
+	if directories.goos == "darwin" {
+		return directories.ConfigDirectory()
+	}
 	if directories.goos != "linux" {
 		return "", ErrUnsupportedUserDirectories
 	}
@@ -55,12 +72,20 @@ func (directories systemUserDirectories) DataDirectory() (string, error) {
 }
 
 func (directories systemUserDirectories) DownloadsDirectory() (string, error) {
-	if directories.goos != "linux" {
+	if directories.goos != "linux" && directories.goos != "darwin" {
 		return "", ErrUnsupportedUserDirectories
 	}
+	home, err := absoluteHomeDirectory()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, "Downloads"), nil
+}
+
+func absoluteHomeDirectory() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil || !filepath.IsAbs(home) {
 		return "", errors.New("invalid home directory")
 	}
-	return filepath.Join(filepath.Clean(home), "Downloads"), nil
+	return filepath.Clean(home), nil
 }

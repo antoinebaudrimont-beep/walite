@@ -15,6 +15,21 @@ const (
 	pairingWindowTitle      = "walite — WhatsApp setup"
 	pairingHelperFlag       = "--pair"
 	pairingFallbackMessage  = "WhatsApp pairing requires a larger terminal grid.\nRun:\n    walite --pair"
+	darwinPairingScript     = `on run argv
+set walitePath to item 1 of argv
+set pairCommand to quoted form of walitePath & " --pair"
+tell application "Terminal"
+activate
+set setupTab to do script pairCommand
+set setupWindow to front window
+set number of columns of setupWindow to 80
+set number of rows of setupWindow to 46
+repeat while busy of setupTab
+delay 0.1
+end repeat
+close setupWindow
+end tell
+end run`
 )
 
 var (
@@ -105,6 +120,18 @@ func pairingTerminalArguments(executable string) []string {
 		executable,
 		pairingHelperFlag,
 	}
+}
+
+func launchDarwinPairingWindow(
+	ctx context.Context,
+	command string,
+	executable string,
+	runCommand pairingCommandRunner,
+) error {
+	if ctx == nil || command == "" || executable == "" || runCommand == nil {
+		return errors.New("pairing launcher rejected")
+	}
+	return runCommand(ctx, command, "-e", darwinPairingScript, "--", executable)
 }
 
 func runPairingCommand(ctx context.Context, name string, arguments ...string) error {

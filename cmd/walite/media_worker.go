@@ -41,6 +41,8 @@ type mediaWorker struct {
 	preview               mediaPreviewer
 	external              externalMediaPreviewer
 	opener                systemOpener
+	mediaFallback         bool
+	systemPDF             bool
 	requests              chan mediaWorkItem
 	results               chan tui.MediaResult
 	done                  chan struct{}
@@ -86,7 +88,10 @@ func newMediaWorkerForCapabilities(ctx context.Context, application applicationS
 	if external == nil {
 		external = newProcessExternalPreviewer()
 	}
-	return newMediaWorkerWithPlatform(ctx, capability, cache, savePath, preview, external, capabilities.opener), nil
+	worker := newMediaWorkerWithPlatform(ctx, capability, cache, savePath, preview, external, capabilities.opener)
+	worker.mediaFallback = capabilities.mediaFallback
+	worker.systemPDF = capabilities.systemPDF
+	return worker, nil
 }
 
 func newMediaWorker(ctx context.Context, application mediaApplication, cache *mediacache.Cache, savePath string, preview mediaPreviewer) *mediaWorker {
@@ -316,8 +321,23 @@ func (worker *mediaWorker) handle(ctx context.Context, request tui.MediaRequest,
 		externalKind = externalViewerZathura
 		label = "PDF"
 	}
+	if backend == previewBackendPDF && worker.systemPDF {
+		if worker.opener == nil || worker.opener.Open(ctx, path) != nil {
+			result.Status = "PDF preview could not be opened"
+			return result
+		}
+		result.Status = "Opened PDF with system viewer"
+		return result
+	}
 	err = worker.showExternalPreview(ctx, generation, externalPreview{kind: externalKind, path: path, chatID: request.ChatID, messageID: request.MessageID})
 	if err != nil {
+		if worker.mediaFallback && worker.opener != nil &&
+			(errors.Is(err, errMPVUnavailable) || errors.Is(err, errZathuraUnavailable)) {
+			if openErr := worker.opener.Open(ctx, path); openErr == nil {
+				result.Status = "Opened " + strings.ToLower(label) + " with system viewer"
+				return result
+			}
+		}
 		result.Status = externalPreviewFailureStatus(label, err)
 		return result
 	}

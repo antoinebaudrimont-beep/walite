@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,12 +54,66 @@ func TestOptionalCapabilitiesAreIndependentAndUnsupportedPlatformIsControlled(t 
 		t.Fatalf("inline error=%v", err)
 	}
 
-	unsupported := selectPlatformCapabilities("darwin", func(string) (string, error) { return "", os.ErrNotExist })
+	unsupported := selectPlatformCapabilities("plan9", func(string) (string, error) { return "", os.ErrNotExist })
 	if unsupported.platformError == nil || unsupported.opener != nil || unsupported.clipboard != nil {
 		t.Fatalf("unsupported=%+v", unsupported)
 	}
 	if err := unsupported.pairing.Present(context.Background(), "/usr/bin/walite"); !errors.Is(err, errCapabilityUnavailable) {
 		t.Fatalf("unsupported pairing error=%v", err)
+	}
+}
+
+func TestDarwinCapabilitySelectionUsesBuiltInToolsWithoutITerm(t *testing.T) {
+	available := map[string]string{
+		"osascript": "/usr/bin/osascript",
+		"open":      "/usr/bin/open",
+		"pbcopy":    "/usr/bin/pbcopy",
+		"iTerm2":    "/Applications/iTerm.app",
+	}
+	probed := make([]string, 0, 3)
+	capabilities := selectPlatformCapabilities("darwin", func(name string) (string, error) {
+		probed = append(probed, name)
+		if path := available[name]; path != "" {
+			return path, nil
+		}
+		return "", os.ErrNotExist
+	})
+	pairing, pairingOK := capabilities.pairing.(darwinPairingPresenter)
+	opener, openerOK := capabilities.opener.(commandSystemOpener)
+	clipboard, clipboardOK := capabilities.clipboard.(commandClipboard)
+	if !pairingOK || pairing.command != available["osascript"] || !openerOK || opener.command != available["open"] ||
+		!clipboardOK || clipboard.command != available["pbcopy"] || !capabilities.mediaFallback || !capabilities.systemPDF ||
+		capabilities.platformError != nil {
+		t.Fatalf("capabilities=%+v", capabilities)
+	}
+	if strings.Contains(strings.Join(probed, " "), "iTerm") {
+		t.Fatalf("iTerm was probed: %v", probed)
+	}
+	type commandCall struct {
+		name, input string
+		args        []string
+	}
+	calls := make([]commandCall, 0, 2)
+	runner := func(_ context.Context, name string, args []string, input io.Reader) error {
+		var data []byte
+		if input != nil {
+			data, _ = io.ReadAll(input)
+		}
+		calls = append(calls, commandCall{name: name, input: string(data), args: append([]string(nil), args...)})
+		return nil
+	}
+	opener.run = runner
+	clipboard.run = runner
+	const value = "https://example.test/Caf%C3%A9?x=$(ignored)&y=日本語"
+	if err := opener.Open(context.Background(), value); err != nil {
+		t.Fatal(err)
+	}
+	if err := clipboard.Copy(context.Background(), value); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 2 || calls[0].name != available["open"] || len(calls[0].args) != 1 || calls[0].args[0] != value || calls[0].input != "" ||
+		calls[1].name != available["pbcopy"] || len(calls[1].args) != 0 || calls[1].input != value {
+		t.Fatalf("calls=%+v", calls)
 	}
 }
 

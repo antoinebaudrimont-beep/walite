@@ -83,8 +83,33 @@ func TestDefaultMediaPathsUseSeparateCacheAndDownloadsRoots(t *testing.T) {
 	}
 }
 
-func TestNonLinuxDataAndDownloadsPolicyIsExplicitlyUnsupported(t *testing.T) {
+func TestDarwinUsesNativeApplicationSupportCacheAndDownloadsDirectories(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_CACHE_HOME", "")
 	directories := systemUserDirectories{goos: "darwin"}
+
+	configDirectory, err := directories.ConfigDirectory()
+	if err != nil || configDirectory != filepath.Join(home, "Library", "Application Support") {
+		t.Fatalf("config=%q err=%v", configDirectory, err)
+	}
+	dataDirectory, err := directories.DataDirectory()
+	if err != nil || dataDirectory != configDirectory {
+		t.Fatalf("data=%q config=%q err=%v", dataDirectory, configDirectory, err)
+	}
+	cacheDirectory, err := directories.CacheDirectory()
+	if err != nil || cacheDirectory != filepath.Join(home, "Library", "Caches") {
+		t.Fatalf("cache=%q err=%v", cacheDirectory, err)
+	}
+	downloads, err := directories.DownloadsDirectory()
+	if err != nil || downloads != filepath.Join(home, "Downloads") {
+		t.Fatalf("downloads=%q err=%v", downloads, err)
+	}
+}
+
+func TestUnknownPlatformDataAndDownloadsRemainUnsupported(t *testing.T) {
+	directories := systemUserDirectories{goos: "plan9"}
 	if _, err := directories.DataDirectory(); !errors.Is(err, ErrUnsupportedUserDirectories) {
 		t.Fatalf("data error=%v", err)
 	}
