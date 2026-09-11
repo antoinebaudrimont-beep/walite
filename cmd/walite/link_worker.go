@@ -18,34 +18,38 @@ const linkHelperTimeout = 20 * time.Second
 type linkCommandRunner func(context.Context, string, []string, io.Reader) error
 
 type linkWorker struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	run      linkCommandRunner
-	open     string
-	copy     string
-	copyArgs []string
-	requests chan tui.LinkRequest
-	results  chan tui.LinkResult
-	done     chan struct{}
-	mu       sync.Mutex
-	busy     bool
+	ctx       context.Context
+	cancel    context.CancelFunc
+	opener    systemOpener
+	clipboard clipboard
+	requests  chan tui.LinkRequest
+	results   chan tui.LinkResult
+	done      chan struct{}
+	mu        sync.Mutex
+	busy      bool
 }
 
 func newDefaultLinkWorker(parent context.Context) *linkWorker {
-	open, _ := exec.LookPath("xdg-open")
-	copyTool, copyArgs := "", []string(nil)
-	if candidate, err := exec.LookPath("xclip"); err == nil {
-		copyTool, copyArgs = candidate, []string{"-selection", "clipboard", "-in"}
-	} else if candidate, err := exec.LookPath("xsel"); err == nil {
-		copyTool, copyArgs = candidate, []string{"--clipboard", "--input"}
-	}
-	return newLinkWorker(parent, open, copyTool, copyArgs, runLinkCommand)
+	capabilities := defaultPlatformCapabilities()
+	return newLinkWorkerWithCapabilities(parent, capabilities.opener, capabilities.clipboard)
 }
 
 func newLinkWorker(parent context.Context, open, copyTool string, copyArgs []string, runner linkCommandRunner) *linkWorker {
+	var opener systemOpener
+	if open != "" {
+		opener = commandSystemOpener{command: open, run: runner}
+	}
+	var clipboardCapability clipboard
+	if copyTool != "" {
+		clipboardCapability = commandClipboard{command: copyTool, args: copyArgs, run: runner}
+	}
+	return newLinkWorkerWithCapabilities(parent, opener, clipboardCapability)
+}
+
+func newLinkWorkerWithCapabilities(parent context.Context, opener systemOpener, clipboardCapability clipboard) *linkWorker {
 	ctx, cancel := context.WithCancel(parent)
-	worker := &linkWorker{ctx: ctx, cancel: cancel, run: runner, open: open, copy: copyTool,
-		copyArgs: append([]string(nil), copyArgs...), requests: make(chan tui.LinkRequest, 1), results: make(chan tui.LinkResult, 1), done: make(chan struct{})}
+	worker := &linkWorker{ctx: ctx, cancel: cancel, opener: opener, clipboard: clipboardCapability,
+		requests: make(chan tui.LinkRequest, 1), results: make(chan tui.LinkResult, 1), done: make(chan struct{})}
 	go worker.loop()
 	return worker
 }
@@ -99,18 +103,18 @@ func (worker *linkWorker) execute(request tui.LinkRequest) string {
 	defer cancel()
 	switch request.Action {
 	case tui.LinkOpen:
-		if worker.open == "" {
+		if worker.opener == nil {
 			return "Opening links requires xdg-open"
 		}
-		if err := worker.run(ctx, worker.open, []string{request.URL}, nil); err != nil {
+		if err := worker.opener.Open(ctx, request.URL); err != nil {
 			return "Could not open link"
 		}
 		return "Link opened"
 	case tui.LinkCopy:
-		if worker.copy == "" {
+		if worker.clipboard == nil {
 			return "Copying links requires xclip or xsel"
 		}
-		if err := worker.run(ctx, worker.copy, append([]string(nil), worker.copyArgs...), strings.NewReader(request.URL)); err != nil {
+		if err := worker.clipboard.Copy(ctx, request.URL); err != nil {
 			return "Could not copy link"
 		}
 		return "Link copied"

@@ -21,6 +21,7 @@ type applicationConnection interface {
 
 type authenticatedApplicationDependencies struct {
 	configuration config.UIStore
+	capabilities  *platformCapabilities
 	newConnection func(context.Context) (applicationConnection, error)
 	newService    func() (applicationService, error)
 	runConnection func(context.Context, tcell.Screen, tui.ConnectionInput) error
@@ -105,7 +106,11 @@ func runAuthenticatedApplication(
 	}
 
 	viewExitedNormally := false
-	applicationErr := runStartedApplication(
+	capabilities := defaultPlatformCapabilities()
+	if dependencies.capabilities != nil {
+		capabilities = *dependencies.capabilities
+	}
+	applicationErr := runStartedApplicationWithCapabilities(
 		runCtx,
 		screen,
 		optionsFromConfig(settings),
@@ -119,6 +124,7 @@ func runAuthenticatedApplication(
 			viewExitedNormally = err == nil
 			return err
 		},
+		capabilities,
 	)
 	cancel()
 	connectionErr := <-connectionDone

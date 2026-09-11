@@ -77,10 +77,19 @@ func launchXFCEPairingWindow(
 	executable string,
 	runCommand pairingCommandRunner,
 ) error {
-	if ctx == nil || executable == "" || runCommand == nil {
+	return launchPairingTerminal(ctx, pairingTerminalCommand, executable, runCommand)
+}
+
+func launchPairingTerminal(
+	ctx context.Context,
+	command string,
+	executable string,
+	runCommand pairingCommandRunner,
+) error {
+	if ctx == nil || command == "" || executable == "" || runCommand == nil {
 		return errors.New("pairing launcher rejected")
 	}
-	return runCommand(ctx, pairingTerminalCommand, pairingTerminalArguments(executable)...)
+	return runCommand(ctx, command, pairingTerminalArguments(executable)...)
 }
 
 func pairingTerminalArguments(executable string) []string {

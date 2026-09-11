@@ -1,13 +1,10 @@
 package config
 
-import (
-	"os"
-	"path/filepath"
-)
+import "path/filepath"
 
 // DefaultCachePath returns walite's XDG application-cache database path.
 func DefaultCachePath() (string, error) {
-	directory, err := os.UserCacheDir()
+	directory, err := DefaultUserDirectories().CacheDirectory()
 	if err != nil {
 		return "", err
 	}

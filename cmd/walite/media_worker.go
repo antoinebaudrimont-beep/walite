@@ -40,6 +40,7 @@ type mediaWorker struct {
 	savePath              string
 	preview               mediaPreviewer
 	external              externalMediaPreviewer
+	opener                systemOpener
 	requests              chan mediaWorkItem
 	results               chan tui.MediaResult
 	done                  chan struct{}
@@ -57,6 +58,10 @@ type mediaWorkItem struct {
 }
 
 func newDefaultMediaWorker(ctx context.Context, application applicationService) (*mediaWorker, error) {
+	return newMediaWorkerForCapabilities(ctx, application, defaultPlatformCapabilities())
+}
+
+func newMediaWorkerForCapabilities(ctx context.Context, application applicationService, capabilities platformCapabilities) (*mediaWorker, error) {
 	cachePath, err := config.DefaultMediaCachePath()
 	if err != nil {
 		return nil, err
@@ -70,7 +75,18 @@ func newDefaultMediaWorker(ctx context.Context, application applicationService) 
 		return nil, err
 	}
 	capability, _ := application.(mediaApplication)
-	return newMediaWorker(ctx, capability, cache, savePath, &ueberzugPreviewer{binary: "ueberzugpp"}), nil
+	preview := capabilities.inlineImage
+	if preview == nil {
+		preview = unavailableInlinePreviewer{}
+	}
+	var external externalMediaPreviewer
+	if capabilities.newExternal != nil {
+		external = capabilities.newExternal()
+	}
+	if external == nil {
+		external = newProcessExternalPreviewer()
+	}
+	return newMediaWorkerWithPlatform(ctx, capability, cache, savePath, preview, external, capabilities.opener), nil
 }
 
 func newMediaWorker(ctx context.Context, application mediaApplication, cache *mediacache.Cache, savePath string, preview mediaPreviewer) *mediaWorker {
@@ -78,8 +94,12 @@ func newMediaWorker(ctx context.Context, application mediaApplication, cache *me
 }
 
 func newMediaWorkerWithExternalPreviewer(ctx context.Context, application mediaApplication, cache *mediacache.Cache, savePath string, preview mediaPreviewer, external externalMediaPreviewer) *mediaWorker {
+	return newMediaWorkerWithPlatform(ctx, application, cache, savePath, preview, external, nil)
+}
+
+func newMediaWorkerWithPlatform(ctx context.Context, application mediaApplication, cache *mediacache.Cache, savePath string, preview mediaPreviewer, external externalMediaPreviewer, opener systemOpener) *mediaWorker {
 	workerCtx, cancel := context.WithCancel(ctx)
-	worker := &mediaWorker{ctx: workerCtx, cancel: cancel, application: application, cache: cache, savePath: savePath, preview: preview, external: external, requests: make(chan mediaWorkItem, 1), results: make(chan tui.MediaResult, 1), done: make(chan struct{})}
+	worker := &mediaWorker{ctx: workerCtx, cancel: cancel, application: application, cache: cache, savePath: savePath, preview: preview, external: external, opener: opener, requests: make(chan mediaWorkItem, 1), results: make(chan tui.MediaResult, 1), done: make(chan struct{})}
 	go worker.run()
 	return worker
 }
@@ -266,6 +286,12 @@ func (worker *mediaWorker) handle(ctx context.Context, request tui.MediaRequest,
 		}
 		_, err := worker.showImagePreview(ctx, generation, path, request)
 		if err != nil {
+			if errors.Is(err, errCapabilityUnavailable) && worker.opener != nil {
+				if openErr := worker.opener.Open(ctx, path); openErr == nil {
+					result.Status = "Opened image with system viewer"
+					return result
+				}
+			}
 			result.Status = "Image preview unavailable (install ueberzugpp with X11 support)"
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				result.Status = "Media operation canceled"

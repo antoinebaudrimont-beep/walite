@@ -75,6 +75,28 @@ type fakeExternalPreviewer struct {
 	err      error
 }
 
+type fakeSystemOpener struct {
+	mu      sync.Mutex
+	targets []string
+	err     error
+}
+
+func (opener *fakeSystemOpener) Open(ctx context.Context, target string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	opener.mu.Lock()
+	defer opener.mu.Unlock()
+	opener.targets = append(opener.targets, target)
+	return opener.err
+}
+
+func (opener *fakeSystemOpener) opened() []string {
+	opener.mu.Lock()
+	defer opener.mu.Unlock()
+	return append([]string(nil), opener.targets...)
+}
+
 func (previewer *fakeExternalPreviewer) Show(ctx context.Context, preview externalPreview) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -223,6 +245,21 @@ func TestMediaWorkerControlledPreviewFailureAndTypeGate(t *testing.T) {
 	worker.admit(tui.MediaRequest{Action: tui.MediaPreview, ChatID: "chat", MessageID: "media", Kind: "image", Width: 10, Height: 10})
 	if result := awaitMediaResult(t, worker); result.Previewing || result.Status == "" {
 		t.Fatalf("result=%+v", result)
+	}
+}
+
+func TestMediaWorkerFallsBackToSystemViewerWhenInlineCapabilityIsUnavailable(t *testing.T) {
+	payload := []byte("image bytes")
+	application := &fakeMediaApplication{message: mediaWorkerMessage(t, model.MediaImage, "holiday.jpg", "image/jpeg", payload), payload: payload}
+	cache, _ := mediacache.New(filepath.Join(t.TempDir(), "cache"))
+	opener := &fakeSystemOpener{}
+	worker := newMediaWorkerWithPlatform(context.Background(), application, cache, t.TempDir(), unavailableInlinePreviewer{}, &fakeExternalPreviewer{}, opener)
+	defer worker.stop()
+	worker.admit(tui.MediaRequest{Action: tui.MediaPreview, ChatID: "chat", MessageID: "media", Kind: "image", Width: 30, Height: 10})
+	result := awaitMediaResult(t, worker)
+	opened := opener.opened()
+	if result.Previewing || result.Status != "Opened image with system viewer" || len(opened) != 1 || !filepath.IsAbs(opened[0]) {
+		t.Fatalf("result=%+v opened=%v", result, opened)
 	}
 }
 

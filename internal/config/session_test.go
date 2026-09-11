@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 )
@@ -79,5 +80,15 @@ func TestDefaultMediaPathsUseSeparateCacheAndDownloadsRoots(t *testing.T) {
 	savePath, err := DefaultMediaSavePath()
 	if err != nil || savePath != filepath.Join(home, "Downloads", "walite") {
 		t.Fatalf("save=%q err=%v", savePath, err)
+	}
+}
+
+func TestNonLinuxDataAndDownloadsPolicyIsExplicitlyUnsupported(t *testing.T) {
+	directories := systemUserDirectories{goos: "darwin"}
+	if _, err := directories.DataDirectory(); !errors.Is(err, ErrUnsupportedUserDirectories) {
+		t.Fatalf("data error=%v", err)
+	}
+	if _, err := directories.DownloadsDirectory(); !errors.Is(err, ErrUnsupportedUserDirectories) {
+		t.Fatalf("downloads error=%v", err)
 	}
 }

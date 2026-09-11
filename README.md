@@ -148,11 +148,11 @@ service/core
     └── WhatsApp adapter (whatsmeow)
 ```
 
-The UI and service use transport-neutral application data. WhatsApp-specific types stay inside the adapter, and bounded workers keep network and storage operations out of the terminal event loop.
+The UI and service use transport-neutral application data. WhatsApp-specific types stay inside the adapter, and bounded workers keep network and storage operations out of the terminal event loop. Optional terminal and desktop helpers are selected through a capability boundary; core chat operation does not depend on a named terminal emulator.
 
 ## Current limitations
 
-- Preview backends are optional: image/GIF and WebP sticker overlays require Linux/X11 and `ueberzugpp`, video/audio require `mpv`, and PDF documents require `zathura`. Animated WebP playback depends on the installed `ueberzugpp` backend and may appear as a static frame. Other document formats remain save-only.
+- Preview backends are optional: image/GIF and WebP sticker overlays prefer Linux/X11 and `ueberzugpp`, with the system opener as a fallback when inline preview is unavailable; video/audio require `mpv`, and PDF documents require `zathura`. Animated WebP playback depends on the installed `ueberzugpp` backend and may appear as a static frame. Other document formats remain save-only.
 - Expired WhatsApp media references are reported as unavailable; media-retry refresh is not implemented yet.
 - Typing indicators and presence are not implemented.
 - Status, broadcast-list, newsletter, and other unsupported special chats remain visible from cache but are read-only; sending text, files, replies, or reactions is rejected locally.
@@ -192,7 +192,8 @@ image message
 
 ### v0.5
 
-- macOS portability
+- Terminal-agnostic platform/capability boundary with graceful optional-helper fallback (v0.5A)
+- macOS portability and runtime integration (v0.5B)
 - Linux and macOS release binaries
 - Packaging and installation improvements
 

@@ -59,6 +59,11 @@ type applicationDependencies struct {
 }
 
 func run(ctx context.Context, screen tcell.Screen) error {
+	capabilities := defaultPlatformCapabilities()
+	return runWithCapabilities(ctx, screen, capabilities)
+}
+
+func runWithCapabilities(ctx context.Context, screen tcell.Screen, capabilities platformCapabilities) error {
 	configurationStore, err := config.NewDefaultUIStore()
 	if err != nil {
 		return fmt.Errorf("configuration store: %w", err)
@@ -76,7 +81,10 @@ func run(ctx context.Context, screen tcell.Screen) error {
 			return wa.SessionLinked(ctx, sessionPath)
 		},
 		launchPairing: func(ctx context.Context) error {
-			return launchXFCEPairingWindow(ctx, executable, runPairingCommand)
+			if capabilities.pairing == nil {
+				return errCapabilityUnavailable
+			}
+			return capabilities.pairing.Present(ctx, executable)
 		},
 		runLinked: func(ctx context.Context, screen tcell.Screen) error {
 			cachePath, err := config.DefaultApplicationCachePath()
@@ -95,6 +103,7 @@ func run(ctx context.Context, screen tcell.Screen) error {
 			var historyRequester wa.HistoryRequester
 			return runAuthenticatedApplication(ctx, screen, authenticatedApplicationDependencies{
 				configuration: configurationStore,
+				capabilities:  &capabilities,
 				newConnection: func(ctx context.Context) (applicationConnection, error) {
 					connection, err := wa.NewConnection(ctx, sessionPath)
 					if err != nil {
@@ -188,14 +197,26 @@ func runStartedApplication(
 	serviceCore applicationService,
 	runTUI func(context.Context, tcell.Screen, tui.Input) error,
 ) error {
+	capabilities := defaultPlatformCapabilities()
+	return runStartedApplicationWithCapabilities(parent, screen, options, serviceCore, runTUI, capabilities)
+}
+
+func runStartedApplicationWithCapabilities(
+	parent context.Context,
+	screen tcell.Screen,
+	options tui.Options,
+	serviceCore applicationService,
+	runTUI func(context.Context, tcell.Screen, tui.Input) error,
+	capabilities platformCapabilities,
+) error {
 	runCtx, cancel := context.WithCancel(parent)
 	defer cancel()
-	media, err := newDefaultMediaWorker(runCtx, serviceCore)
+	media, err := newMediaWorkerForCapabilities(runCtx, serviceCore, capabilities)
 	if err != nil {
 		return fmt.Errorf("construct media worker: %w", err)
 	}
 	defer media.stop()
-	links := newDefaultLinkWorker(runCtx)
+	links := newLinkWorkerWithCapabilities(runCtx, capabilities.opener, capabilities.clipboard)
 	defer links.stop()
 
 	serviceDone := make(chan error, 1)

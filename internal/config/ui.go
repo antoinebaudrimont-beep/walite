@@ -87,7 +87,7 @@ func normalizeLoadedTheme(theme Theme) Theme {
 
 // DefaultUIPath returns the user configuration file location.
 func DefaultUIPath() (string, error) {
-	directory, err := os.UserConfigDir()
+	directory, err := DefaultUserDirectories().ConfigDirectory()
 	if err != nil {
 		return "", err
 	}
