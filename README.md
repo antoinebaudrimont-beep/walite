@@ -49,17 +49,20 @@ These screenshots were AI-edited for privacy using demo names and messages. Text
 
 ### Prebuilt releases
 
-Tagged releases provide unsigned archives for Linux and macOS on both amd64 and arm64. Download the archive matching your system from [GitHub Releases](https://github.com/antoinebaudrimont-beep/walite/releases), along with `SHA256SUMS`, then verify and unpack it. For example:
+Tagged releases provide unsigned archives for Linux and macOS on both amd64 and arm64. No Go installation is needed. Download the archive matching your system from [GitHub Releases](https://github.com/antoinebaudrimont-beep/walite/releases), along with `SHA256SUMS`, then verify, unpack, and pair it. For example:
 
 ```sh
 sha256sum -c SHA256SUMS --ignore-missing
 tar -xzf walite_v0.5.0_linux_amd64.tar.gz
+./walite --pair
 ./walite
 ```
 
-For first-time pairing, run `./walite --pair` in a terminal large enough for the QR code; later `./walite` launches reuse the linked session. On macOS, verify a downloaded archive with the built-in checksum tool, for example `grep 'walite_v0.5.0_darwin_arm64.tar.gz' SHA256SUMS | shasum -a 256 -c -`.
+The archive preserves the executable bit, so `chmod` is not normally needed. If an unusual download or extraction tool removes it, run `chmod +x walite` once. Use `./walite --version` to verify the binary or `./walite --help` for the concise command summary.
 
-Each archive contains `walite`, `LICENSE`, and `README.md`. The macOS binaries are not code-signed or notarized, so Gatekeeper may require you to approve the downloaded binary explicitly before its first run.
+For first-time pairing, run `./walite --pair` in a terminal large enough for the complete QR code; later `./walite` launches reuse the linked session. On macOS, verify a downloaded archive with the built-in checksum tool, for example `grep 'walite_v0.5.0_darwin_arm64.tar.gz' SHA256SUMS | shasum -a 256 -c -`.
+
+Each archive contains `walite`, `LICENSE`, and `README.md`. The macOS binaries are not code-signed or notarized. If macOS blocks the first launch, make that launch attempt, then open **System Settings → Privacy & Security** and use **Open Anyway** for walite; this approves only that binary rather than weakening Gatekeeper globally.
 
 | Operating system | Architectures |
 | --- | --- |

@@ -12,9 +12,21 @@ import (
 	"github.com/gdamore/tcell/v2"
 )
 
+var version = "dev"
+
+const commandHelp = `Usage:
+  walite             Start walite
+  walite --pair      Link a WhatsApp account
+  walite --version   Print the walite version
+  walite --help      Show this help
+`
+
 func main() { os.Exit(runMain()) }
 
 func runMain() int {
+	if handled, code := handleMainArguments(os.Args[1:], os.Stdout, os.Stderr); handled {
+		return code
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	var err error
@@ -31,6 +43,25 @@ func runMain() int {
 		return 0
 	}
 	return reportMainError(os.Stderr, err)
+}
+
+func handleMainArguments(args []string, stdout, stderr io.Writer) (bool, int) {
+	if len(args) == 0 || (len(args) == 1 && args[0] == pairingHelperFlag) {
+		return false, 0
+	}
+	if len(args) == 1 {
+		switch args[0] {
+		case "--help", "-h":
+			_, _ = fmt.Fprint(stdout, commandHelp)
+			return true, 0
+		case "--version":
+			_, _ = fmt.Fprintf(stdout, "walite %s\n", version)
+			return true, 0
+		}
+	}
+	_, _ = fmt.Fprintln(stderr, "walite: unsupported arguments")
+	_, _ = fmt.Fprint(stderr, commandHelp)
+	return true, 2
 }
 
 func reportMainError(destination io.Writer, err error) int {

@@ -66,8 +66,9 @@ for target in $targets; do
 	mkdir -p "$stage"
 
 	printf 'building %s\n' "$target"
+	ldflags="-s -w -X main.version=$version"
 	CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
-		go build -trimpath -buildvcs=false -ldflags='-s -w' \
+		go build -trimpath -buildvcs=false -ldflags="$ldflags" \
 		-o "$stage/walite" ./cmd/walite
 	cp LICENSE README.md "$stage/"
 	chmod 0755 "$stage/walite"
