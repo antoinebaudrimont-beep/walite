@@ -1,0 +1,86 @@
+name: Validate and release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go vet ./...
+      - run: go test ./...
+
+  build:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: validate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build reproducible archive
+        env:
+          WALITE_TARGETS: ${{ matrix.goos }}/${{ matrix.goarch }}
+        run: ./scripts/build-release.sh "${GITHUB_REF_NAME}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: walite-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/walite_${{ github.ref_name }}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - validate
+      - build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: walite-*
+          path: dist
+          merge-multiple: true
+      - name: Create and verify checksums
+        run: |
+          cd dist
+          sha256sum walite_*.tar.gz | LC_ALL=C sort -k2 > SHA256SUMS
+          sha256sum -c SHA256SUMS
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "${GITHUB_REF_NAME}"
+          dist/walite_*.tar.gz dist/SHA256SUMS
+          --verify-tag
+          --generate-notes
+          --title "walite ${GITHUB_REF_NAME}"

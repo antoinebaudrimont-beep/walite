@@ -47,6 +47,29 @@ These screenshots were AI-edited for privacy using demo names and messages. Text
 
 ## Installation and build
 
+### Prebuilt releases
+
+Tagged releases provide unsigned archives for Linux and macOS on both amd64 and arm64. Download the archive matching your system from [GitHub Releases](https://github.com/antoinebaudrimont-beep/walite/releases), along with `SHA256SUMS`, then verify and unpack it. For example:
+
+```sh
+sha256sum -c SHA256SUMS --ignore-missing
+tar -xzf walite_v0.5.0_linux_amd64.tar.gz
+./walite
+```
+
+For first-time pairing, run `./walite --pair` in a terminal large enough for the QR code; later `./walite` launches reuse the linked session. On macOS, verify a downloaded archive with the built-in checksum tool, for example `grep 'walite_v0.5.0_darwin_arm64.tar.gz' SHA256SUMS | shasum -a 256 -c -`.
+
+Each archive contains `walite`, `LICENSE`, and `README.md`. The macOS binaries are not code-signed or notarized, so Gatekeeper may require you to approve the downloaded binary explicitly before its first run.
+
+| Operating system | Architectures |
+| --- | --- |
+| Linux | amd64, arm64 |
+| macOS | amd64, arm64 |
+
+Here, amd64 means Intel/AMD x86-64, while arm64 means Apple Silicon or another ARM64 system.
+
+### Build from source
+
 Building walite requires Go 1.26.0 or newer. MX Linux with XFCE/X11 on linux/amd64 and macOS on Apple Silicon are the currently validated runtime environments.
 
 ```sh
@@ -61,6 +84,12 @@ You can also run it directly from the source tree:
 ```sh
 go run ./cmd/walite
 ```
+
+### Optional Linux desktop helpers
+
+Core messaging requires only walite, a compatible terminal, and network access; it does not require a media viewer or clipboard helper. On Linux/X11, optional integrations use `ueberzugpp` for inline image/GIF/sticker previews, `mpv` for video/audio, `zathura` for PDF, `xdg-open` for URLs and desktop-default files, `xclip` or `xsel` for clipboard copy, and `xfce4-terminal` for the validated automatic first-pairing window. When a helper is unavailable, walite reports the unavailable optional action without blocking normal startup or messaging.
+
+macOS uses native `open`, `pbcopy`, and Terminal.app integration. iTerm2 and `mpv` are not dependencies; explicit first-time pairing works with `./walite --pair` in any sufficiently large terminal.
 
 ## First pairing
 
@@ -157,7 +186,7 @@ The UI and service use transport-neutral application data. WhatsApp-specific typ
 - Typing indicators and presence are not implemented.
 - Status, broadcast-list, newsletter, and other unsupported special chats remain visible from cache but are read-only; sending text, files, replies, or reactions is rejected locally.
 - Some identities remain opaque when WhatsApp provides no usable authoritative local metadata.
-- Linux/amd64 is the validated platform.
+- Release binaries are provided for Linux and macOS on amd64 and arm64; hands-on validation currently covers MX Linux/XFCE/X11 on amd64 and macOS on Apple Silicon.
 - Automatic pairing uses the validated XFCE helper on Linux and built-in Terminal.app on macOS; iTerm2 is optional and is not required.
 - macOS/Apple Silicon core operation and explicit `--pair` linking have been manually validated; the terminal must be large enough to display the complete pairing QR.
 
@@ -194,7 +223,7 @@ image message
 
 - Terminal-agnostic platform/capability boundary with graceful optional-helper fallback (v0.5A)
 - macOS portability and runtime integration (v0.5B)
-- Linux and macOS release binaries
+- Reproducible Linux and macOS release archives for amd64 and arm64 (v0.5C)
 - Packaging and installation improvements
 
 ### v1.0
