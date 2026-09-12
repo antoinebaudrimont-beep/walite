@@ -9,10 +9,19 @@ import (
 )
 
 const (
+	// Below 70 cells, the current minimum useful chat-list and conversation
+	// widths cannot coexist with their borders and gutters.
 	narrowWidth        = 70
 	shortHeight        = 8
 	prefixWidth        = 7
 	timestampTextWidth = 5
+)
+
+type narrowPane uint8
+
+const (
+	narrowPaneConversation narrowPane = iota
+	narrowPaneChats
 )
 
 type viewModel struct {
@@ -29,6 +38,7 @@ type viewModel struct {
 	settingsOpen         bool
 	settings             settingsState
 	quitConfirm          bool
+	narrowPane           narrowPane
 	terminalWidth        int
 	terminalHeight       int
 	preferencesPath      string
@@ -143,6 +153,53 @@ func drawCompact(screen tcell.Screen, model *viewModel, width, height int) {
 }
 
 func drawNarrow(screen tcell.Screen, model *viewModel, width, height int) {
+	if model.narrowPane == narrowPaneChats && model.mode == modeNavigate && !model.replySelect.valid {
+		drawNarrowChatList(screen, model, width, height)
+		return
+	}
+	drawNarrowConversation(screen, model, width, height)
+}
+
+func drawNarrowChatList(screen tcell.Screen, model *viewModel, width, height int) {
+	styles := model.styles()
+	putText(screen, 0, 0, width, title+" — Chats", styles.normal.Bold(true))
+	selectedIndex := model.chats.selectedIndex()
+	if model.chats.count() < 1 {
+		putText(screen, 0, 2, width, "No chats — syncing…", styles.status.Dim(true))
+		putText(screen, 0, height-1, width, narrowChatListFooter(width), styles.status.Dim(true))
+		return
+	}
+
+	chatY := 2
+	visibleChats := height - 1 - chatY
+	startChat := 0
+	if visibleChats > 0 && selectedIndex >= visibleChats {
+		startChat = selectedIndex - visibleChats + 1
+	}
+	for index := startChat; index < model.chats.count() && chatY+index-startChat < height-1; index++ {
+		y := chatY + index - startChat
+		chat, ok := model.chats.chatAt(index)
+		if !ok {
+			break
+		}
+		selected := index == selectedIndex
+		style := styles.normal
+		if chat.unreadCount > 0 {
+			style = styles.unreadChat
+		}
+		if selected {
+			style = styles.selectedChat
+			if chat.unreadCount > 0 {
+				style = style.Bold(true)
+			}
+			fillMessageRow(screen, 0, y, width, style)
+		}
+		putText(screen, 0, y, width, formatChatRow(chat.title, chat.unreadCount, selected, width), style)
+	}
+	putText(screen, 0, height-1, width, narrowChatListFooter(width), styles.status.Dim(true))
+}
+
+func drawNarrowConversation(screen tcell.Screen, model *viewModel, width, height int) {
 	styles := model.styles()
 	putText(screen, 0, 0, width, title, styles.normal.Bold(true))
 	selectedIndex := model.chats.selectedIndex()
@@ -322,13 +379,24 @@ func navigationFooter(model *viewModel, narrow bool) string {
 
 func narrowNavigationFooter(model *viewModel, width int) string {
 	footer := navigationFooter(model, true)
+	if !model.replySelect.valid {
+		footer += "  Tab switch pane"
+	}
 	if uniseg.StringWidth(footer) <= width {
 		return footer
 	}
 	if model.replySelect.valid {
 		return "↑/↓  Enter  Esc cancel"
 	}
-	return "↑/↓  Enter  Esc quit"
+	return "↑/↓ scroll  Tab switch pane  Enter  Esc quit"
+}
+
+func narrowChatListFooter(width int) string {
+	footer := "j/k chats  Tab switch pane  Enter compose  Ctrl-P settings  Esc quit"
+	if uniseg.StringWidth(footer) <= width {
+		return footer
+	}
+	return "j/k chats  Tab switch pane  Enter  Esc quit"
 }
 
 func narrowComposeFooter(width int) string {

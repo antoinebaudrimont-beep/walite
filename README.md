@@ -117,6 +117,7 @@ After pairing succeeds, normal `./walite` launches reuse the persisted session a
 | `P` | Preview the newest visible supported media placeholder |
 | `S` | Save the newest visible media item to `~/Downloads/walite` |
 | `Ctrl-P` | Open settings |
+| `Tab` | On narrow terminals, switch between the chat list and conversation |
 | `Esc` | Quit, or ask for confirmation when enabled |
 | `Ctrl-C` | Quit immediately |
 
@@ -133,6 +134,8 @@ After pairing succeeds, normal `./walite` launches reuse the persisted session a
 | `Esc` | Cancel the current mode or close a popup |
 
 In reply selection, use `↑`/`↓` or `j`/`k`, then `Enter` to confirm. Press `L` on the focused message to open its sole HTTP(S) link, or choose among multiple links with `↑`/`↓` and `Enter`; `C` copies the selected link through `xclip` or `xsel` on Linux and `pbcopy` on macOS. Logical URLs remain intact when visually wrapped, and other URL schemes are ignored. Press `R` on a focused text or media message to open the emoji picker for an own reaction; choosing another emoji changes it, and `Delete` removes it. In the emoji picker, use the arrow keys or `h`/`j`/`k`/`l`; `Tab` and `Shift-Tab` switch categories, and `Enter` inserts the selected emoji.
+
+When the terminal is narrower than the two-pane layout can use comfortably, walite shows either the full-width chat list or the selected conversation. Press `Tab` in normal navigation mode to switch panes. The selected chat, loaded messages, and reading position remain intact, and widening the terminal restores the normal two-pane view.
 
 Press `F`, type or safely paste a local path, then press `Enter` to send an image, video, audio file, document, or compatible WebP sticker. Regular outgoing media is limited to 100 MiB and is shown locally only after successful WhatsApp transport and cache commit. Stickers must already be valid 512×512 WebP files: static stickers are limited to 100 KiB; animated stickers are limited to 500 KiB, 10 seconds, and structurally valid bounded frames. walite does not convert ordinary images into stickers.
 

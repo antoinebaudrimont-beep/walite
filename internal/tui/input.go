@@ -86,6 +86,14 @@ func handleKey(model *viewModel, event *tcell.EventKey, width, height int) (chan
 	}
 
 	switch {
+	case event.Key() == tcell.KeyTAB && width < narrowWidth:
+		closeMedia(model)
+		if model.narrowPane == narrowPaneChats {
+			model.narrowPane = narrowPaneConversation
+		} else {
+			model.narrowPane = narrowPaneChats
+		}
+		return true, false
 	case event.Key() == tcell.KeyEscape:
 		if model.options.ConfirmQuit {
 			model.quitConfirm = true
