@@ -49,7 +49,7 @@ These screenshots were AI-edited for privacy using demo names and messages. Text
 
 ### Prebuilt releases
 
-Tagged releases provide unsigned archives for Linux and macOS on both amd64 and arm64. No Go installation is needed. Download the archive matching your system from [GitHub Releases](https://github.com/antoinebaudrimont-beep/walite/releases), along with `SHA256SUMS`, then verify, unpack, and pair it. For example:
+Tagged releases provide unsigned archives for Linux and macOS on both amd64 and arm64. No Go installation is needed. Download the archive matching your system from the [latest GitHub release](https://github.com/antoinebaudrimont-beep/walite/releases/latest), along with `SHA256SUMS`, then verify, unpack, and pair it. For example:
 
 ```sh
 sha256sum -c SHA256SUMS --ignore-missing
