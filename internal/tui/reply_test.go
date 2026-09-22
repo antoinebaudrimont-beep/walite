@@ -96,7 +96,7 @@ func TestReplyTargetSurvivesEmojiInsertion(t *testing.T) {
 	if changed, _ := handleKey(&model, tcell.NewEventKey(tcell.KeyCtrlE, 0, tcell.ModNone), 100, 20); !changed {
 		t.Fatal("picker did not open")
 	}
-	model.emojiPicker.categoryCursor = 7
+	_, model.emojiPicker.categoryCursor, _ = findEmoji("🙂")
 	if changed, _ := handleKey(&model, tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone), 100, 20); !changed {
 		t.Fatal("emoji did not insert")
 	}

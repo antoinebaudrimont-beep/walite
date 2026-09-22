@@ -25,14 +25,80 @@ func TestEmojiCatalogHasAllBoundedCategoriesAndGraphemes(t *testing.T) {
 		}
 		total += len(category.values)
 	}
-	if total <= 48 {
-		t.Fatalf("catalog size=%d", total)
+	if emojiCatalogUnicodeVersion != "18.0" || total < 400 {
+		t.Fatalf("catalog Unicode=%q size=%d", emojiCatalogUnicodeVersion, total)
 	}
-	for _, required := range []string{"🙂", "❤️", "👍🏽", "✌️", "👨‍👩‍👧‍👦", "🇦🇹"} {
+	for _, required := range []string{"🙂", "❤️", "👍🏽", "✌️", "🖕", "🖕🏽", "👨‍👩‍👧‍👦", "🇦🇹"} {
 		if !strings.Contains(all.String(), required) {
 			t.Fatalf("catalog missing %q", required)
 		}
 	}
+}
+
+func TestEmojiPickerInsertsAndSendsExactUnicode(t *testing.T) {
+	for _, value := range []string{"🖕", "👨‍👩‍👧‍👦"} {
+		t.Run(value, func(t *testing.T) {
+			category, cursor, ok := findEmoji(value)
+			if !ok {
+				t.Fatalf("emoji %q not found", value)
+			}
+			model := defaultDemoView()
+			model.mode = modeCompose
+			model.emojiPicker.open = true
+			model.emojiPicker.category = category
+			model.emojiPicker.categoryCursor = cursor
+			var sent SendRequest
+			model.send = func(request SendRequest) error {
+				sent = request
+				return nil
+			}
+
+			if changed, exit := handleKey(&model, tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone), 100, 30); !changed || exit {
+				t.Fatalf("insert changed=%t exit=%t", changed, exit)
+			}
+			if got := model.composer.text(); got != value || !utf8.ValidString(got) {
+				t.Fatalf("inserted=%q", got)
+			}
+			if changed, exit := handleKey(&model, tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone), 100, 30); !changed || exit {
+				t.Fatalf("send changed=%t exit=%t", changed, exit)
+			}
+			if sent.Text != value {
+				t.Fatalf("sent=%q want=%q", sent.Text, value)
+			}
+		})
+	}
+}
+
+func TestEmojiPickerInNarrowComposeKeepsPaneAndUsesTabForCategories(t *testing.T) {
+	model := defaultDemoView()
+	model.mode = modeCompose
+	model.narrowPane = narrowPaneChats
+	if !model.composer.insertText("draft ") {
+		t.Fatal("draft setup failed")
+	}
+	if changed, exit := handleKey(&model, tcell.NewEventKey(tcell.KeyCtrlE, 0, tcell.ModNone), narrowWidth-1, 20); !changed || exit {
+		t.Fatalf("open changed=%t exit=%t", changed, exit)
+	}
+	if changed, exit := handleKey(&model, tcell.NewEventKey(tcell.KeyTAB, 0, tcell.ModNone), narrowWidth-1, 20); !changed || exit {
+		t.Fatalf("category Tab changed=%t exit=%t", changed, exit)
+	}
+	if model.emojiPicker.category != 1 || model.narrowPane != narrowPaneChats || model.composer.text() != "draft " {
+		t.Fatalf("category=%d pane=%d draft=%q", model.emojiPicker.category, model.narrowPane, model.composer.text())
+	}
+	if changed, _ := handleKey(&model, tcell.NewEventKey(tcell.KeyEscape, 0, tcell.ModNone), narrowWidth-1, 20); !changed || model.emojiPicker.open {
+		t.Fatal("narrow picker did not close")
+	}
+}
+
+func findEmoji(value string) (categoryIndex, valueIndex int, ok bool) {
+	for categoryIndex, category := range emojiCategories {
+		for valueIndex, candidate := range category.values {
+			if candidate == value {
+				return categoryIndex, valueIndex, true
+			}
+		}
+	}
+	return 0, 0, false
 }
 
 func TestEmojiPickerOpensOnlyInComposeAndEscCloses(t *testing.T) {
@@ -115,7 +181,7 @@ func TestEmojiPickerInsertsExactEmojiAndCloses(t *testing.T) {
 	model := defaultDemoView()
 	model.mode = modeCompose
 	model.emojiPicker.open = true
-	model.emojiPicker.categoryCursor = 7
+	_, model.emojiPicker.categoryCursor, _ = findEmoji("🙂")
 	selected := model.emojiPicker.selectedEmoji()
 	if selected != "🙂" {
 		t.Fatalf("selected=%q", selected)
@@ -139,7 +205,7 @@ func TestEmojiPickerInsertsAtComposerCursor(t *testing.T) {
 	}
 	model.composer.cursor = len("hello ")
 	model.emojiPicker.open = true
-	model.emojiPicker.categoryCursor = 7
+	_, model.emojiPicker.categoryCursor, _ = findEmoji("🙂")
 	if changed, _ := handleKey(&model, tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone), 100, 30); !changed {
 		t.Fatal("emoji insertion did not redraw")
 	}

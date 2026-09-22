@@ -77,18 +77,17 @@ func TestEmojiGridKeepsComplexGraphemeInOneCellSequence(t *testing.T) {
 	model := defaultDemoView()
 	model.mode = modeCompose
 	model.emojiPicker.open = true
-	for category, values := range map[int][]string{
-		1: {"✌️", "👍🏽", "👨‍👩‍👧‍👦"},
-		7: {"❤️"},
-		8: {"🇦🇹"},
-	} {
+	for _, want := range []string{"✌️", "👍🏽", "👨‍👩‍👧‍👦", "❤️", "🇦🇹"} {
+		category, cursor, ok := findEmoji(want)
+		if !ok {
+			t.Fatalf("emoji %q not found", want)
+		}
 		model.emojiPicker.category = category
+		model.emojiPicker.categoryCursor = cursor
 		draw(screen, &model)
 		screen.Show()
-		for _, want := range values {
-			if !screenContainsRuneSequence(screen, want) {
-				t.Fatalf("category %d split, omitted, or replaced %q", category, want)
-			}
+		if !screenContainsRuneSequence(screen, want) {
+			t.Fatalf("category %d split, omitted, or replaced %q", category, want)
 		}
 	}
 }
@@ -151,11 +150,13 @@ func TestEmojiCategorySizeChangesClearOnlyTheGrid(t *testing.T) {
 	model.emojiPicker.remember("🙂")
 	model.emojiPicker.prepareOpen()
 	model.emojiPicker.focus = emojiFocusCategory
+	largeLast := emojiCategories[0].values[len(emojiCategories[0].values)-1]
+	model.emojiPicker.categoryCursor = len(emojiCategories[0].values) - 1
 	draw(screen, &model)
 	screen.Show()
 	layout := emojiLayout(80, 24)
 	left, top, right, bottom := emojiGridRegion(layout)
-	if !screenRegionContainsRuneSequence(screen, "😡", left, top, right, bottom) {
+	if !screenRegionContainsRuneSequence(screen, largeLast, left, top, right, bottom) {
 		t.Fatal("large Smileys grid missing its final emoji")
 	}
 
@@ -164,7 +165,7 @@ func TestEmojiCategorySizeChangesClearOnlyTheGrid(t *testing.T) {
 		delta    int
 		present  string
 		absent   string
-	}{{1, 1, "👍", "😡"}, {2, 1, "🐶", "👍"}, {0, -2, "😀", "🐶"}} {
+	}{{1, 1, "👋", largeLast}, {2, 1, "🐵", "👋"}, {0, -2, "😀", "🐵"}} {
 		if !model.emojiPicker.moveCategory(step.delta) {
 			t.Fatal("category switch failed")
 		}

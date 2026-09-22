@@ -166,7 +166,7 @@ func drawConnection(screen tcell.Screen, update ConnectionUpdate) {
 			drawPairingQR(screen, update.QR, 5, height-3)
 		} else {
 			putText(screen, 0, 4, width, "Terminal too small to display pairing QR.", tcell.StyleDefault)
-			putText(screen, 0, 5, width, "Enlarge the terminal and try again.", tcell.StyleDefault)
+			putText(screen, 0, 5, width, "Enlarge the terminal or reduce the terminal font size, then try again.", tcell.StyleDefault)
 		}
 	}
 	putText(screen, 0, height-2, width, status, tcell.StyleDefault)

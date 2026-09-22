@@ -1,6 +1,6 @@
 # walite
 
-walite is a lightweight, keyboard-driven WhatsApp client for the terminal. Written in Go, it connects as a linked device through [whatsmeow](https://github.com/tulir/whatsmeow) and uses a bounded SQLite cache for fast startup and predictable resource use.
+walite is a lightweight, keyboard-driven WhatsApp client for Linux and macOS terminals. Written in Go, it connects as a linked device through [whatsmeow](https://github.com/tulir/whatsmeow) and uses a bounded SQLite cache for fast startup and predictable resource use.
 
 The project was developed and tested on an old Core 2 Duo MacBook Pro running Linux, but it is designed as a general terminal-native client rather than for one machine. walite is unofficial and is not affiliated with WhatsApp or Meta.
 
@@ -41,7 +41,7 @@ These screenshots were AI-edited for privacy using demo names and messages. Text
 - Directional incoming/outgoing layout and date separators
 - Persistent local unread state and WhatsApp read receipts on explicit chat selection, reply, or compose/send interaction
 - Unicode-safe composition and rendering
-- Emoji picker with persistent recent emoji
+- Emoji picker with an expanded Unicode 18.0 catalog and persistent recent emoji
 - Functional `Ctrl-P` settings with four themes: Terminal, Dark, Light, and High contrast
 - Toggles for timestamps, quit confirmation, and read receipts
 
@@ -53,14 +53,14 @@ Tagged releases provide unsigned archives for Linux and macOS on both amd64 and 
 
 ```sh
 sha256sum -c SHA256SUMS --ignore-missing
-tar -xzf walite_v0.5.0_linux_amd64.tar.gz
+tar -xzf walite_v1.0.0_linux_amd64.tar.gz
 ./walite --pair
 ./walite
 ```
 
 The archive preserves the executable bit, so `chmod` is not normally needed. If an unusual download or extraction tool removes it, run `chmod +x walite` once. Use `./walite --version` to verify the binary or `./walite --help` for the concise command summary.
 
-For first-time pairing, run `./walite --pair` in a terminal large enough for the complete QR code; later `./walite` launches reuse the linked session. On macOS, verify a downloaded archive with the built-in checksum tool, for example `grep 'walite_v0.5.0_darwin_arm64.tar.gz' SHA256SUMS | shasum -a 256 -c -`.
+For first-time pairing, run `./walite --pair` in a terminal large enough for the complete QR code; later `./walite` launches reuse the linked session. If walite reports that the terminal is too small, enlarge it or reduce its font size, then try again. On macOS, verify a downloaded archive with the built-in checksum tool, for example `grep 'walite_v1.0.0_darwin_arm64.tar.gz' SHA256SUMS | shasum -a 256 -c -`.
 
 Each archive contains `walite`, `LICENSE`, and `README.md`. The macOS binaries are not code-signed or notarized. If macOS blocks the first launch, make that launch attempt, then open **System Settings → Privacy & Security** and use **Open Anyway** for walite; this approves only that binary rather than weakening Gatekeeper globally.
 
@@ -96,7 +96,7 @@ macOS uses native `open`, `pbcopy`, and Terminal.app integration. iTerm2 and `mp
 
 ## First pairing
 
-On first launch, walite links to WhatsApp using a QR code. Linux/XFCE opens a temporary `xfce4-terminal`; macOS can use a temporary built-in Terminal.app window. Neither affects the terminal used for normal chat operation. On macOS, the reliable explicit path is `./walite --pair` in a terminal enlarged enough to display the complete QR. On your phone, open **WhatsApp → Linked devices → Link a device**, then scan the code.
+On first launch, walite links to WhatsApp using a QR code. Linux/XFCE opens a temporary `xfce4-terminal`; macOS can use a temporary built-in Terminal.app window. Neither affects the terminal used for normal chat operation. On macOS, the reliable explicit path is `./walite --pair` in a terminal enlarged enough to display the complete QR. If the QR does not fit, enlarge the terminal or reduce the terminal font size, then try again. On your phone, open **WhatsApp → Linked devices → Link a device**, then scan the code.
 
 After pairing succeeds, normal `./walite` launches reuse the persisted session and reconnect without another QR code. If the automatic helper cannot be launched, walite prints the same manual `walite --pair` fallback command.
 
@@ -133,7 +133,7 @@ After pairing succeeds, normal `./walite` launches reuse the persisted session a
 | `Ctrl-P` | Open settings |
 | `Esc` | Cancel the current mode or close a popup |
 
-In reply selection, use `↑`/`↓` or `j`/`k`, then `Enter` to confirm. Press `L` on the focused message to open its sole HTTP(S) link, or choose among multiple links with `↑`/`↓` and `Enter`; `C` copies the selected link through `xclip` or `xsel` on Linux and `pbcopy` on macOS. Logical URLs remain intact when visually wrapped, and other URL schemes are ignored. Press `R` on a focused text or media message to open the emoji picker for an own reaction; choosing another emoji changes it, and `Delete` removes it. In the emoji picker, use the arrow keys or `h`/`j`/`k`/`l`; `Tab` and `Shift-Tab` switch categories, and `Enter` inserts the selected emoji.
+In reply selection, use `↑`/`↓` or `j`/`k`, then `Enter` to confirm. Press `L` on the focused message to open its sole HTTP(S) link, or choose among multiple links with `↑`/`↓` and `Enter`; `C` copies the selected link through `xclip` or `xsel` on Linux and `pbcopy` on macOS. Logical URLs remain intact when visually wrapped, and other URL schemes are ignored. Press `R` on a focused text or media message to open the emoji picker for an own reaction; choosing another emoji changes it, and `Delete` removes it. In the emoji picker, use the arrow keys or `h`/`j`/`k`/`l`; `Tab` and `Shift-Tab` switch categories, and `Enter` inserts the selected emoji. Emoji are sent as complete Unicode graphemes; their appearance depends on terminal and font support.
 
 When the terminal is narrower than the two-pane layout can use comfortably, walite shows either the full-width chat list or the selected conversation. Press `Tab` in normal navigation mode to switch panes. The selected chat, loaded messages, and reading position remain intact, and widening the terminal restores the normal two-pane view.
 
@@ -232,14 +232,12 @@ image message
 - Reproducible Linux and macOS release archives for amd64 and arm64 (v0.5C)
 - Packaging and installation improvements
 
-### v1.0
+### v1.0.0
 
-- Stable, documented release
+- First stable, documented release
 - Dependable core messaging and cache behavior
-- Easy installation
+- Prebuilt Linux and macOS archives on amd64 and arm64
 - Clearly defined supported and unsupported features
-
-No release dates are promised.
 
 ## Development
 

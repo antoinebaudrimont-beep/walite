@@ -93,9 +93,9 @@ func TestConnectionViewResizeWhileQRVisible(t *testing.T) {
 	<-screen.shown
 	updates <- ConnectionUpdate{State: ConnectionWaitingForQR, QR: testPairingQR(t, false), HasQR: true}
 	<-screen.shown
-	resizeObservedScreen(t, screen, 30, 8)
+	resizeObservedScreen(t, screen, 80, 8)
 	if text := screenText(screen); !strings.Contains(text, "Terminal too small to display") ||
-		!strings.Contains(text, "Enlarge the terminal and try") {
+		!strings.Contains(text, "reduce the terminal font size") {
 		t.Fatalf("compact pairing view:\n%s", text)
 	}
 	updates <- ConnectionUpdate{State: ConnectionConnected}
