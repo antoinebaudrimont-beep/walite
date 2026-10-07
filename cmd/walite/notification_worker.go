@@ -57,6 +57,8 @@ type notificationWorker struct {
 	cancel   context.CancelFunc
 	done     chan struct{}
 	timeout  time.Duration
+	mu       sync.Mutex
+	stopped  bool
 	stopOnce sync.Once
 }
 
@@ -73,10 +75,16 @@ func newNotificationWorker(parent context.Context, backend desktopNotifier) *not
 func (worker *notificationWorker) run() {
 	defer close(worker.done)
 	for {
+		if worker.ctx.Err() != nil {
+			return
+		}
 		select {
 		case <-worker.ctx.Done():
 			return
 		case notification := <-worker.requests:
+			if worker.ctx.Err() != nil {
+				return
+			}
 			if worker.backend == nil {
 				continue
 			}
@@ -91,9 +99,12 @@ func (worker *notificationWorker) admit(notification tui.Notification) bool {
 	if worker == nil || worker.backend == nil {
 		return false
 	}
-	select {
-	case <-worker.ctx.Done():
+	worker.mu.Lock()
+	defer worker.mu.Unlock()
+	if worker.stopped || worker.ctx.Err() != nil {
 		return false
+	}
+	select {
 	case worker.requests <- notification:
 		return true
 	default:
@@ -105,6 +116,14 @@ func (worker *notificationWorker) stop() {
 	if worker == nil {
 		return
 	}
-	worker.stopOnce.Do(worker.cancel)
+	// Notifications are cosmetic: shutdown rejects new admissions, cancels the
+	// in-flight command through worker.ctx, abandons queued jobs, and never
+	// closes requests where concurrent producers could panic.
+	worker.stopOnce.Do(func() {
+		worker.mu.Lock()
+		worker.stopped = true
+		worker.cancel()
+		worker.mu.Unlock()
+	})
 	<-worker.done
 }
