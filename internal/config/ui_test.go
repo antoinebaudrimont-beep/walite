@@ -108,8 +108,13 @@ func TestNotificationPreferenceMigrationAndPersistence(t *testing.T) {
 	}
 }
 
-func TestUIConfigRejectsOversizedAndMalformedReceiptPreference(t *testing.T) {
-	for _, data := range []string{strings.Repeat(" ", maxUIConfigBytes+1), `{"version":1,"send_read_receipts":"off"}`} {
+func TestUIConfigRejectsOversizedAndMalformedBooleanPreferences(t *testing.T) {
+	for _, data := range []string{
+		strings.Repeat(" ", maxUIConfigBytes+1),
+		`{"version":1,"send_read_receipts":"off"}`,
+		`{"version":1,"desktop_notifications":"on"}`,
+		`{"version":1,"notification_previews":"off"}`,
+	} {
 		path := filepath.Join(t.TempDir(), "config.json")
 		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
 			t.Fatal(err)

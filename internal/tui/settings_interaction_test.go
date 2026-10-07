@@ -173,19 +173,19 @@ func TestSettingsResizesAndClosesWithoutStaleCells(t *testing.T) {
 	model := defaultDemoView()
 	screen := initializedSimulationScreen(t, 80, 24)
 	openSettings(&model)
-	model.settings.selected = 3
-	for _, size := range [][2]int{{80, 24}, {40, 12}, {24, 8}, {18, 6}, {8, 3}, {1, 1}, {80, 24}} {
+	model.settings.selected = 4
+	for _, size := range [][2]int{{80, 24}, {44, 11}, {44, 10}, {40, 12}, {24, 8}, {18, 6}, {8, 3}, {1, 1}, {80, 24}} {
 		screen.SetSize(size[0], size[1])
 		clampView(&model, size[0], size[1])
 		draw(screen, &model)
 		screen.Show()
-		if model.settings.selected != 3 || !model.settingsOpen {
+		if model.settings.selected != 4 || !model.settingsOpen {
 			t.Fatal("resize changed selection")
 		}
 		if !strings.Contains(screenText(screen), ">") {
 			t.Fatalf("%v lost focus", size)
 		}
-		if size[0] >= 18 && !strings.Contains(screenText(screen), ": On") {
+		if size[0] >= 18 && !strings.Contains(screenText(screen), "On") {
 			t.Fatalf("%v clipped the selected value", size)
 		}
 		w, h := min(size[0], settingsPopupWidth), min(size[1], settingsPopupHeight)

@@ -170,7 +170,7 @@ func drawSettingsPopup(screen tcell.Screen, model *viewModel, width, height int)
 	if status == "" {
 		status = "Enter/Space change · Esc/Ctrl-P cancel"
 	}
-	if bottom-top < 8 {
+	if bottom-top < 10 {
 		// Tiny grids always retain the selected row; navigating scrolls this
 		// one-row viewport instead of hiding keyboard focus below the screen.
 		putText(screen, left, top, right, "> "+rows[selected], styles.popupSelected)
