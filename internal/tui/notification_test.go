@@ -32,6 +32,24 @@ func notificationEvent(id string, group bool) LiveMessage {
 	}
 }
 
+func requireNotification(t *testing.T, model *viewModel, event LiveMessage) Notification {
+	t.Helper()
+	mutation := applyLiveMessageMutation(model, event)
+	notification, ok := notificationForLiveMessage(model, event, mutation)
+	if !ok {
+		t.Fatalf("event was not admitted: mutation=%+v event=%+v", mutation, event)
+	}
+	return notification
+}
+
+func notificationGraphemeCount(value string) int {
+	count := 0
+	for graphemes := uniseg.NewGraphemes(value); graphemes.Next(); {
+		count++
+	}
+	return count
+}
+
 func TestNotificationEligibilityIsOnlyNewReadyIncomingInsertion(t *testing.T) {
 	for _, test := range []struct {
 		name       string
@@ -64,52 +82,177 @@ func TestNotificationEligibilityIsOnlyNewReadyIncomingInsertion(t *testing.T) {
 	}
 }
 
-func TestNotificationContentPrivacyDirectGroupAndMedia(t *testing.T) {
+func TestNotificationPreviewsOffNeverLeakContentOrMetadata(t *testing.T) {
+	tests := []struct {
+		name, kind, mediaName string
+		group                 bool
+	}{
+		{name: "direct text"},
+		{name: "group text", group: true},
+		{name: "image", kind: mediaImage},
+		{name: "video", kind: mediaVideo},
+		{name: "audio", kind: mediaAudio},
+		{name: "document", kind: mediaDocument, mediaName: "secret-report.pdf"},
+		{name: "sticker", kind: mediaSticker},
+	}
+	want := Notification{Title: "walite", Body: "New WhatsApp message"}
+	for index, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			model := notificationTestView(t, test.group)
+			applyDisplayMetadata(&model, DisplayMetadata{ID: "alice@lid", Name: "Private Sender", Quality: 5})
+			event := notificationEvent("private-"+string(rune('a'+index)), test.group)
+			event.Text = "Private caption and message"
+			event.MediaKind, event.MediaName = test.kind, test.mediaName
+			if got := requireNotification(t, &model, event); got != want {
+				t.Fatalf("notification=%+v want=%+v", got, want)
+			}
+		})
+	}
+}
+
+func TestNotificationPreviewDirectGroupAndFallbackIdentity(t *testing.T) {
 	direct := notificationTestView(t, false)
-	directEvent := notificationEvent("direct", false)
-	mutation := applyLiveMessageMutation(&direct, directEvent)
-	privacy, ok := notificationForLiveMessage(&direct, directEvent, mutation)
-	if !ok || privacy != (Notification{Title: "walite", Body: "New WhatsApp message"}) {
-		t.Fatalf("privacy notification=%+v ok=%t", privacy, ok)
+	direct.options.NotificationPreviews = true
+	if got := requireNotification(t, &direct, notificationEvent("direct", false)); got != (Notification{Title: "Alice", Body: "Are you coming tonight?"}) {
+		t.Fatalf("direct notification=%+v", got)
+	}
+
+	fallback := notificationTestView(t, false)
+	fallback.options.NotificationPreviews = true
+	fallback.chats.chats[0].title = "+12086708856"
+	if got := requireNotification(t, &fallback, notificationEvent("fallback", false)); got.Title != "+12086708856" {
+		t.Fatalf("direct fallback=%+v", got)
 	}
 
 	group := notificationTestView(t, true)
 	group.options.NotificationPreviews = true
 	applyDisplayMetadata(&group, DisplayMetadata{ID: "alice@lid", Name: "Alice", Quality: 5})
-	groupEvent := notificationEvent("group", true)
-	mutation = applyLiveMessageMutation(&group, groupEvent)
-	presented, ok := notificationForLiveMessage(&group, groupEvent, mutation)
-	if !ok || presented.Title != "Alice — Family" || presented.Body != "Are you coming tonight?" {
-		t.Fatalf("group notification=%+v ok=%t", presented, ok)
+	if got := requireNotification(t, &group, notificationEvent("group", true)); got != (Notification{Title: "Alice — Family", Body: "Are you coming tonight?"}) {
+		t.Fatalf("group notification=%+v", got)
+	}
+
+	groupFallback := notificationTestView(t, true)
+	groupFallback.options.NotificationPreviews = true
+	groupFallback.chats.chats[0].title = "family@g.us"
+	event := notificationEvent("group-fallback", true)
+	event.SenderID = "987654@lid"
+	if got := requireNotification(t, &groupFallback, event); got.Title != "987654@lid — family@g.us" {
+		t.Fatalf("group fallback=%+v", got)
+	}
+}
+
+func TestNotificationPreviewMediaPlaceholdersAndCaptions(t *testing.T) {
+	tests := []struct {
+		name, kind, mediaName, caption, want string
+	}{
+		{name: "image", kind: mediaImage, want: "[Image]"},
+		{name: "captioned image", kind: mediaImage, caption: "Holiday photo", want: "[Image] Holiday photo"},
+		{name: "video", kind: mediaVideo, want: "[Video]"},
+		{name: "audio", kind: mediaAudio, want: "[Audio]"},
+		{name: "sticker", kind: mediaSticker, want: "[Sticker]"},
+		{name: "document", kind: mediaDocument, mediaName: "report.pdf", want: "[Document: report.pdf]"},
+		{name: "document path and caption", kind: mediaDocument, mediaName: "../../private/report\r\nfinal.pdf", caption: "Quarterly café results", want: "[Document: report final.pdf] Quarterly café results"},
+		{name: "windows path", kind: mediaDocument, mediaName: `C:\private\voice.pdf`, want: "[Document: voice.pdf]"},
+		{name: "empty document name", kind: mediaDocument, mediaName: "folder/", want: "[Document]"},
+	}
+	for index, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			model := notificationTestView(t, false)
+			model.options.NotificationPreviews = true
+			event := notificationEvent("media-"+string(rune('a'+index)), false)
+			event.Text, event.MediaKind, event.MediaName = test.caption, test.kind, test.mediaName
+			if got := requireNotification(t, &model, event); got.Body != test.want {
+				t.Fatalf("body=%q want=%q", got.Body, test.want)
+			}
+		})
+	}
+}
+
+func TestNotificationPreviewUsesNewMessageOnlyAndHasEmptyFallback(t *testing.T) {
+	model := notificationTestView(t, false)
+	model.options.NotificationPreviews = true
+	event := notificationEvent("reply", false)
+	event.Text = "New reply text"
+	event.ReplyToID, event.ReplyToText = "quoted", "Do not repeat this quoted content"
+	if got := requireNotification(t, &model, event); got.Body != "New reply text" || strings.Contains(got.Body, event.ReplyToText) {
+		t.Fatalf("reply notification=%+v", got)
+	}
+
+	empty := notificationTestView(t, false)
+	empty.options.NotificationPreviews = true
+	emptyEvent := notificationEvent("empty", false)
+	emptyEvent.Text = "\n\t\x00\u202e"
+	if got := requireNotification(t, &empty, emptyEvent); got.Body != "New message" {
+		t.Fatalf("empty notification=%+v", got)
 	}
 
 	media := notificationTestView(t, false)
 	media.options.NotificationPreviews = true
-	mediaEvent := notificationEvent("document", false)
-	mediaEvent.Text = "Quarterly café results"
-	mediaEvent.MediaKind, mediaEvent.MediaName, mediaEvent.MediaMIME = mediaDocument, "report.pdf", "application/pdf"
-	mutation = applyLiveMessageMutation(&media, mediaEvent)
-	presented, ok = notificationForLiveMessage(&media, mediaEvent, mutation)
-	if !ok || presented.Title != "Alice" || presented.Body != "[Document: report.pdf] Quarterly café results" {
-		t.Fatalf("media notification=%+v ok=%t", presented, ok)
+	mediaEvent := notificationEvent("empty-media", false)
+	mediaEvent.Text, mediaEvent.MediaKind = "\n\t\x00", mediaImage
+	if got := requireNotification(t, &media, mediaEvent); got.Body != "[Image]" {
+		t.Fatalf("empty media notification=%+v", got)
 	}
 }
 
 func TestNotificationTextSanitizationIsUnicodeSafeAndBounded(t *testing.T) {
-	value := "  Café 👨‍👩‍👧‍👦\n\x1b[31m ' \" & --flag\u202e  " + strings.Repeat("🙂", notificationBodyLimit+20)
+	value := "  Café Ελληνικά 東京 🖕 👍🏽 👨‍👩‍👧‍👦\r\n\t\x1b[31m ' \" \\ & ; $ ` --flag (x) [y]\u202e  " + strings.Repeat("🙂", notificationBodyLimit+20)
 	got := sanitizeNotificationText(value, notificationBodyLimit)
 	if !utf8.ValidString(got) || strings.ContainsAny(got, "\n\r\t\x1b") || strings.ContainsRune(got, '\u202e') {
 		t.Fatalf("unsafe sanitized text=%q", got)
 	}
-	if !strings.Contains(got, "Café 👨‍👩‍👧‍👦 [31m ' \" & --flag") || !strings.HasSuffix(got, "…") {
+	if !strings.Contains(got, "Café Ελληνικά 東京 🖕 👍🏽 👨‍👩‍👧‍👦 [31m ' \" \\ & ; $ ` --flag (x) [y]") || !strings.HasSuffix(got, "…") {
 		t.Fatalf("Unicode/special data not preserved or bounded: %q", got)
 	}
-	clusters := 0
-	for graphemes := uniseg.NewGraphemes(got); graphemes.Next(); {
-		clusters++
-	}
-	if clusters > notificationBodyLimit {
+	if clusters := notificationGraphemeCount(got); clusters > notificationBodyLimit {
 		t.Fatalf("clusters=%d limit=%d", clusters, notificationBodyLimit)
+	}
+
+	if got := sanitizeNotificationText("  one\r\ntwo\tthree\u0000four\u0085five  ", 50); got != "one two three four five" {
+		t.Fatalf("whitespace/control collapse=%q", got)
+	}
+	codeLooking := `--hello ' " \\ & ; $ ` + "`" + ` ( ) [] display notification do shell script`
+	if got := sanitizeNotificationText(codeLooking, 100); got != codeLooking {
+		t.Fatalf("punctuation changed: %q", got)
+	}
+	if got := sanitizeNotificationText("\n\t\x00\u202e", 10); got != "" {
+		t.Fatalf("control-only text=%q", got)
+	}
+}
+
+func TestNotificationTruncationIsGraphemeSafeAndEllipsized(t *testing.T) {
+	exact := strings.Repeat("é", notificationTitleLimit)
+	if got := sanitizeNotificationText(exact, notificationTitleLimit); got != exact {
+		t.Fatalf("exact-bound text changed: %q", got)
+	}
+	oneOver := strings.Repeat("界", notificationTitleLimit+1)
+	got := sanitizeNotificationText(oneOver, notificationTitleLimit)
+	if !utf8.ValidString(got) || notificationGraphemeCount(got) != notificationTitleLimit || !strings.HasSuffix(got, "…") {
+		t.Fatalf("one-over truncation=%q clusters=%d", got, notificationGraphemeCount(got))
+	}
+	emoji := strings.Repeat("👨‍👩‍👧‍👦", notificationBodyLimit+1)
+	got = sanitizeNotificationText(emoji, notificationBodyLimit)
+	if !utf8.ValidString(got) || notificationGraphemeCount(got) != notificationBodyLimit || !strings.HasSuffix(got, "…") || strings.ContainsRune(got, '\uFFFD') {
+		t.Fatalf("emoji truncation invalid: clusters=%d", notificationGraphemeCount(got))
+	}
+	if got := sanitizeNotificationText("👍🏽x", 2); got != "👍🏽x" {
+		t.Fatalf("skin-tone grapheme changed: %q", got)
+	}
+}
+
+func TestNotificationLongGroupTitleAndFilenameStayBounded(t *testing.T) {
+	model := notificationTestView(t, true)
+	model.options.NotificationPreviews = true
+	model.chats.chats[0].title = strings.Repeat("家族", notificationTitleLimit)
+	applyDisplayMetadata(&model, DisplayMetadata{ID: "alice@lid", Name: strings.Repeat("Elena👨‍👩‍👧‍👦", 25), Quality: 5})
+	event := notificationEvent("long", true)
+	event.MediaKind = mediaDocument
+	event.MediaName = "/private/path/--" + strings.Repeat("résumé", 15) + ".pdf"
+	event.Text = strings.Repeat("caption🙂", notificationBodyLimit)
+	got := requireNotification(t, &model, event)
+	if notificationGraphemeCount(got.Title) > notificationTitleLimit || !strings.Contains(got.Title, " — ") || strings.Contains(got.Body, "/private/path/") ||
+		notificationGraphemeCount(got.Body) > notificationBodyLimit || !strings.HasSuffix(got.Body, "…") || !utf8.ValidString(got.Title+got.Body) {
+		t.Fatalf("bounded notification=%+v titleClusters=%d bodyClusters=%d", got, notificationGraphemeCount(got.Title), notificationGraphemeCount(got.Body))
 	}
 }
 

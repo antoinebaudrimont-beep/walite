@@ -8,8 +8,12 @@ import (
 )
 
 const (
-	notificationTitleLimit = 100
-	notificationBodyLimit  = 200
+	notificationTitleLimit    = 80
+	notificationBodyLimit     = 200
+	notificationFilenameLimit = 80
+	// Three graphemes are reserved for " — ". Bounding both parts preserves
+	// sender and group identity instead of allowing either to consume the title.
+	notificationGroupPartLimit = (notificationTitleLimit - 3) / 2
 )
 
 func notificationForLiveMessage(model *viewModel, event LiveMessage, mutation liveMessageMutation) (Notification, bool) {
@@ -29,21 +33,73 @@ func notificationForLiveMessage(model *viewModel, event LiveMessage, mutation li
 	}
 	chat := &model.chats.chats[chatIndex]
 	message := chat.messages[messageIndex]
-	title := chat.title
-	if title == "" {
-		title = event.ChatID
+	chatTitle := sanitizeNotificationText(chat.title, notificationTitleLimit)
+	if chatTitle == "" {
+		chatTitle = sanitizeNotificationText(event.ChatID, notificationTitleLimit)
 	}
+	if chatTitle == "" {
+		chatTitle = "walite"
+	}
+	title := chatTitle
 	if chat.isGroup || message.isGroup {
-		title = senderLabel(message) + " — " + title
+		sender := sanitizeNotificationText(senderLabel(message), notificationGroupPartLimit)
+		if sender == "" {
+			sender = "Unknown sender"
+		}
+		group := sanitizeNotificationText(chatTitle, notificationGroupPartLimit)
+		if group == "" {
+			group = "Unknown group"
+		}
+		title = sender + " — " + group
 	}
-	body := messageDisplayText(message)
+	body := notificationMessageText(message)
 	if body == "" {
-		body = "[Message]"
+		body = "New message"
 	}
 	return Notification{
 		Title: sanitizeNotificationText(title, notificationTitleLimit),
-		Body:  sanitizeNotificationText(body, notificationBodyLimit),
+		Body:  body,
 	}, true
+}
+
+func notificationMessageText(message messageView) string {
+	caption := sanitizeNotificationText(message.text, notificationBodyLimit)
+	placeholder := ""
+	switch message.mediaKind {
+	case mediaImage:
+		placeholder = "[Image]"
+	case mediaVideo:
+		placeholder = "[Video]"
+	case mediaAudio:
+		placeholder = "[Audio]"
+	case mediaSticker:
+		placeholder = "[Sticker]"
+	case mediaDocument:
+		name := notificationFilename(message.mediaName)
+		if name == "" {
+			placeholder = "[Document]"
+		} else {
+			placeholder = "[Document: " + name + "]"
+		}
+	}
+	if placeholder == "" {
+		return caption
+	}
+	if caption == "" {
+		return placeholder
+	}
+	return sanitizeNotificationText(placeholder+" "+caption, notificationBodyLimit)
+}
+
+func notificationFilename(value string) string {
+	// Remote filenames are presentation data, not local paths. Use only the
+	// final path-like component and handle both common separator forms without
+	// consulting the host filesystem.
+	value = strings.ReplaceAll(value, "\\", "/")
+	if slash := strings.LastIndexByte(value, '/'); slash >= 0 {
+		value = value[slash+1:]
+	}
+	return sanitizeNotificationText(value, notificationFilenameLimit)
 }
 
 func sanitizeNotificationText(value string, limit int) string {
@@ -64,17 +120,22 @@ func sanitizeNotificationText(value string, limit int) string {
 		cleaned.WriteRune(r)
 	}
 	text := strings.TrimSpace(cleaned.String())
+	if text == "" {
+		return ""
+	}
 	graphemes := uniseg.NewGraphemes(text)
 	var bounded strings.Builder
 	count := 0
+	truncated := false
 	for graphemes.Next() {
 		if count == limit {
+			truncated = true
 			break
 		}
 		bounded.WriteString(graphemes.Str())
 		count++
 	}
-	if graphemes.Next() {
+	if truncated {
 		result := bounded.String()
 		if limit == 1 {
 			return "…"

@@ -89,8 +89,8 @@ type LiveMessage struct {
 	SenderID       string
 	IsGroup        bool
 	ReadOnly       bool
-	// NotificationEligible is set only by the application after the service
-	// reaches its authoritative live-ready boundary for this connection.
+	// NotificationEligible is captured at realtime ingress after the application
+	// opens the authoritative live-ready boundary for this connection.
 	NotificationEligible bool
 }
 
