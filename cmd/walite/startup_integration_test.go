@@ -142,14 +142,16 @@ func scenarioApplicationService(t *testing.T, scenario demoScenario) application
 
 func TestConfigOptionsMapping(t *testing.T) {
 	settings := config.UI{
-		Theme:          config.ThemeDefault,
-		ShowTimestamps: false,
-		ConfirmQuit:    true,
+		Theme:                config.ThemeDefault,
+		ShowTimestamps:       false,
+		ConfirmQuit:          true,
+		DesktopNotifications: true,
 	}
 	if got, want := optionsFromConfig(settings), (tui.Options{
-		Theme:          tui.ThemeDefault,
-		ShowTimestamps: false,
-		ConfirmQuit:    true,
+		Theme:                tui.ThemeDefault,
+		ShowTimestamps:       false,
+		ConfirmQuit:          true,
+		DesktopNotifications: true,
 	}); got != want {
 		t.Fatalf("optionsFromConfig()=%+v want=%+v", got, want)
 	}
@@ -378,6 +380,46 @@ func TestApplicationStopsAndJoinsServiceOnEscapeAndContextCancellation(t *testin
 				t.Fatal("service owner was not joined")
 			}
 		})
+	}
+}
+
+func TestApplicationShutdownIsIdempotentAcrossConcurrentCauses(t *testing.T) {
+	isolateApplicationFiles(t)
+	scenario, err := newDemoScenario(defaultDemoValues(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	observedService := observeApplicationService(scenarioApplicationService(t, scenario))
+	screen := newStartupObservedScreen()
+	ctx, cancel := context.WithCancel(context.Background())
+	applicationDone := make(chan error, 1)
+	go func() {
+		applicationDone <- runApplication(ctx, screen, applicationDependencies{
+			configuration: staticUIStore{settings: config.DefaultUI()},
+			newService: func() (applicationService, error) {
+				return observedService, nil
+			},
+			runTUI: tui.Run,
+		})
+	}()
+	<-screen.shown
+	var causes sync.WaitGroup
+	causes.Add(3)
+	go func() { defer causes.Done(); cancel() }()
+	go func() { defer causes.Done(); cancel() }()
+	go func() { defer causes.Done(); screen.InjectKey(tcell.KeyCtrlC, 0, tcell.ModNone) }()
+	causes.Wait()
+	err = <-applicationDone
+	if err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatalf("runApplication=%v", err)
+	}
+	if got := screen.finiCount.Load(); got != 1 {
+		t.Fatalf("screen Fini count=%d", got)
+	}
+	select {
+	case <-observedService.done:
+	default:
+		t.Fatal("service owner was not joined")
 	}
 }
 

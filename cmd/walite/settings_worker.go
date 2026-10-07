@@ -28,7 +28,8 @@ func newSettingsWorker(store config.UIStore) *settingsWorker {
 		defer close(w.done)
 		for options := range w.requests {
 			err := store.Save(config.UI{Theme: config.Theme(options.Theme), ShowTimestamps: options.ShowTimestamps,
-				ConfirmQuit: options.ConfirmQuit, SendReadReceipts: options.SendReadReceipts})
+				ConfirmQuit: options.ConfirmQuit, SendReadReceipts: options.SendReadReceipts,
+				DesktopNotifications: options.DesktopNotifications, NotificationPreviews: options.NotificationPreviews})
 			w.mu.Lock()
 			w.results <- err
 			w.busy = false

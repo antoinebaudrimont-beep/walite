@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync/atomic"
 
 	"github.com/antoinebaudrimont-beep/walite/internal/config"
 	"github.com/antoinebaudrimont-beep/walite/internal/model"
@@ -183,10 +184,12 @@ func runApplication(ctx context.Context, screen tcell.Screen, dependencies appli
 
 func optionsFromConfig(settings config.UI) tui.Options {
 	return tui.Options{
-		Theme:            string(settings.Theme),
-		ShowTimestamps:   settings.ShowTimestamps,
-		ConfirmQuit:      settings.ConfirmQuit,
-		SendReadReceipts: settings.SendReadReceipts,
+		Theme:                string(settings.Theme),
+		ShowTimestamps:       settings.ShowTimestamps,
+		ConfirmQuit:          settings.ConfirmQuit,
+		SendReadReceipts:     settings.SendReadReceipts,
+		DesktopNotifications: settings.DesktopNotifications,
+		NotificationPreviews: settings.NotificationPreviews,
 	}
 }
 
@@ -218,17 +221,30 @@ func runStartedApplicationWithCapabilities(
 	defer media.stop()
 	links := newLinkWorkerWithCapabilities(runCtx, capabilities.opener, capabilities.clipboard)
 	defer links.stop()
+	notifications := newNotificationWorker(runCtx, capabilities.notifier)
+	defer notifications.stop()
 
+	liveMessages := make(chan tui.LiveMessage, livePresentationCapacity)
+	liveDone := make(chan struct{})
+	var notificationsReady atomic.Bool
+	serviceLiveEvents := serviceCore.LiveEvents()
+	go func() {
+		defer close(liveDone)
+		forwardLiveMessagesWithEligibility(runCtx, serviceLiveEvents, liveMessages, notificationsReady.Load)
+	}()
 	serviceDone := make(chan error, 1)
 	go func() { serviceDone <- serviceCore.Run(runCtx) }()
 	if err := awaitServiceReady(serviceCore.Updates(), serviceDone); err != nil {
 		cancel()
+		<-liveDone
 		return err
 	}
+	notificationsReady.Store(true)
 	initialState, err := buildInitialTUIState(runCtx, serviceCore)
 	if err != nil {
 		cancel()
 		serviceErr := <-serviceDone
+		<-liveDone
 		if serviceErr != nil && !errors.Is(serviceErr, context.Canceled) {
 			return errors.Join(fmt.Errorf("load initial snapshot: %w", err), fmt.Errorf("stop service: %w", serviceErr))
 		}
@@ -265,13 +281,6 @@ func runStartedApplicationWithCapabilities(
 		defer close(updatesDone)
 		for range serviceCore.Updates() {
 		}
-	}()
-	liveMessages := make(chan tui.LiveMessage, livePresentationCapacity)
-	liveDone := make(chan struct{})
-	serviceLiveEvents := serviceCore.LiveEvents()
-	go func() {
-		defer close(liveDone)
-		forwardLiveMessages(runCtx, serviceLiveEvents, liveMessages)
 	}()
 	var reactionUpdates chan tui.ReactionUpdate
 	if reactions, ok := serviceCore.(reactionUpdateApplication); ok && reactions.ReactionUpdates() != nil {
@@ -310,6 +319,7 @@ func runStartedApplicationWithCapabilities(
 			Media:            media.admit, MediaResults: media.results, CloseMedia: media.close,
 			CloseExternalPreview: media.closeExternal,
 			Links:                links.admit, LinkResults: links.results,
+			Notify: notifications.admit, NotificationsAvailable: capabilities.notifier != nil,
 		})
 	}()
 
@@ -431,6 +441,10 @@ func presentationMediaKind(value string) (model.MediaKind, bool) {
 }
 
 func forwardLiveMessages(ctx context.Context, source <-chan model.LiveEvent, destination chan<- tui.LiveMessage) {
+	forwardLiveMessagesWithEligibility(ctx, source, destination, func() bool { return false })
+}
+
+func forwardLiveMessagesWithEligibility(ctx context.Context, source <-chan model.LiveEvent, destination chan<- tui.LiveMessage, eligible func() bool) {
 	defer close(destination)
 	if source == nil {
 		return
@@ -447,6 +461,7 @@ func forwardLiveMessages(ctx context.Context, source <-chan model.LiveEvent, des
 			if !ok {
 				continue
 			}
+			presentation.NotificationEligible = eligible != nil && eligible()
 			select {
 			case <-ctx.Done():
 				return

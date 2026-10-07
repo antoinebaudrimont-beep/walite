@@ -89,6 +89,16 @@ type LiveMessage struct {
 	SenderID       string
 	IsGroup        bool
 	ReadOnly       bool
+	// NotificationEligible is set only by the application after the service
+	// reaches its authoritative live-ready boundary for this connection.
+	NotificationEligible bool
+}
+
+// Notification is the bounded, transport-neutral desktop presentation passed
+// to the application-owned platform worker.
+type Notification struct {
+	Title string
+	Body  string
 }
 
 // SendRequest is an immutable-by-convention outgoing presentation request.
@@ -138,6 +148,10 @@ type Input struct {
 	// CloseExternalPreview admits asynchronous termination and reports whether
 	// an active viewer consumed Escape.
 	CloseExternalPreview func() bool
+	// Notify performs non-blocking bounded admission only. Delivery is owned by
+	// the application and never runs in the terminal event loop.
+	Notify                 func(Notification) bool
+	NotificationsAvailable bool
 	// SaveOptions admits one explicit save without performing I/O. OptionsResults
 	// completes it; options become active only after successful persistence.
 	SaveOptions    func(Options) bool

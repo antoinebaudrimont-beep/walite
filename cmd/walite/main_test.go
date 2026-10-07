@@ -3,9 +3,24 @@ package main
 import (
 	"bytes"
 	"errors"
+	"os"
 	"strings"
+	"syscall"
 	"testing"
 )
+
+func TestTerminationSignalsIncludeTerminalLossAndNormalTermination(t *testing.T) {
+	got := terminationSignals()
+	want := []os.Signal{os.Interrupt, syscall.SIGHUP, syscall.SIGTERM}
+	if len(got) != len(want) {
+		t.Fatalf("signals=%v", got)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("signals=%v want=%v", got, want)
+		}
+	}
+}
 
 func TestMainArgumentHelp(t *testing.T) {
 	for _, argument := range []string{"--help", "-h"} {

@@ -42,7 +42,8 @@ func TestCreatedDefaultUIConfigContainsDefaults(t *testing.T) {
 	}
 	defaults := DefaultUI()
 	if saved.Version != currentUIVersion || saved.Theme != defaults.Theme ||
-		saved.ShowTimestamps != defaults.ShowTimestamps || saved.ConfirmQuit != defaults.ConfirmQuit || !saved.SendReadReceipts {
+		saved.ShowTimestamps != defaults.ShowTimestamps || saved.ConfirmQuit != defaults.ConfirmQuit || !saved.SendReadReceipts ||
+		!saved.DesktopNotifications || saved.NotificationPreviews {
 		t.Fatalf("created config=%+v defaults=%+v", saved, defaults)
 	}
 }
@@ -75,6 +76,34 @@ func TestReadReceiptPreferenceMigrationAndExplicitOff(t *testing.T) {
 		data, err := os.ReadFile(path)
 		if err != nil || len(data) > 512 {
 			t.Fatalf("save is not bounded: bytes=%d err=%v", len(data), err)
+		}
+	}
+}
+
+func TestNotificationPreferenceMigrationAndPersistence(t *testing.T) {
+	for _, value := range []struct {
+		data                           string
+		wantNotifications, wantPreview bool
+	}{
+		{`{"version":1,"theme":"default"}`, true, false},
+		{`{"version":1,"theme":"default","desktop_notifications":false,"notification_previews":true}`, false, true},
+		{`{"version":1,"theme":"default","desktop_notifications":true,"notification_previews":true}`, true, true},
+	} {
+		path := filepath.Join(t.TempDir(), "config.json")
+		if err := os.WriteFile(path, []byte(value.data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		store := NewUIFileStore(path)
+		loaded, err := store.Load()
+		if err != nil || loaded.DesktopNotifications != value.wantNotifications || loaded.NotificationPreviews != value.wantPreview {
+			t.Fatalf("loaded=%+v err=%v", loaded, err)
+		}
+		if err := store.Save(loaded); err != nil {
+			t.Fatal(err)
+		}
+		restarted, err := NewUIFileStore(path).Load()
+		if err != nil || restarted != loaded {
+			t.Fatalf("restart=%+v err=%v", restarted, err)
 		}
 	}
 }
@@ -132,7 +161,7 @@ func TestValidUIConfigLoads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := UI{Theme: ThemeDefault, ShowTimestamps: false, ConfirmQuit: true, SendReadReceipts: true}
+	want := UI{Theme: ThemeDefault, ShowTimestamps: false, ConfirmQuit: true, SendReadReceipts: true, DesktopNotifications: true}
 	if got != want {
 		t.Fatalf("Load()=%+v want=%+v", got, want)
 	}

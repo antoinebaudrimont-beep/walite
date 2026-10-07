@@ -96,7 +96,7 @@ func runInitialized(
 	screen.EnablePaste()
 	defer screen.DisablePaste()
 	screen.HideCursor()
-	model := viewModel{chats: chats, options: input.Options}
+	model := viewModel{chats: chats, options: input.Options, notificationsAvailable: input.NotificationsAvailable}
 	model.asyncSend = input.SendResults != nil
 	model.media, model.closeMedia = input.Media, input.CloseMedia
 	model.links = input.Links
@@ -230,7 +230,11 @@ func runInitialized(
 				liveEvents = nil
 				continue
 			}
-			if applyLiveMessage(&model, event) {
+			mutation := applyLiveMessageMutation(&model, event)
+			if notification, notify := notificationForLiveMessage(&model, event, mutation); notify && input.Notify != nil {
+				input.Notify(notification)
+			}
+			if mutation.changed {
 				draw(screen, &model)
 				screen.Show()
 			}

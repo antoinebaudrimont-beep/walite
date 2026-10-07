@@ -4,8 +4,8 @@ import "github.com/gdamore/tcell/v2"
 
 const (
 	settingsPopupWidth  = 44
-	settingsPopupHeight = 11
-	settingsSaveRow     = 4
+	settingsPopupHeight = 13
+	settingsSaveRow     = 6
 )
 
 type settingsState struct {
@@ -58,6 +58,10 @@ func handleSettingsKey(model *viewModel, event *tcell.EventKey) bool {
 			state.draft.ConfirmQuit = !state.draft.ConfirmQuit
 		case 3:
 			state.draft.SendReadReceipts = !state.draft.SendReadReceipts
+		case 4:
+			state.draft.DesktopNotifications = !state.draft.DesktopNotifications
+		case 5:
+			state.draft.NotificationPreviews = !state.draft.NotificationPreviews
 		case settingsSaveRow:
 			if state.draft == model.options {
 				model.settingsOpen = false
@@ -154,7 +158,12 @@ func drawSettingsPopup(screen tcell.Screen, model *viewModel, width, height int)
 		settingsValueLabel("Timestamps", options.ShowTimestamps, right-left-2),
 		settingsValueLabel("Confirm quit", options.ConfirmQuit, right-left-2),
 		settingsValueLabel("Send read receipts", options.SendReadReceipts, right-left-2),
+		settingsValueLabel("Desktop notifications", options.DesktopNotifications, right-left-2),
+		settingsValueLabel("Notification previews", options.NotificationPreviews, right-left-2),
 		"Save and close",
+	}
+	if options.DesktopNotifications && !model.notificationsAvailable {
+		rows[4] = settingsTextValueLabel("Desktop notifications", "On (unavailable)", right-left-2)
 	}
 	selected := min(max(model.settings.selected, 0), settingsSaveRow)
 	status := model.settings.status
@@ -184,8 +193,8 @@ func drawSettingsPopup(screen tcell.Screen, model *viewModel, width, height int)
 		fillMessageRow(screen, left, top+1+index, right, style)
 		putText(screen, left, top+1+index, right, prefix+row, style)
 	}
-	putText(screen, left, top+6, right, "↑/↓ or j/k move · Save applies changes", styles.popup)
-	putText(screen, left, top+7, right, status, styles.popup)
+	putText(screen, left, top+8, right, "↑/↓ or j/k move · Save applies changes", styles.popup)
+	putText(screen, left, top+9, right, status, styles.popup)
 }
 
 // Preserve the value when a narrow panel needs to shorten a setting's name.

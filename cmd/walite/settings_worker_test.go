@@ -34,12 +34,17 @@ func TestSettingsWorkerBoundedNonblockingSaveAndFailure(t *testing.T) {
 	w := newSettingsWorker(store)
 	value := tui.DefaultOptions()
 	value.SendReadReceipts = false
+	value.DesktopNotifications = false
+	value.NotificationPreviews = true
 	if !w.admit(value) {
 		t.Fatal("initial save rejected")
 	}
 	got := <-store.started
 	if got.SendReadReceipts {
 		t.Fatal("receipt preference lost")
+	}
+	if got.DesktopNotifications || !got.NotificationPreviews {
+		t.Fatal("notification preferences lost")
 	}
 	for i := 0; i < 100; i++ {
 		if w.admit(value) {
@@ -84,18 +89,21 @@ func TestApplicationSettingsSaveSurvivesRestart(t *testing.T) {
 					return errors.New("production config wiring missing")
 				}
 				if launch == 1 {
-					if input.Options.SendReadReceipts || input.Options.ShowTimestamps || !input.Options.ConfirmQuit {
+					if input.Options.SendReadReceipts || input.Options.ShowTimestamps || !input.Options.ConfirmQuit ||
+						input.Options.DesktopNotifications || !input.Options.NotificationPreviews {
 						return errors.New("saved settings lost on restart")
 					}
 					return nil
 				}
-				if !input.Options.SendReadReceipts || !input.Options.ShowTimestamps {
+				if !input.Options.SendReadReceipts || !input.Options.ShowTimestamps || !input.Options.DesktopNotifications || input.Options.NotificationPreviews {
 					return errors.New("first launch defaults wrong")
 				}
 				value := input.Options
 				value.SendReadReceipts = false
 				value.ShowTimestamps = false
 				value.ConfirmQuit = true
+				value.DesktopNotifications = false
+				value.NotificationPreviews = true
 				if !input.SaveOptions(value) {
 					return errors.New("save admission failed")
 				}
@@ -121,7 +129,7 @@ func TestSettingsDiskWriteDoesNotBlockTerminal(t *testing.T) {
 	press(tcell.KeyCtrlP, 0)
 	press(tcell.KeyDown, 0)
 	press(tcell.KeyEnter, 0)
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 5; i++ {
 		press(tcell.KeyDown, 0)
 	}
 	press(tcell.KeyEnter, 0)
@@ -178,7 +186,9 @@ func TestSavedReadPreferenceOffPreventsMarkReadAndSettingsCauseNoNetwork(t *test
 	press(tcell.KeyDown, 0)
 	press(tcell.KeyDown, 0)
 	press(tcell.KeyRune, ' ')
-	press(tcell.KeyDown, 0)
+	for i := 0; i < 3; i++ {
+		press(tcell.KeyDown, 0)
+	}
 	press(tcell.KeyEnter, 0)
 	<-screen.shown // asynchronous save completion
 	if admissions.Load() != 0 {

@@ -152,6 +152,37 @@ func TestForwardLiveMessagesPreservesOrderAndCancelsUnderBackpressure(t *testing
 	<-done
 }
 
+func TestForwardLiveMessagesUsesExplicitReadyBoundary(t *testing.T) {
+	now := time.Date(2100, 8, 9, 10, 11, 12, 0, time.UTC)
+	source := make(chan model.LiveEvent)
+	destination := make(chan tui.LiveMessage)
+	var ready atomic.Bool
+	done := make(chan struct{})
+	go func() {
+		forwardLiveMessagesWithEligibility(context.Background(), source, destination, ready.Load)
+		close(done)
+	}()
+	makeEvent := func(id string) model.LiveEvent {
+		message := mustSnapshotMessage(t, "ready-chat", id, now, false, "new live message")
+		event, err := model.NewLiveMessageCommitted(message, 1, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return event
+	}
+	source <- makeEvent("before-ready")
+	if event := <-destination; event.NotificationEligible {
+		t.Fatal("pre-ready event became notification eligible")
+	}
+	ready.Store(true)
+	source <- makeEvent("after-ready")
+	if event := <-destination; !event.NotificationEligible {
+		t.Fatal("post-ready live event was not notification eligible")
+	}
+	close(source)
+	<-done
+}
+
 func TestApplicationForwardsCommittedLiveEventIntoExistingChat(t *testing.T) {
 	isolateApplicationFiles(t)
 	base := time.Date(2100, 8, 9, 10, 0, 0, 0, time.UTC)

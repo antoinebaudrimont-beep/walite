@@ -18,6 +18,7 @@ func TestLinuxCapabilitySelectionPreservesValidatedHelpers(t *testing.T) {
 		"xdg-open":       "/usr/bin/xdg-open",
 		"xclip":          "/usr/bin/xclip",
 		"ueberzugpp":     "/usr/bin/ueberzugpp",
+		"notify-send":    "/usr/bin/notify-send",
 	}
 	capabilities := selectPlatformCapabilities("linux", func(name string) (string, error) {
 		if path := available[name]; path != "" {
@@ -29,10 +30,11 @@ func TestLinuxCapabilitySelectionPreservesValidatedHelpers(t *testing.T) {
 	opener, openerOK := capabilities.opener.(commandSystemOpener)
 	clipboard, clipboardOK := capabilities.clipboard.(commandClipboard)
 	inline, inlineOK := capabilities.inlineImage.(*ueberzugPreviewer)
+	notifier, notifierOK := capabilities.notifier.(notifySendBackend)
 	if !pairingOK || pairing.command != available["xfce4-terminal"] ||
 		!openerOK || opener.command != available["xdg-open"] ||
 		!clipboardOK || clipboard.command != available["xclip"] || strings.Join(clipboard.args, "\x00") != "-selection\x00clipboard\x00-in" ||
-		!inlineOK || inline.binary != available["ueberzugpp"] || capabilities.platformError != nil {
+		!inlineOK || inline.binary != available["ueberzugpp"] || !notifierOK || notifier.command != available["notify-send"] || capabilities.platformError != nil {
 		t.Fatalf("capabilities=%+v pairing=%+v opener=%+v clipboard=%+v inline=%+v", capabilities, pairing, opener, clipboard, inline)
 	}
 }
@@ -44,7 +46,7 @@ func TestOptionalCapabilitiesAreIndependentAndUnsupportedPlatformIsControlled(t 
 		}
 		return "", os.ErrNotExist
 	})
-	if capabilities.opener == nil || capabilities.clipboard != nil {
+	if capabilities.opener == nil || capabilities.clipboard != nil || capabilities.notifier != nil {
 		t.Fatalf("capabilities=%+v", capabilities)
 	}
 	if err := capabilities.pairing.Present(context.Background(), "/usr/bin/walite"); !errors.Is(err, errCapabilityUnavailable) {
@@ -81,8 +83,9 @@ func TestDarwinCapabilitySelectionUsesBuiltInToolsWithoutITerm(t *testing.T) {
 	pairing, pairingOK := capabilities.pairing.(darwinPairingPresenter)
 	opener, openerOK := capabilities.opener.(commandSystemOpener)
 	clipboard, clipboardOK := capabilities.clipboard.(commandClipboard)
+	notifier, notifierOK := capabilities.notifier.(darwinNotificationBackend)
 	if !pairingOK || pairing.command != available["osascript"] || !openerOK || opener.command != available["open"] ||
-		!clipboardOK || clipboard.command != available["pbcopy"] || !capabilities.systemMedia ||
+		!clipboardOK || clipboard.command != available["pbcopy"] || !notifierOK || notifier.command != available["osascript"] || !capabilities.systemMedia ||
 		capabilities.platformError != nil {
 		t.Fatalf("capabilities=%+v", capabilities)
 	}

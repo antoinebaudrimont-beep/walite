@@ -30,10 +30,12 @@ const (
 // UI contains user-configurable terminal preferences. It does not contain
 // chat data, emoji recents, or transient rendering state.
 type UI struct {
-	Theme            Theme
-	ShowTimestamps   bool
-	ConfirmQuit      bool
-	SendReadReceipts bool
+	Theme                Theme
+	ShowTimestamps       bool
+	ConfirmQuit          bool
+	SendReadReceipts     bool
+	DesktopNotifications bool
+	NotificationPreviews bool
 }
 
 // UIStore separates configuration consumers from its storage format.
@@ -49,20 +51,24 @@ type UIFileStore struct {
 }
 
 type uiFile struct {
-	Version          int   `json:"version"`
-	Theme            Theme `json:"theme"`
-	ShowTimestamps   bool  `json:"show_timestamps"`
-	ConfirmQuit      bool  `json:"confirm_quit"`
-	SendReadReceipts bool  `json:"send_read_receipts"`
+	Version              int   `json:"version"`
+	Theme                Theme `json:"theme"`
+	ShowTimestamps       bool  `json:"show_timestamps"`
+	ConfirmQuit          bool  `json:"confirm_quit"`
+	SendReadReceipts     bool  `json:"send_read_receipts"`
+	DesktopNotifications bool  `json:"desktop_notifications"`
+	NotificationPreviews bool  `json:"notification_previews"`
 }
 
 // DefaultUI returns the initial user-facing configuration.
 func DefaultUI() UI {
 	return UI{
-		Theme:            ThemeDefault,
-		ShowTimestamps:   true,
-		ConfirmQuit:      false,
-		SendReadReceipts: true,
+		Theme:                ThemeDefault,
+		ShowTimestamps:       true,
+		ConfirmQuit:          false,
+		SendReadReceipts:     true,
+		DesktopNotifications: true,
+		NotificationPreviews: false,
 	}
 }
 
@@ -135,10 +141,12 @@ func (store *UIFileStore) Load() (UI, error) {
 	}
 	defaults := DefaultUI()
 	saved := uiFile{
-		Theme:            defaults.Theme,
-		ShowTimestamps:   defaults.ShowTimestamps,
-		ConfirmQuit:      defaults.ConfirmQuit,
-		SendReadReceipts: defaults.SendReadReceipts,
+		Theme:                defaults.Theme,
+		ShowTimestamps:       defaults.ShowTimestamps,
+		ConfirmQuit:          defaults.ConfirmQuit,
+		SendReadReceipts:     defaults.SendReadReceipts,
+		DesktopNotifications: defaults.DesktopNotifications,
+		NotificationPreviews: defaults.NotificationPreviews,
 	}
 	if err := json.Unmarshal(data, &saved); err != nil {
 		return UI{}, fmt.Errorf("%w: %v", ErrInvalidUI, err)
@@ -148,10 +156,12 @@ func (store *UIFileStore) Load() (UI, error) {
 	}
 	saved.Theme = normalizeLoadedTheme(saved.Theme)
 	settings := UI{
-		Theme:            saved.Theme,
-		ShowTimestamps:   saved.ShowTimestamps,
-		ConfirmQuit:      saved.ConfirmQuit,
-		SendReadReceipts: saved.SendReadReceipts,
+		Theme:                saved.Theme,
+		ShowTimestamps:       saved.ShowTimestamps,
+		ConfirmQuit:          saved.ConfirmQuit,
+		SendReadReceipts:     saved.SendReadReceipts,
+		DesktopNotifications: saved.DesktopNotifications,
+		NotificationPreviews: saved.NotificationPreviews,
 	}
 	if err := settings.Validate(); err != nil {
 		return UI{}, err
@@ -168,11 +178,13 @@ func (store *UIFileStore) Save(settings UI) error {
 		return err
 	}
 	saved := uiFile{
-		Version:          currentUIVersion,
-		Theme:            settings.Theme,
-		ShowTimestamps:   settings.ShowTimestamps,
-		ConfirmQuit:      settings.ConfirmQuit,
-		SendReadReceipts: settings.SendReadReceipts,
+		Version:              currentUIVersion,
+		Theme:                settings.Theme,
+		ShowTimestamps:       settings.ShowTimestamps,
+		ConfirmQuit:          settings.ConfirmQuit,
+		SendReadReceipts:     settings.SendReadReceipts,
+		DesktopNotifications: settings.DesktopNotifications,
+		NotificationPreviews: settings.NotificationPreviews,
 	}
 	data, err := json.MarshalIndent(saved, "", "  ")
 	if err != nil {

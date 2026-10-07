@@ -138,6 +138,37 @@ func TestSettingsUnavailableSaveKeepsDraft(t *testing.T) {
 	}
 }
 
+func TestNotificationSettingsToggleAndUnavailableState(t *testing.T) {
+	model := defaultDemoView()
+	model.notificationsAvailable = false
+	openSettings(&model)
+	model.settings.selected = 4
+	screen := initializedSimulationScreen(t, 44, 13)
+	draw(screen, &model)
+	screen.Show()
+	if text := screenText(screen); !strings.Contains(text, "Desktop notifications: On (unavailable)") {
+		t.Fatalf("backend availability missing:\n%s", text)
+	}
+	settingsKey(t, &model, tcell.KeyEnter, 0)
+	if model.settings.draft.DesktopNotifications {
+		t.Fatal("notification toggle did not turn off")
+	}
+	settingsKey(t, &model, tcell.KeyDown, 0)
+	settingsKey(t, &model, tcell.KeyRune, ' ')
+	if !model.settings.draft.NotificationPreviews {
+		t.Fatal("preview toggle did not turn on")
+	}
+	model.settings.selected = settingsSaveRow
+	settingsKey(t, &model, tcell.KeyEnter, 0)
+	requestSettingsSave(&model, func(options Options) bool {
+		return !options.DesktopNotifications && options.NotificationPreviews
+	})
+	finishSettingsSave(&model, nil)
+	if model.options.DesktopNotifications || !model.options.NotificationPreviews {
+		t.Fatalf("active options=%+v", model.options)
+	}
+}
+
 func TestSettingsResizesAndClosesWithoutStaleCells(t *testing.T) {
 	model := defaultDemoView()
 	screen := initializedSimulationScreen(t, 80, 24)

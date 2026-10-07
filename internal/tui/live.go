@@ -11,15 +11,19 @@ type liveMessageMutation struct {
 }
 
 func applyLiveMessage(model *viewModel, event LiveMessage) bool {
+	return applyLiveMessageMutation(model, event).changed
+}
+
+func applyLiveMessageMutation(model *viewModel, event LiveMessage) liveMessageMutation {
 	if model == nil || model.chats == nil || !validLiveMessage(event) {
-		return false
+		return liveMessageMutation{}
 	}
 	chatIndex, ok := model.chats.chatIndexByID(event.ChatID)
 	if !ok {
 		wasEmpty := model.chats.chatCount == 0
 		chatIndex, ok = model.chats.admitLiveChat(event)
 		if !ok {
-			return false
+			return liveMessageMutation{}
 		}
 		if wasEmpty {
 			model.selectionEpoch++
@@ -63,7 +67,7 @@ func applyLiveMessage(model *viewModel, event LiveMessage) bool {
 		}
 	}
 	if !mutation.changed {
-		return false
+		return mutation
 	}
 	if mutation.inserted {
 		model.chats.chats[chatIndex].revision++
@@ -88,7 +92,7 @@ func applyLiveMessage(model *viewModel, event LiveMessage) bool {
 		clampMessageViewport(model, model.terminalWidth, model.terminalHeight)
 		clampReplySelection(model, model.terminalWidth, model.terminalHeight)
 	}
-	return true
+	return mutation
 }
 
 // admitLiveChat adds an unknown committed chat to the bounded summary set.

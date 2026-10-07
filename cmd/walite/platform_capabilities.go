@@ -29,10 +29,15 @@ type clipboard interface {
 	Copy(context.Context, string) error
 }
 
+type desktopNotifier interface {
+	Notify(context.Context, tui.Notification) error
+}
+
 type platformCapabilities struct {
 	pairing       pairingPresenter
 	opener        systemOpener
 	clipboard     clipboard
+	notifier      desktopNotifier
 	inlineImage   mediaPreviewer
 	newExternal   func() externalMediaPreviewer
 	systemMedia   bool
@@ -117,6 +122,7 @@ func selectPlatformCapabilities(goos string, lookup executableLookup) platformCa
 	if goos == "darwin" {
 		if command, err := lookup("osascript"); err == nil {
 			capabilities.pairing = darwinPairingPresenter{command: command, run: runPairingCommand}
+			capabilities.notifier = darwinNotificationBackend{command: command, run: runNotificationCommand}
 		}
 		if command, err := lookup("open"); err == nil {
 			capabilities.opener = commandSystemOpener{command: command, run: runLinkCommand}
@@ -144,6 +150,9 @@ func selectPlatformCapabilities(goos string, lookup executableLookup) platformCa
 	}
 	if command, err := lookup("ueberzugpp"); err == nil {
 		capabilities.inlineImage = &ueberzugPreviewer{binary: command}
+	}
+	if command, err := lookup("notify-send"); err == nil {
+		capabilities.notifier = notifySendBackend{command: command, run: runNotificationCommand}
 	}
 	return capabilities
 }

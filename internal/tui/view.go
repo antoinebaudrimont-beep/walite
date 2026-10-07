@@ -25,42 +25,43 @@ const (
 )
 
 type viewModel struct {
-	chats                *chatState
-	display              displayState
-	chatView             chatViewState
-	mode                 inputMode
-	composer             composerState
-	emojiPicker          emojiPickerState
-	replySelect          replySelectionState
-	replyTarget          replyTarget
-	reactionTarget       reactionTargetState
-	options              Options
-	settingsOpen         bool
-	settings             settingsState
-	quitConfirm          bool
-	narrowPane           narrowPane
-	terminalWidth        int
-	terminalHeight       int
-	preferencesPath      string
-	send                 func(SendRequest) error
-	asyncSend            bool
-	sendPending          bool
-	sendUncertain        bool
-	sendStatus           string
-	localReadRequest     LocalReadRequest
-	readRequest          ReadReceiptRequest
-	readIntent           readReceiptIntent
-	mediaTarget          mediaTargetState
-	media                func(MediaRequest) bool
-	closeMedia           func()
-	closeExternalPreview func() bool
-	loadOlder            func(OlderHistoryRequest) bool
-	olderHistory         olderHistoryState
-	selectionEpoch       uint64
-	pendingReactions     [64]ReactionUpdate
-	pendingReactionCount int
-	linkPicker           linkPickerState
-	links                func(LinkRequest) bool
+	chats                  *chatState
+	display                displayState
+	chatView               chatViewState
+	mode                   inputMode
+	composer               composerState
+	emojiPicker            emojiPickerState
+	replySelect            replySelectionState
+	replyTarget            replyTarget
+	reactionTarget         reactionTargetState
+	options                Options
+	settingsOpen           bool
+	settings               settingsState
+	notificationsAvailable bool
+	quitConfirm            bool
+	narrowPane             narrowPane
+	terminalWidth          int
+	terminalHeight         int
+	preferencesPath        string
+	send                   func(SendRequest) error
+	asyncSend              bool
+	sendPending            bool
+	sendUncertain          bool
+	sendStatus             string
+	localReadRequest       LocalReadRequest
+	readRequest            ReadReceiptRequest
+	readIntent             readReceiptIntent
+	mediaTarget            mediaTargetState
+	media                  func(MediaRequest) bool
+	closeMedia             func()
+	closeExternalPreview   func() bool
+	loadOlder              func(OlderHistoryRequest) bool
+	olderHistory           olderHistoryState
+	selectionEpoch         uint64
+	pendingReactions       [64]ReactionUpdate
+	pendingReactionCount   int
+	linkPicker             linkPickerState
+	links                  func(LinkRequest) bool
 }
 
 func draw(screen tcell.Screen, model *viewModel) {
