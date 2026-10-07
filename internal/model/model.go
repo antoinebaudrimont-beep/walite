@@ -60,7 +60,11 @@ type Message struct {
 	isGroup       bool
 	bodyTruncated bool
 	bodyRetained  bool
-	byteSize      int
+	// notificationEligible is transient receipt-time metadata. Stores do not
+	// persist it; the realtime commit path carries it only far enough to decide
+	// whether a newly inserted incoming message may produce a notification.
+	notificationEligible bool
+	byteSize             int
 }
 
 // ChatID returns the message's chat identifier.
@@ -147,6 +151,19 @@ func (message Message) BodyRetained() bool {
 	return message.bodyRetained
 }
 
+// WithNotificationEligibility returns an immutable copy carrying the
+// receipt-time desktop-notification classification. The value is deliberately
+// transient and must not be inferred later from timestamps or unread state.
+func (message Message) WithNotificationEligibility(eligible bool) Message {
+	message.notificationEligible = eligible
+	return message
+}
+
+// NotificationEligible reports the transient receipt-time classification.
+func (message Message) NotificationEligible() bool {
+	return message.notificationEligible
+}
+
 // ByteSize returns the exact variable-byte charge for the normalized message.
 func (message Message) ByteSize() int {
 	return message.byteSize
@@ -167,6 +184,19 @@ func (event Event) Message() Message {
 // ReceivedAt returns the event receipt timestamp.
 func (event Event) ReceivedAt() time.Time {
 	return event.receivedAt
+}
+
+// WithNotificationEligibility returns an immutable event classified at its
+// reception boundary. Queueing and later readiness changes cannot reclassify
+// the event.
+func (event Event) WithNotificationEligibility(eligible bool) Event {
+	event.message = event.message.WithNotificationEligibility(eligible)
+	return event
+}
+
+// NotificationEligible reports the classification captured at reception.
+func (event Event) NotificationEligible() bool {
+	return event.message.NotificationEligible()
 }
 
 // ByteSize returns the event's conservative normalized byte charge.

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"sync/atomic"
 
 	"github.com/antoinebaudrimont-beep/walite/internal/config"
 	"github.com/antoinebaudrimont-beep/walite/internal/model"
@@ -51,6 +50,10 @@ type reactionUpdateApplication interface {
 
 type cacheUpdateApplication interface {
 	CacheUpdates() <-chan struct{}
+}
+
+type notificationReadinessApplication interface {
+	MarkNotificationReady()
 }
 
 type applicationDependencies struct {
@@ -226,11 +229,10 @@ func runStartedApplicationWithCapabilities(
 
 	liveMessages := make(chan tui.LiveMessage, livePresentationCapacity)
 	liveDone := make(chan struct{})
-	var notificationsReady atomic.Bool
 	serviceLiveEvents := serviceCore.LiveEvents()
 	go func() {
 		defer close(liveDone)
-		forwardLiveMessagesWithEligibility(runCtx, serviceLiveEvents, liveMessages, notificationsReady.Load)
+		forwardLiveMessages(runCtx, serviceLiveEvents, liveMessages)
 	}()
 	serviceDone := make(chan error, 1)
 	go func() { serviceDone <- serviceCore.Run(runCtx) }()
@@ -239,7 +241,9 @@ func runStartedApplicationWithCapabilities(
 		<-liveDone
 		return err
 	}
-	notificationsReady.Store(true)
+	if readiness, ok := serviceCore.(notificationReadinessApplication); ok {
+		readiness.MarkNotificationReady()
+	}
 	initialState, err := buildInitialTUIState(runCtx, serviceCore)
 	if err != nil {
 		cancel()
@@ -441,10 +445,6 @@ func presentationMediaKind(value string) (model.MediaKind, bool) {
 }
 
 func forwardLiveMessages(ctx context.Context, source <-chan model.LiveEvent, destination chan<- tui.LiveMessage) {
-	forwardLiveMessagesWithEligibility(ctx, source, destination, func() bool { return false })
-}
-
-func forwardLiveMessagesWithEligibility(ctx context.Context, source <-chan model.LiveEvent, destination chan<- tui.LiveMessage, eligible func() bool) {
 	defer close(destination)
 	if source == nil {
 		return
@@ -461,7 +461,7 @@ func forwardLiveMessagesWithEligibility(ctx context.Context, source <-chan model
 			if !ok {
 				continue
 			}
-			presentation.NotificationEligible = eligible != nil && eligible()
+			presentation.NotificationEligible = event.NotificationEligible()
 			select {
 			case <-ctx.Done():
 				return

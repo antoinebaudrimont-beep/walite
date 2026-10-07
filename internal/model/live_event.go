@@ -67,6 +67,13 @@ func (event LiveEvent) UnreadCount() uint32 { return event.unreadCount }
 // ActivityTime returns authoritative last-message activity after the insert.
 func (event LiveEvent) ActivityTime() time.Time { return event.activityTime }
 
+// NotificationEligible reports whether the realtime message was received
+// after the application's explicit ready boundary. It is meaningful only on
+// this newly-inserted committed event and is never restored from storage.
+func (event LiveEvent) NotificationEligible() bool {
+	return event.message.NotificationEligible()
+}
+
 // ByteSize returns the conservative bounded event charge.
 func (event LiveEvent) ByteSize() int { return event.byteSize }
 

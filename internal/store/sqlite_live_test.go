@@ -126,6 +126,40 @@ func TestSQLiteRealtimeSameRequestEnrichmentAndRollback(t *testing.T) {
 	}
 }
 
+func TestSQLiteRealtimeCarriesEligibilityOnlyOnNewCommit(t *testing.T) {
+	ctx := context.Background()
+	store, _ := openTestSQLite(t)
+	message := testMessage(t, "eligibility", "one", "new live", time.Unix(1, 0).UTC(), false).
+		WithNotificationEligibility(true)
+	committed, err := store.WriteRealtime(ctx, sqliteLiveBatch(t, message))
+	if err != nil || committed.Len() != 1 {
+		t.Fatalf("first commit=%d err=%v", committed.Len(), err)
+	}
+	event, _ := committed.At(0)
+	if !event.NotificationEligible() {
+		t.Fatal("receipt-time eligibility was lost across SQLite commit")
+	}
+	duplicate, err := store.WriteRealtime(ctx, sqliteLiveBatch(t, message))
+	if err != nil || duplicate.Len() != 0 {
+		t.Fatalf("duplicate commit=%d err=%v", duplicate.Len(), err)
+	}
+	stored, err := store.Message(ctx, message.ChatID(), message.MessageID())
+	if err != nil || stored.NotificationEligible() {
+		t.Fatalf("transient eligibility persisted: eligible=%t err=%v", stored.NotificationEligible(), err)
+	}
+
+	beforeReady := testMessage(t, "eligibility", "same-batch", "queued", time.Unix(2, 0).UTC(), false)
+	afterReadyReplay := beforeReady.WithNotificationEligibility(true)
+	committed, err = store.WriteRealtime(ctx, sqliteLiveBatch(t, beforeReady, afterReadyReplay))
+	if err != nil || committed.Len() != 1 {
+		t.Fatalf("same-batch commit=%d err=%v", committed.Len(), err)
+	}
+	event, _ = committed.At(0)
+	if event.NotificationEligible() {
+		t.Fatal("post-ready replay reclassified the pre-ready logical insert")
+	}
+}
+
 func TestSQLiteRealtimeUnreadSaturatesAndHistoryDoesNotIncrement(t *testing.T) {
 	store, _ := openTestSQLite(t)
 	ctx := context.Background()

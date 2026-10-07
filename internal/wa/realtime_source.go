@@ -45,11 +45,12 @@ type RealtimeSource struct {
 	history   chan model.HistoryJob
 	status    chan struct{}
 
-	started   atomic.Bool
-	closeOnce sync.Once
-	aliases   *chatAliases
-	lookup    alternateJIDLookup
-	display   *displayResolver
+	started           atomic.Bool
+	notificationReady atomic.Bool
+	closeOnce         sync.Once
+	aliases           *chatAliases
+	lookup            alternateJIDLookup
+	display           *displayResolver
 }
 
 func newRealtimeSource() *RealtimeSource {
@@ -97,7 +98,20 @@ func (source *RealtimeSource) admitWithAlternate(event model.Event, alternate mo
 	if err != nil {
 		return false
 	}
+	// Classify at callback admission, before any bounded queue delay. A message
+	// received before readiness can therefore never become eligible merely
+	// because it commits after readiness.
+	normalized = normalized.WithNotificationEligibility(source.notificationReady.Load())
 	return source.admitEntry(realtimeEntry{event: normalized, alternate: alternate})
+}
+
+// MarkNotificationReady opens the one-way receipt-time notification boundary.
+// A RealtimeSource belongs to one connection lifecycle, so reconnect creates a
+// fresh closed boundary until the replacement service publishes UpdateReady.
+func (source *RealtimeSource) MarkNotificationReady() {
+	if source != nil {
+		source.notificationReady.Store(true)
+	}
 }
 
 func (source *RealtimeSource) admitEntry(entry realtimeEntry) bool {

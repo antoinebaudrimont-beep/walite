@@ -226,6 +226,15 @@ func (application *connectedApplicationService) MarkChatLocallyRead(ctx context.
 	return application.store.MarkChatLocallyRead(ctx, id, through)
 }
 
+// MarkNotificationReady transfers the authoritative application readiness
+// boundary to the connection-owned callback ingress. Eligibility is sampled
+// there, not later when a queued committed event reaches the TUI.
+func (application *connectedApplicationService) MarkNotificationReady() {
+	if source, ok := application.source.(interface{ MarkNotificationReady() }); ok {
+		source.MarkNotificationReady()
+	}
+}
+
 func (application *connectedApplicationService) Run(ctx context.Context) error {
 	defer close(application.cacheUpdates)
 	runCtx, cancel := context.WithCancel(ctx)

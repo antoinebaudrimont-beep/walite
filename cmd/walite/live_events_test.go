@@ -152,30 +152,32 @@ func TestForwardLiveMessagesPreservesOrderAndCancelsUnderBackpressure(t *testing
 	<-done
 }
 
-func TestForwardLiveMessagesUsesExplicitReadyBoundary(t *testing.T) {
+func TestForwardLiveMessagesPreservesReceiptTimeReadyBoundary(t *testing.T) {
 	now := time.Date(2100, 8, 9, 10, 11, 12, 0, time.UTC)
 	source := make(chan model.LiveEvent)
 	destination := make(chan tui.LiveMessage)
-	var ready atomic.Bool
 	done := make(chan struct{})
 	go func() {
-		forwardLiveMessagesWithEligibility(context.Background(), source, destination, ready.Load)
+		forwardLiveMessages(context.Background(), source, destination)
 		close(done)
 	}()
-	makeEvent := func(id string) model.LiveEvent {
+	makeEvent := func(id string, eligible bool) model.LiveEvent {
 		message := mustSnapshotMessage(t, "ready-chat", id, now, false, "new live message")
+		message = message.WithNotificationEligibility(eligible)
 		event, err := model.NewLiveMessageCommitted(message, 1, now)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return event
 	}
-	source <- makeEvent("before-ready")
+	beforeReady := makeEvent("before-ready", false)
+	// The event is deliberately held until after the conceptual readiness
+	// transition. Its immutable receipt-time bit must remain false.
+	source <- beforeReady
 	if event := <-destination; event.NotificationEligible {
 		t.Fatal("pre-ready event became notification eligible")
 	}
-	ready.Store(true)
-	source <- makeEvent("after-ready")
+	source <- makeEvent("after-ready", true)
 	if event := <-destination; !event.NotificationEligible {
 		t.Fatal("post-ready live event was not notification eligible")
 	}

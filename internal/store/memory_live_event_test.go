@@ -100,6 +100,30 @@ func TestMemoryRealtimeDuplicateAndBodyImprovementDoNotEmitAgain(t *testing.T) {
 	}
 }
 
+func TestMemorySameBatchReplayCannotReclassifyPreReadyInsert(t *testing.T) {
+	memory, _ := NewMemory(2)
+	now := time.Date(2100, 4, 5, 6, 7, 8, 0, time.UTC)
+	beforeReady := mustLiveMessage(t, "ready-chat", "same-message", now, false, "body")
+	afterReadyReplay := beforeReady.WithNotificationEligibility(true)
+	batch, err := model.NewWriteBatch(model.WriteRealtime, []model.Message{beforeReady, afterReadyReplay})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := memory.WriteRealtime(context.Background(), batch)
+	if err != nil || events.Len() != 1 {
+		t.Fatalf("events=%d err=%v", events.Len(), err)
+	}
+	event, _ := events.At(0)
+	if event.NotificationEligible() {
+		t.Fatal("post-ready replay reclassified the pre-ready logical insert")
+	}
+	chatID, _ := model.NewChatID("ready-chat")
+	page, _, err := memory.Page(context.Background(), chatID, model.NoCursor(), 1)
+	if err != nil || len(page) != 1 || page[0].NotificationEligible() {
+		t.Fatalf("transient eligibility persisted: page=%+v err=%v", page, err)
+	}
+}
+
 func mustLiveMessage(t *testing.T, chatID, messageID string, sentAt time.Time, fromMe bool, text string) model.Message {
 	t.Helper()
 	message, err := model.NewMessage(model.MessageInput{

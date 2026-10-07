@@ -197,6 +197,10 @@ func (memory *Memory) writeBatch(ctx context.Context, batch model.WriteBatch, em
 			if !prior.SentAt().Equal(message.SentAt()) || prior.FromMe() != message.FromMe() {
 				return model.LiveEventBatch{}, &Error{kind: rejected}
 			}
+			// Eligibility belongs to the first logical insertion. A later
+			// same-batch replay may enrich content, but must not reclassify a
+			// message received before the ready boundary.
+			message = message.WithNotificationEligibility(prior.NotificationEligible())
 			if prior.BodyRetained() && !message.BodyRetained() {
 				message = prior
 			}
@@ -308,7 +312,10 @@ func (memory *Memory) writeBatch(ctx context.Context, batch model.WriteBatch, em
 	}
 	for chatKey, messages := range staged {
 		for id, message := range messages {
-			memory.chats[chatKey].messages[id] = message
+			// The receipt-time notification bit has served its purpose once the
+			// committed event is constructed. Cached/restored messages must never
+			// become notification input.
+			memory.chats[chatKey].messages[id] = message.WithNotificationEligibility(false)
 		}
 	}
 	return committedBatch, nil

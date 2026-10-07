@@ -470,18 +470,19 @@ func cloneNormalizedMessage(message Message) (Message, int, error) {
 		return Message{}, 0, err
 	}
 	return Message{
-		chatID:        chatID,
-		messageID:     messageID,
-		sentAt:        message.sentAt,
-		fromMe:        message.fromMe,
-		text:          strings.Clone(message.text),
-		quote:         quote,
-		media:         media,
-		senderID:      ContactID{value: strings.Clone(message.senderID.value)},
-		isGroup:       message.isGroup,
-		bodyTruncated: message.bodyTruncated,
-		bodyRetained:  message.bodyRetained,
-		byteSize:      byteSize,
+		chatID:               chatID,
+		messageID:            messageID,
+		sentAt:               message.sentAt,
+		fromMe:               message.fromMe,
+		text:                 strings.Clone(message.text),
+		quote:                quote,
+		media:                media,
+		senderID:             ContactID{value: strings.Clone(message.senderID.value)},
+		isGroup:              message.isGroup,
+		bodyTruncated:        message.bodyTruncated,
+		bodyRetained:         message.bodyRetained,
+		notificationEligible: message.notificationEligible,
+		byteSize:             byteSize,
 	}, byteSize, nil
 }
 

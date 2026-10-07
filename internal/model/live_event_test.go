@@ -15,6 +15,7 @@ func TestLiveMessageCommittedOwnsBoundedFidelity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	message = message.WithNotificationEligibility(true)
 	event, err := NewLiveMessageCommitted(message, 7, activity)
 	if err != nil {
 		t.Fatal(err)
@@ -23,7 +24,7 @@ func TestLiveMessageCommittedOwnsBoundedFidelity(t *testing.T) {
 		event.Message().MessageID().String() != "live-message" || !event.Message().FromMe() ||
 		event.Message().Text() != message.Text() || event.UnreadCount() != 7 ||
 		!event.ActivityTime().Equal(activity) || event.ByteSize() <= message.ByteSize() ||
-		event.ByteSize() > MaxNormalizedLiveEventBytes {
+		event.ByteSize() > MaxNormalizedLiveEventBytes || !event.NotificationEligible() {
 		t.Fatalf("event fidelity=%+v message=%+v", event, event.Message())
 	}
 
@@ -31,7 +32,7 @@ func TestLiveMessageCommittedOwnsBoundedFidelity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bodyless.Message().BodyRetained() || bodyless.Message().Text() != "" {
+	if bodyless.Message().BodyRetained() || bodyless.Message().Text() != "" || !bodyless.NotificationEligible() {
 		t.Fatalf("bodyless=%+v", bodyless.Message())
 	}
 }

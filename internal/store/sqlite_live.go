@@ -83,6 +83,7 @@ func writeSQLiteRequest(ctx context.Context, tx *sql.Tx, request *pendingWrite, 
 		if err != nil {
 			return err
 		}
+		message = message.WithNotificationEligibility(item.message.NotificationEligible())
 		events[i], err = model.NewLiveMessageCommitted(message, item.unread, item.activity)
 		if err != nil {
 			return newSQLiteError(ErrStoreRejected, err)

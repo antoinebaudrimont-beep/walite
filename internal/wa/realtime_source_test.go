@@ -171,6 +171,128 @@ func TestRealtimeSourceThroughCoreCommitsOnceAndPreservesSecondMessage(t *testin
 	}
 }
 
+func TestRealtimeSourceCapturesNotificationEligibilityAtAdmission(t *testing.T) {
+	source := newRealtimeSource()
+	base := time.Date(2026, 8, 30, 10, 0, 0, 0, time.UTC)
+	if !source.admit(sourceTestEvent(t, 1, base)) {
+		t.Fatal("pre-ready admission rejected")
+	}
+	source.MarkNotificationReady()
+	if !source.admit(sourceTestEvent(t, 2, base)) {
+		t.Fatal("post-ready admission rejected")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- source.Run(ctx) }()
+	before, after := <-source.RealtimeEvents(), <-source.RealtimeEvents()
+	if before.NotificationEligible() {
+		t.Fatal("queued pre-ready event was reclassified after readiness")
+	}
+	if !after.NotificationEligible() {
+		t.Fatal("post-ready event was not classified eligible")
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run=%v", err)
+	}
+}
+
+func TestRealtimePreReadyQueuedCommitStaysNotificationIneligible(t *testing.T) {
+	source := newRealtimeSource()
+	values := config.DefaultValues()
+	memory, err := store.NewMemory(values.Retention.MaxChats)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := syncpolicy.New(values.Retention)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core, err := service.New(realtimeCoreOptions(values), source, memory, policy, service.NewSystemClock())
+	if err != nil {
+		t.Fatal(err)
+	}
+	queued := sourceTestEvent(t, 3, time.Date(2026, 8, 30, 10, 0, 0, 0, time.UTC))
+	if !source.admit(queued) {
+		t.Fatal("pre-ready admission rejected")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- core.Run(ctx) }()
+	waitForCoreReady(t, core.Updates())
+	source.MarkNotificationReady()
+	committed := <-core.LiveEvents()
+	if committed.Message().MessageID() != queued.Message().MessageID() || committed.NotificationEligible() {
+		t.Fatalf("queued committed=%+v", committed)
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Core.Run=%v", err)
+	}
+}
+
+func TestRealtimeEligibilitySurvivesCommitAndReconnectReplayDoesNotPublish(t *testing.T) {
+	values := config.DefaultValues()
+	memory, err := store.NewMemory(values.Retention.MaxChats)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := syncpolicy.New(values.Retention)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 8, 30, 10, 0, 0, 0, time.UTC)
+
+	run := func(source *RealtimeSource) (*service.Core, context.CancelFunc, <-chan error) {
+		core, err := service.New(realtimeCoreOptions(values), source, memory, policy, service.NewSystemClock())
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- core.Run(ctx) }()
+		waitForCoreReady(t, core.Updates())
+		return core, cancel, done
+	}
+
+	firstSource := newRealtimeSource()
+	firstCore, firstCancel, firstDone := run(firstSource)
+	firstSource.MarkNotificationReady()
+	first := sourceTestEvent(t, 10, base)
+	if !firstSource.admit(first) {
+		t.Fatal("first live admission rejected")
+	}
+	firstCommitted := <-firstCore.LiveEvents()
+	if firstCommitted.Message().MessageID() != first.Message().MessageID() || !firstCommitted.NotificationEligible() {
+		t.Fatalf("first committed=%+v", firstCommitted)
+	}
+	firstCancel()
+	if err := <-firstDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("first Core.Run=%v", err)
+	}
+
+	secondSource := newRealtimeSource()
+	// A reconnect replay is received before the replacement service is ready.
+	// It is both ineligible and already committed, so it must publish nothing.
+	if !secondSource.admit(first) {
+		t.Fatal("reconnect replay admission rejected")
+	}
+	secondCore, secondCancel, secondDone := run(secondSource)
+	secondSource.MarkNotificationReady()
+	second := sourceTestEvent(t, 11, base)
+	if !secondSource.admit(second) {
+		t.Fatal("second live admission rejected")
+	}
+	committed := <-secondCore.LiveEvents()
+	if committed.Message().MessageID() != second.Message().MessageID() || !committed.NotificationEligible() {
+		t.Fatalf("post-reconnect committed=%+v", committed)
+	}
+	secondCancel()
+	if err := <-secondDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("second Core.Run=%v", err)
+	}
+}
+
 func upstreamTextMessage(user, id string, sentAt time.Time, fromMe bool, message *waE2E.Message) *waEvents.Message {
 	return &waEvents.Message{
 		Info: waTypes.MessageInfo{

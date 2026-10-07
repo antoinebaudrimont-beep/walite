@@ -118,16 +118,19 @@ func TestRunNotifiesOnlyForEligibleLiveInsertion(t *testing.T) {
 	live := make(chan LiveMessage)
 	reactions := make(chan ReactionUpdate)
 	display := make(chan DisplayMetadata)
+	olderResults := make(chan OlderHistoryResult)
+	olderRequests := make(chan OlderHistoryRequest, 1)
 	notifications := make(chan Notification, 2)
 	screen := newObservedScreen(100, 24)
 	done := make(chan error, 1)
 	go func() {
 		done <- runWithDependencies(context.Background(), screen, Input{
 			Options: DefaultOptions(),
-			InitialState: InitialState{Chats: []InitialChat{{ID: "chat@lid", Title: "Alice", ActivityTime: at, Messages: []InitialMessage{
+			InitialState: InitialState{Chats: []InitialChat{{ID: "chat@lid", Title: "Alice", UnreadCount: 4, ActivityTime: at, Messages: []InitialMessage{
 				{ID: "cached", SentAt: at, Text: "startup cache", BodyRetained: true},
 			}}}},
 			LiveEvents: live, ReactionUpdates: reactions, DisplayUpdates: display,
+			OlderHistory: func(request OlderHistoryRequest) bool { olderRequests <- request; return true }, OlderResults: olderResults,
 			Notify: func(notification Notification) bool { notifications <- notification; return true },
 		}, "")
 	}()
@@ -135,6 +138,18 @@ func TestRunNotifiesOnlyForEligibleLiveInsertion(t *testing.T) {
 	select {
 	case notification := <-notifications:
 		t.Fatalf("startup cache notified: %+v", notification)
+	default:
+	}
+	screen.InjectKey(tcell.KeyRune, 'O', tcell.ModNone)
+	request := <-olderRequests
+	<-screen.shown // loading status
+	olderResults <- OlderHistoryResult{Request: request, Kind: OlderHistoryLoaded, Messages: []InitialMessage{{
+		ID: "older-incoming", SentAt: at.Add(-time.Hour), Text: "unread historical page", BodyRetained: true,
+	}}}
+	<-screen.shown
+	select {
+	case notification := <-notifications:
+		t.Fatalf("older-history page notified: %+v", notification)
 	default:
 	}
 	display <- DisplayMetadata{ID: "chat@lid", Name: "Alice Updated", Quality: 5}
