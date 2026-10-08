@@ -197,6 +197,70 @@ func TestRealtimeSourceCapturesNotificationEligibilityAtAdmission(t *testing.T) 
 	}
 }
 
+func TestRealtimeSourceAppliesChatMuteToNotificationEligibilityInWorker(t *testing.T) {
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	pn := waTypes.NewJID("15551234567", waTypes.DefaultUserServer)
+	lid := waTypes.NewJID("987654321", waTypes.HiddenUserServer)
+	group := waTypes.NewJID("123456789", waTypes.GroupServer)
+	permanent := time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)
+	tests := []struct {
+		name         string
+		chat         waTypes.JID
+		alternate    waTypes.JID
+		settings     map[string]time.Time
+		lookupError  error
+		wantEligible bool
+	}{
+		{name: "unmuted conversation", chat: pn, settings: map[string]time.Time{pn.String(): {}}, wantEligible: true},
+		{name: "permanently muted conversation", chat: pn, settings: map[string]time.Time{pn.String(): permanent}},
+		{name: "active temporary mute", chat: pn, settings: map[string]time.Time{pn.String(): now.Add(time.Hour)}},
+		{name: "expired temporary mute", chat: pn, settings: map[string]time.Time{pn.String(): now.Add(-time.Second)}, wantEligible: true},
+		{name: "muted group", chat: group, settings: map[string]time.Time{group.String(): permanent}},
+		{name: "PN mute found for LID chat", chat: lid, alternate: pn, settings: map[string]time.Time{pn.String(): permanent}},
+		{name: "lookup failure preserves eligibility", chat: pn, lookupError: errors.New("local settings unavailable"), wantEligible: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			source := newRealtimeSource()
+			source.now = func() time.Time { return now }
+			lookups := 0
+			source.muteLookup = func(_ context.Context, jid waTypes.JID) (time.Time, bool, error) {
+				lookups++
+				if test.lookupError != nil {
+					return time.Time{}, false, test.lookupError
+				}
+				mutedUntil, found := test.settings[jid.String()]
+				return mutedUntil, found, nil
+			}
+			if !test.alternate.IsEmpty() {
+				source.lookup = func(context.Context, waTypes.JID) (waTypes.JID, error) { return test.alternate, nil }
+			}
+			source.MarkNotificationReady()
+			event := sourceTestEventForChat(t, test.chat.String(), now)
+			if !source.admit(event) {
+				t.Fatal("admission rejected")
+			}
+			if lookups != 0 {
+				t.Fatal("mute state was read in the WhatsApp callback path")
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan error, 1)
+			go func() { done <- source.Run(ctx) }()
+			got := <-source.RealtimeEvents()
+			if got.NotificationEligible() != test.wantEligible {
+				t.Fatalf("eligible=%t want=%t", got.NotificationEligible(), test.wantEligible)
+			}
+			if lookups == 0 {
+				t.Fatal("worker did not read chat mute state")
+			}
+			cancel()
+			if err := <-done; !errors.Is(err, context.Canceled) {
+				t.Fatalf("Run=%v", err)
+			}
+		})
+	}
+}
+
 func TestRealtimePreReadyQueuedCommitStaysNotificationIneligible(t *testing.T) {
 	source := newRealtimeSource()
 	values := config.DefaultValues()
@@ -313,6 +377,21 @@ func sourceTestEvent(t *testing.T, index int, base time.Time) model.Event {
 	message, err := model.NewMessage(model.MessageInput{
 		ChatID: "real-chat@s.whatsapp.net", MessageID: fmt.Sprintf("bounded-%03d", index),
 		SentAt: sentAt, Text: fmt.Sprintf("message %d 日本語 🐧", index),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	event, err := model.NewEvent(message, sentAt.Add(time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return event
+}
+
+func sourceTestEventForChat(t *testing.T, chatID string, sentAt time.Time) model.Event {
+	t.Helper()
+	message, err := model.NewMessage(model.MessageInput{
+		ChatID: chatID, MessageID: "mute-message", SentAt: sentAt, Text: "message 日本語 🐧",
 	})
 	if err != nil {
 		t.Fatal(err)
