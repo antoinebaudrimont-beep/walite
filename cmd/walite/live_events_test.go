@@ -300,7 +300,31 @@ func TestApplicationDrainsCommittedEventsBeforeServiceLedShutdown(t *testing.T) 
 	if !errors.Is(err, errServiceStopped) {
 		t.Fatalf("runStartedApplication=%v", err)
 	}
-	if got := <-received; strings.Join(got, ",") != "drain-1,drain-2,drain-3" {
-		t.Fatalf("drained order=%v", got)
+	select {
+	case got := <-received:
+		if strings.Join(got, ",") != "drain-1,drain-2,drain-3" {
+			t.Fatalf("drained order=%v", got)
+		}
+	default:
+		t.Fatal("TUI did not receive committed events before service-led shutdown")
+	}
+}
+
+func TestPendingServiceReadyDrainsEarlierStatusUpdates(t *testing.T) {
+	updates := make(chan model.Update, 2)
+	stopping, err := model.NewUpdate(model.UpdateInput{Kind: model.UpdateStopping})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready, err := model.NewUpdate(model.UpdateInput{Kind: model.UpdateReady})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updates <- stopping
+	updates <- ready
+	close(updates)
+
+	if !pendingServiceReady(updates) {
+		t.Fatal("pending ready update was not honored after service completion")
 	}
 }

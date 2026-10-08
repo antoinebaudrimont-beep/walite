@@ -539,10 +539,32 @@ func awaitServiceReady(updates <-chan model.Update, serviceDone <-chan error) er
 				return nil
 			}
 		case serviceErr := <-serviceDone:
+			if pendingServiceReady(updates) {
+				return nil
+			}
 			if serviceErr == nil {
 				serviceErr = errServiceStopped
 			}
 			return fmt.Errorf("start service: %w", serviceErr)
+		}
+	}
+}
+
+// pendingServiceReady resolves the race between a service's final ready update
+// and its completion result. A ready update emitted before Run returns remains
+// authoritative even when both channels become readable together.
+func pendingServiceReady(updates <-chan model.Update) bool {
+	for {
+		select {
+		case update, ok := <-updates:
+			if !ok {
+				return false
+			}
+			if update.Kind() == model.UpdateReady {
+				return true
+			}
+		default:
+			return false
 		}
 	}
 }
