@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/antoinebaudrimont-beep/walite/internal/config"
 	"github.com/antoinebaudrimont-beep/walite/internal/model"
@@ -407,7 +408,7 @@ func TestApplicationShutdownIsIdempotentAcrossConcurrentCauses(t *testing.T) {
 	causes.Add(3)
 	go func() { defer causes.Done(); cancel() }()
 	go func() { defer causes.Done(); cancel() }()
-	go func() { defer causes.Done(); screen.InjectKey(tcell.KeyCtrlC, 0, tcell.ModNone) }()
+	go func() { defer causes.Done(); screen.InjectKey(tcell.KeyEscape, 0, tcell.ModNone) }()
 	causes.Wait()
 	err = <-applicationDone
 	if err != nil && !errors.Is(err, context.Canceled) {
@@ -420,6 +421,76 @@ func TestApplicationShutdownIsIdempotentAcrossConcurrentCauses(t *testing.T) {
 	case <-observedService.done:
 	default:
 		t.Fatal("service owner was not joined")
+	}
+}
+
+func TestApplicationCancellationStopsBlockedNotificationAndQueuedWork(t *testing.T) {
+	isolateApplicationFiles(t)
+	backendStarted := make(chan struct{}, 1)
+	backendCanceled := make(chan error, 1)
+	backend := notificationBackendFunc(func(ctx context.Context, _ tui.Notification) error {
+		backendStarted <- struct{}{}
+		<-ctx.Done()
+		backendCanceled <- ctx.Err()
+		return ctx.Err()
+	})
+	overlay := &fakePreviewer{}
+	external := &fakeExternalPreviewer{}
+	capabilities := platformCapabilities{
+		notifier:    backend,
+		inlineImage: overlay,
+		newExternal: func() externalMediaPreviewer { return external },
+	}
+	service := observeApplicationService(newAuthenticationReadyService())
+	ctx, cancel := context.WithCancel(context.Background())
+	applicationDone := make(chan error, 1)
+	readyToCancel := make(chan struct{})
+	go func() {
+		applicationDone <- runStartedApplicationWithCapabilities(ctx, newStartupObservedScreen(), tui.DefaultOptions(), service,
+			func(runCtx context.Context, _ tcell.Screen, input tui.Input) error {
+				if input.Notify == nil || !input.Notify(tui.Notification{Title: "in flight"}) {
+					return errors.New("notification admission failed")
+				}
+				<-backendStarted
+				for index := 0; index < notificationQueueCapacity; index++ {
+					if !input.Notify(tui.Notification{Title: "queued"}) {
+						return errors.New("notification queue filled early")
+					}
+				}
+				close(readyToCancel)
+				<-runCtx.Done()
+				return runCtx.Err()
+			}, capabilities)
+	}()
+	select {
+	case <-readyToCancel:
+	case <-time.After(2 * time.Second):
+		t.Fatal("application did not queue notification work")
+	}
+	cancel()
+	select {
+	case err := <-applicationDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("application error=%v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("application shutdown blocked on cosmetic notifications")
+	}
+	select {
+	case err := <-backendCanceled:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("backend cancellation=%v", err)
+		}
+	default:
+		t.Fatal("in-flight notification backend was not canceled")
+	}
+	select {
+	case <-service.done:
+	default:
+		t.Fatal("service was not joined")
+	}
+	if overlay.closed != 1 || external.closed != 1 {
+		t.Fatalf("owned media cleanup overlay=%d external=%d", overlay.closed, external.closed)
 	}
 }
 

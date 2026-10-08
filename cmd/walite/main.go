@@ -27,7 +27,7 @@ func runMain() int {
 	if handled, code := handleMainArguments(os.Args[1:], os.Stdout, os.Stderr); handled {
 		return code
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), terminationSignals()...)
+	ctx, stop := terminationContext(context.Background())
 	defer stop()
 	var err error
 	if len(os.Args) == 2 && os.Args[1] == pairingHelperFlag {
@@ -39,14 +39,22 @@ func runMain() int {
 			err = run(ctx, screen)
 		}
 	}
-	if err == nil || errors.Is(err, context.Canceled) {
-		return 0
-	}
-	return reportMainError(os.Stderr, err)
+	return mainResult(os.Stderr, err)
 }
 
 func terminationSignals() []os.Signal {
 	return []os.Signal{os.Interrupt, syscall.SIGHUP, syscall.SIGTERM}
+}
+
+func terminationContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(parent, terminationSignals()...)
+}
+
+func mainResult(destination io.Writer, err error) int {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return 0
+	}
+	return reportMainError(destination, err)
 }
 
 func handleMainArguments(args []string, stdout, stderr io.Writer) (bool, int) {
