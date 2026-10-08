@@ -51,10 +51,32 @@ func terminationContext(parent context.Context) (context.Context, context.Cancel
 }
 
 func mainResult(destination io.Writer, err error) int {
-	if err == nil || errors.Is(err, context.Canceled) {
+	if err == nil || cancellationOnly(err) {
 		return 0
 	}
 	return reportMainError(destination, err)
+}
+
+func cancellationOnly(err error) bool {
+	if err == context.Canceled {
+		return true
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		causes := joined.Unwrap()
+		if len(causes) == 0 {
+			return false
+		}
+		for _, cause := range causes {
+			if !cancellationOnly(cause) {
+				return false
+			}
+		}
+		return true
+	}
+	if cause := errors.Unwrap(err); cause != nil {
+		return cancellationOnly(cause)
+	}
+	return false
 }
 
 func handleMainArguments(args []string, stdout, stderr io.Writer) (bool, int) {

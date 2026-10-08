@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -151,10 +152,18 @@ func TestMainReportsWrappedStartupError(t *testing.T) {
 }
 
 func TestMainTreatsIntentionalCancellationAsCleanExit(t *testing.T) {
-	for _, err := range []error{context.Canceled, errors.Join(errors.New("shutdown"), context.Canceled)} {
+	for _, err := range []error{context.Canceled, fmt.Errorf("run application: %w", context.Canceled), errors.Join(context.Canceled, fmt.Errorf("stop: %w", context.Canceled))} {
 		var output bytes.Buffer
 		if code := mainResult(&output, err); code != 0 || output.Len() != 0 {
 			t.Fatalf("error=%v code=%d output=%q", err, code, output.String())
 		}
+	}
+}
+
+func TestMainReportsRealFailureThatAccompaniesCancellation(t *testing.T) {
+	var output bytes.Buffer
+	err := errors.Join(context.Canceled, errors.New("close cache: synthetic failure"))
+	if code := mainResult(&output, err); code != 1 || !strings.Contains(output.String(), "close cache: synthetic failure") {
+		t.Fatalf("code=%d output=%q", code, output.String())
 	}
 }
