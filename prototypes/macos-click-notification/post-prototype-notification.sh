@@ -6,9 +6,10 @@ if [ -z "${ITERM_SESSION_ID:-}" ]; then
 	exit 1
 fi
 
-build_dir=${WALITE_CLICK_PROTOTYPE_DIR:-"${TMPDIR:-/tmp}/walite-click-notification-prototype"}
-app_path="$build_dir/Walite Notification Prototype.app"
-request_path="$build_dir/iterm-session.txt"
+build_dir=${WALITE_CLICK_PROTOTYPE_DIR:-"$HOME/Applications"}
+app_path="$build_dir/Walite Click Notification Prototype.app"
+request_dir=${WALITE_CLICK_PROTOTYPE_REQUEST_DIR:-"${TMPDIR:-/tmp}/walite-click-notification-prototype"}
+request_path="$request_dir/iterm-session.txt"
 
 if [ ! -d "$app_path" ]; then
 	printf '%s\n' "Prototype app not found. Run build-prototype.sh first." >&2
@@ -16,5 +17,7 @@ if [ ! -d "$app_path" ]; then
 fi
 
 umask 077
-printf '%s\n' "$ITERM_SESSION_ID" >"$request_path"
+mkdir -p "$request_dir"
+chmod 700 "$request_dir"
+printf '%s\n' "$ITERM_SESSION_ID" > "$request_path"
 open -a "$app_path" "$request_path"
