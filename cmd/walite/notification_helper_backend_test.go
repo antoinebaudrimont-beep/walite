@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/antoinebaudrimont-beep/walite/internal/model"
 	"github.com/antoinebaudrimont-beep/walite/internal/tui"
 )
 
@@ -233,6 +234,113 @@ func TestDarwinHelperBackendCleansOnlyOldOwnedRequests(t *testing.T) {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("preserved file %s: %v", path, err)
 		}
+	}
+}
+
+func TestDarwinHelperNotificationActivationMetadataIsOptionalAndPrivate(t *testing.T) {
+	receiver := testActivationReceiver(t, context.Background(), activationTestDirectory(t))
+	var requestPath string
+	helper, requestDir, _ := newTestDarwinHelperBackend(t, testITermSessionID, func(_ context.Context, _ string, args []string) error {
+		requestPath = args[2]
+		return nil
+	})
+	bound := notifierWithChatActivation(helper, receiver)
+	for _, test := range []struct {
+		name, chatID   string
+		wantActivation bool
+	}{
+		{name: "direct PN", chatID: "15550000001@s.whatsapp.net", wantActivation: true},
+		{name: "direct LID", chatID: "987654@lid", wantActivation: true},
+		{name: "group", chatID: "family@g.us", wantActivation: true},
+		{name: "Unicode identity", chatID: "synthetic-café-👋", wantActivation: true},
+		{name: "missing ChatID"},
+		{name: "blank ChatID", chatID: "   "},
+		{name: "control ChatID", chatID: "chat\n@lid"},
+		{name: "oversized ChatID", chatID: strings.Repeat("i", model.MaxIdentifierBytes+1)},
+		{name: "invalid UTF8 ChatID", chatID: "chat\xff@lid"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			// Privacy-off presentation stays generic even when identity and
+			// credentials are present as private request metadata.
+			notification := tui.Notification{ChatID: test.chatID, Title: "walite", Body: "New WhatsApp message"}
+			if err := bound.Notify(context.Background(), notification); err != nil {
+				t.Fatal(err)
+			}
+			request := readDarwinHelperRequest(t, requestPath)
+			data, err := os.ReadFile(requestPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(data, &fields); err != nil {
+				t.Fatal("invalid JSON request")
+			}
+			if test.wantActivation {
+				if len(fields) != 8 || request.ChatID != test.chatID || request.ActivationSocket != receiver.socketPath || request.ActivationToken != receiver.token {
+					t.Fatal("activation metadata does not match this notification and receiver")
+				}
+			} else if len(fields) != 5 || request.ChatID != "" || request.ActivationSocket != "" || request.ActivationToken != "" {
+				t.Fatal("invalid/missing ChatID retained activation metadata")
+			}
+			// Match the existing Swift decoder's five known fields. Additive
+			// keys must not change the original version-1 presentation contract.
+			var legacy struct {
+				Version        int    `json:"version"`
+				NotificationID string `json:"notification_id"`
+				SessionUUID    string `json:"session_uuid"`
+				Title          string `json:"title"`
+				Body           string `json:"body"`
+			}
+			if json.Unmarshal(data, &legacy) != nil || legacy.Version != 1 || legacy.NotificationID == "" || legacy.SessionUUID != "235DEA09-F11A-4853-B92F-CC1E3E85DE65" ||
+				legacy.Title != notification.Title || legacy.Body != notification.Body {
+				t.Fatal("legacy version-1 fields changed")
+			}
+			if strings.Contains(request.Title+request.Body, receiver.token) || strings.Contains(request.Title+request.Body, receiver.socketPath) {
+				t.Fatal("activation credentials leaked into notification text")
+			}
+			assertMode(t, requestDir, 0o700)
+			assertMode(t, requestPath, 0o600)
+		})
+	}
+	if helper.activationSocket != "" || helper.activationToken != "" {
+		t.Fatal("binding mutated shared helper backend")
+	}
+	// A backend reused after IPC becomes unavailable must not retain a stale
+	// instance's credentials, and the fallback wrapper must remain intact.
+	wrapped := fallbackNotificationBackend{preferred: bound, fallback: darwinNotificationBackend{command: "/usr/bin/osascript"}}
+	unbound := notifierWithChatActivation(wrapped, nil).(fallbackNotificationBackend)
+	fallback, ok := unbound.fallback.(darwinNotificationBackend)
+	if !ok || fallback.command != "/usr/bin/osascript" {
+		t.Fatal("binding replaced AppleScript fallback")
+	}
+	if err := unbound.Notify(context.Background(), tui.Notification{ChatID: "chat@lid"}); err != nil {
+		t.Fatal(err)
+	}
+	if request := readDarwinHelperRequest(t, requestPath); request.ChatID != "" || request.ActivationSocket != "" || request.ActivationToken != "" {
+		t.Fatal("unavailable receiver retained old activation metadata")
+	}
+}
+
+func TestChatActivationBindingPreservesLinuxNotificationArguments(t *testing.T) {
+	receiver := testActivationReceiver(t, context.Background(), activationTestDirectory(t))
+	var arguments []string
+	backend := notifySendBackend{command: "/usr/bin/notify-send", run: func(_ context.Context, command string, args []string) error {
+		if command != "/usr/bin/notify-send" {
+			t.Fatal("Linux notification command changed")
+		}
+		arguments = append([]string(nil), args...)
+		return nil
+	}}
+	bound := notifierWithChatActivation(backend, receiver)
+	if _, ok := bound.(notifySendBackend); !ok {
+		t.Fatal("Linux notification backend replaced")
+	}
+	notification := tui.Notification{ChatID: "chat@lid", Title: "walite", Body: "New WhatsApp message"}
+	if err := bound.Notify(context.Background(), notification); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(arguments, []string{"--app-name=walite", "--", notification.Title, notification.Body}) {
+		t.Fatal("activation metadata affected Linux notification arguments")
 	}
 }
 

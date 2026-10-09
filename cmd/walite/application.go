@@ -218,15 +218,17 @@ func runStartedApplicationWithCapabilities(
 	runCtx, cancel := context.WithCancel(parent)
 	defer cancel()
 	var chatActivations <-chan tui.ChatActivationRequest
+	var activationReceiver *chatActivationReceiver
 	if capabilities.newChatActivation != nil {
-		// Optional IPC is owned by this application run. The receiver retains
-		// its private socketPath/token for future helper integration; neither
-		// crosses the TUI boundary or the version-1 notification request.
+		// Optional IPC is owned by this application run. Its credentials stay
+		// in the private helper request; only activations cross the TUI boundary.
 		if receiver, err := capabilities.newChatActivation(runCtx); err == nil && receiver != nil {
 			defer receiver.stop()
+			activationReceiver = receiver
 			chatActivations = receiver.activations
 		}
 	}
+	notifier := notifierWithChatActivation(capabilities.notifier, activationReceiver)
 	media, err := newMediaWorkerForCapabilities(runCtx, serviceCore, capabilities)
 	if err != nil {
 		return fmt.Errorf("construct media worker: %w", err)
@@ -234,7 +236,7 @@ func runStartedApplicationWithCapabilities(
 	defer media.stop()
 	links := newLinkWorkerWithCapabilities(runCtx, capabilities.opener, capabilities.clipboard)
 	defer links.stop()
-	notifications := newNotificationWorker(runCtx, capabilities.notifier)
+	notifications := newNotificationWorker(runCtx, notifier)
 	defer notifications.stop()
 
 	liveMessages := make(chan tui.LiveMessage, livePresentationCapacity)

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/antoinebaudrimont-beep/walite/internal/model"
 	"github.com/antoinebaudrimont-beep/walite/internal/tui"
 )
 
@@ -24,21 +25,49 @@ const (
 var errITermSessionUnavailable = errors.New("iTerm2 session unavailable")
 
 type darwinHelperRequest struct {
-	Version        int    `json:"version"`
-	NotificationID string `json:"notification_id"`
-	SessionUUID    string `json:"session_uuid"`
-	Title          string `json:"title"`
-	Body           string `json:"body"`
+	Version          int    `json:"version"`
+	NotificationID   string `json:"notification_id"`
+	SessionUUID      string `json:"session_uuid"`
+	Title            string `json:"title"`
+	Body             string `json:"body"`
+	ChatID           string `json:"chat_id,omitempty"`
+	ActivationSocket string `json:"activation_socket,omitempty"`
+	ActivationToken  string `json:"activation_token,omitempty"`
 }
 
 // A successful launch leaves the private request for the helper to delete after
 // reading it; abandoned requests older than one day are removed the next time a
 // backend is initialized.
 type darwinHelperNotificationBackend struct {
-	helperPath  string
-	requestDir  string
-	sessionUUID string
-	run         notificationCommandRunner
+	helperPath       string
+	requestDir       string
+	sessionUUID      string
+	run              notificationCommandRunner
+	activationSocket string
+	activationToken  string
+}
+
+// Bind a private copy before starting the notification worker. Capabilities can
+// be reused by multiple application runs; never mutate their shared backend or
+// carry an old instance's endpoint into a run where IPC initialization failed.
+func notifierWithChatActivation(notifier desktopNotifier, receiver *chatActivationReceiver) desktopNotifier {
+	switch backend := notifier.(type) {
+	case *darwinHelperNotificationBackend:
+		if backend == nil {
+			return notifier
+		}
+		owned := *backend
+		owned.activationSocket, owned.activationToken = "", ""
+		if receiver != nil {
+			owned.activationSocket, owned.activationToken = receiver.socketPath, receiver.token
+		}
+		return &owned
+	case fallbackNotificationBackend:
+		backend.preferred = notifierWithChatActivation(backend.preferred, receiver)
+		return backend
+	default:
+		return notifier
+	}
 }
 
 type fallbackNotificationBackend struct {
@@ -155,6 +184,14 @@ func (backend *darwinHelperNotificationBackend) writeRequest(notification tui.No
 	request := darwinHelperRequest{
 		Version: darwinHelperRequestVersion, NotificationID: notificationID,
 		SessionUUID: backend.sessionUUID, Title: notification.Title, Body: notification.Body,
+	}
+	// Use the receiver's neutral identifier rules without resolving or changing
+	// PN/LID identities. Incomplete activation metadata is omitted as one unit.
+	if backend.activationSocket != "" && backend.activationToken != "" && strings.TrimSpace(notification.ChatID) != "" {
+		if id, err := model.NewChatID(notification.ChatID); err == nil {
+			request.ChatID = id.String()
+			request.ActivationSocket, request.ActivationToken = backend.activationSocket, backend.activationToken
+		}
 	}
 	encoder := json.NewEncoder(file)
 	encoder.SetEscapeHTML(false)

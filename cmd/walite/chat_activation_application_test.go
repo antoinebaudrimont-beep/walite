@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -189,7 +191,7 @@ func TestApplicationChatActivationInitializationFailurePreservesNotifications(t 
 	isolateApplicationFiles(t)
 	t.Setenv("XDG_DATA_HOME", filepath.Join(t.TempDir(), "data"))
 	delivered := make(chan struct{}, 1)
-	helper, _, _ := newTestDarwinHelperBackend(t, testITermSessionID, func(_ context.Context, command string, _ []string) error {
+	helper, requestDir, _ := newTestDarwinHelperBackend(t, testITermSessionID, func(_ context.Context, command string, _ []string) error {
 		if command != darwinOpenCommand {
 			t.Error("notification helper command changed")
 		}
@@ -217,6 +219,118 @@ func TestApplicationChatActivationInitializationFailurePreservesNotifications(t 
 		}, capabilities)
 	if err != nil || starts != 1 {
 		t.Fatalf("optional initialization result=%v starts=%d", err, starts)
+	}
+	files := requestFiles(t, requestDir)
+	if len(files) != 1 {
+		t.Fatal("ordinary notification request missing")
+	}
+	request := readDarwinHelperRequest(t, files[0])
+	if request.ChatID != "" || request.ActivationSocket != "" || request.ActivationToken != "" {
+		t.Fatal("failed receiver initialization exposed activation metadata")
+	}
+}
+
+func TestApplicationNotificationsBindIndependentActivationMetadata(t *testing.T) {
+	isolateApplicationFiles(t)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(t.TempDir(), "data"))
+	base := activationTestDirectory(t)
+	posted := make(chan string, 2)
+	helper, _, _ := newTestDarwinHelperBackend(t, testITermSessionID, func(_ context.Context, _ string, args []string) error {
+		posted <- args[2]
+		return nil
+	})
+	// Both applications deliberately reuse one capability/backend. Binding
+	// must make private copies before each owned notification worker starts.
+	shared := platformCapabilities{notifier: fallbackNotificationBackend{preferred: helper, fallback: darwinNotificationBackend{command: "/usr/bin/osascript"}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	var owners sync.WaitGroup
+	defer func() { cancel(); owners.Wait() }()
+	release := make(chan struct{})
+	done := make(chan error, 2)
+	type instance struct {
+		index    int
+		receiver *chatActivationReceiver
+	}
+	started := make(chan instance, 2)
+	chatIDs := []string{"first@lid", "family@g.us"}
+	for index, chatID := range chatIDs {
+		capabilities := shared
+		capabilities.newChatActivation = func(ctx context.Context) (*chatActivationReceiver, error) {
+			receiver, err := newChatActivationReceiverInDirectory(ctx, base)
+			if err == nil {
+				started <- instance{index, receiver}
+			}
+			return receiver, err
+		}
+		service := newAuthenticationReadyService()
+		owners.Add(1)
+		go func() {
+			defer owners.Done()
+			done <- runStartedApplicationWithCapabilities(ctx, newStartupObservedScreen(), tui.DefaultOptions(), service,
+				func(ctx context.Context, _ tcell.Screen, input tui.Input) error {
+					if input.ChatActivations == nil || input.Options.NotificationPreviews {
+						return errors.New("activation/privacy defaults not wired")
+					}
+					if !input.Notify(tui.Notification{ChatID: chatID, Title: "walite", Body: "New WhatsApp message"}) {
+						return errors.New("notification admission rejected")
+					}
+					select {
+					case <-release:
+						return nil
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}, capabilities)
+		}()
+	}
+	receivers := make([]*chatActivationReceiver, 2)
+	for range 2 {
+		select {
+		case owner := <-started:
+			receivers[owner.index] = owner.receiver
+		case <-time.After(3 * time.Second):
+			t.Fatal("application receiver missing")
+		}
+	}
+	for range 2 {
+		var path string
+		select {
+		case path = <-posted:
+		case <-time.After(3 * time.Second):
+			t.Fatal("notification not posted")
+		}
+		request := readDarwinHelperRequest(t, path)
+		index := -1
+		for candidate, id := range chatIDs {
+			if request.ChatID == id {
+				index = candidate
+			}
+		}
+		if index < 0 || request.ActivationSocket != receivers[index].socketPath || request.ActivationToken != receivers[index].token || request.Version != 1 ||
+			request.Title != "walite" || request.Body != "New WhatsApp message" {
+			t.Fatal("notification contains another instance's activation metadata or changed privacy text")
+		}
+		// The published metadata must authenticate to its exact receiver.
+		command, err := json.Marshal(chatActivationCommand{Version: 1, ChatID: request.ChatID, Token: request.ActivationToken})
+		if err != nil {
+			t.Fatal("could not encode activation")
+		}
+		sendActivationBytes(t, receivers[index], command)
+		if activation := <-receivers[index].activations; activation.ChatID != request.ChatID {
+			t.Fatal("activation identity changed")
+		}
+	}
+	close(release)
+	for range 2 {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, receiver := range receivers {
+		assertApplicationActivationCleanup(t, receiver)
+	}
+	if helper.activationSocket != "" || helper.activationToken != "" {
+		t.Fatal("applications mutated shared helper backend")
 	}
 }
 
