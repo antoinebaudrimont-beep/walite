@@ -217,6 +217,16 @@ func runStartedApplicationWithCapabilities(
 ) error {
 	runCtx, cancel := context.WithCancel(parent)
 	defer cancel()
+	var chatActivations <-chan tui.ChatActivationRequest
+	if capabilities.newChatActivation != nil {
+		// Optional IPC is owned by this application run. The receiver retains
+		// its private socketPath/token for future helper integration; neither
+		// crosses the TUI boundary or the version-1 notification request.
+		if receiver, err := capabilities.newChatActivation(runCtx); err == nil && receiver != nil {
+			defer receiver.stop()
+			chatActivations = receiver.activations
+		}
+	}
 	media, err := newMediaWorkerForCapabilities(runCtx, serviceCore, capabilities)
 	if err != nil {
 		return fmt.Errorf("construct media worker: %w", err)
@@ -317,7 +327,8 @@ func runStartedApplicationWithCapabilities(
 			Send: sender.admit, SendResults: sender.results,
 			DisplayUpdates: displayUpdates,
 			SummaryUpdates: loader.summaries, ChatLoads: loader.chats, LoadChat: loader.requestChat,
-			OlderHistory: olderHistory.admit, OlderResults: olderHistory.results,
+			ChatActivations: chatActivations,
+			OlderHistory:    olderHistory.admit, OlderResults: olderHistory.results,
 			PersistLocalRead: loader.requestLocalRead,
 			SendReadReceipt:  readReceipts.admit,
 			Media:            media.admit, MediaResults: media.results, CloseMedia: media.close,

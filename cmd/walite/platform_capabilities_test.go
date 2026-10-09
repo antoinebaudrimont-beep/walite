@@ -35,7 +35,7 @@ func TestLinuxCapabilitySelectionPreservesValidatedHelpers(t *testing.T) {
 	if !pairingOK || pairing.command != available["xfce4-terminal"] ||
 		!openerOK || opener.command != available["xdg-open"] ||
 		!clipboardOK || clipboard.command != available["xclip"] || strings.Join(clipboard.args, "\x00") != "-selection\x00clipboard\x00-in" ||
-		!inlineOK || inline.binary != available["ueberzugpp"] || !notifierOK || notifier.command != available["notify-send"] || capabilities.platformError != nil {
+		!inlineOK || inline.binary != available["ueberzugpp"] || !notifierOK || notifier.command != available["notify-send"] || capabilities.platformError != nil || capabilities.newChatActivation != nil {
 		t.Fatalf("capabilities=%+v pairing=%+v opener=%+v clipboard=%+v inline=%+v", capabilities, pairing, opener, clipboard, inline)
 	}
 }
@@ -87,7 +87,7 @@ func TestDarwinCapabilitySelectionUsesBuiltInToolsWithoutITerm(t *testing.T) {
 	notifier, notifierOK := capabilities.notifier.(darwinNotificationBackend)
 	if !pairingOK || pairing.command != available["osascript"] || !openerOK || opener.command != available["open"] ||
 		!clipboardOK || clipboard.command != available["pbcopy"] || !notifierOK || notifier.command != available["osascript"] || !capabilities.systemMedia ||
-		capabilities.platformError != nil {
+		capabilities.platformError != nil || capabilities.newChatActivation != nil {
 		t.Fatalf("capabilities=%+v", capabilities)
 	}
 	if strings.Contains(strings.Join(probed, " "), "iTerm") {
@@ -138,7 +138,7 @@ func TestDarwinCapabilitySelectionPrefersInstalledNotificationHelper(t *testing.
 		},
 	})
 	backend, ok := capabilities.notifier.(fallbackNotificationBackend)
-	if !ok {
+	if !ok || capabilities.newChatActivation == nil {
 		t.Fatalf("notifier=%T want fallbackNotificationBackend", capabilities.notifier)
 	}
 	helper, ok := backend.preferred.(*darwinHelperNotificationBackend)
@@ -187,7 +187,7 @@ func TestDarwinCapabilitySelectionFallsBackWhenHelperCannotInitialize(t *testing
 			capabilities := selectPlatformCapabilitiesWithOptions("darwin", darwinToolLookup, platformCapabilityOptions{
 				darwinNotificationHelperPath: test.helperPath,
 			})
-			if _, ok := capabilities.notifier.(darwinNotificationBackend); !ok {
+			if _, ok := capabilities.notifier.(darwinNotificationBackend); !ok || capabilities.newChatActivation != nil {
 				t.Fatalf("notifier=%T want darwinNotificationBackend", capabilities.notifier)
 			}
 		})

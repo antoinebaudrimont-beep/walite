@@ -36,14 +36,15 @@ type desktopNotifier interface {
 }
 
 type platformCapabilities struct {
-	pairing       pairingPresenter
-	opener        systemOpener
-	clipboard     clipboard
-	notifier      desktopNotifier
-	inlineImage   mediaPreviewer
-	newExternal   func() externalMediaPreviewer
-	systemMedia   bool
-	platformError error
+	pairing           pairingPresenter
+	opener            systemOpener
+	clipboard         clipboard
+	notifier          desktopNotifier
+	newChatActivation func(context.Context) (*chatActivationReceiver, error)
+	inlineImage       mediaPreviewer
+	newExternal       func() externalMediaPreviewer
+	systemMedia       bool
+	platformError     error
 }
 
 type commandPairingPresenter struct {
@@ -169,6 +170,7 @@ func selectPlatformCapabilitiesWithOptions(
 				options.notificationRunner,
 			)
 			if err == nil {
+				capabilities.newChatActivation = newChatActivationReceiver
 				capabilities.notifier = helper
 				if fallback != nil {
 					capabilities.notifier = fallbackNotificationBackend{preferred: helper, fallback: fallback}
