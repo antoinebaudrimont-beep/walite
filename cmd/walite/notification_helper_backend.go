@@ -31,15 +31,36 @@ type darwinHelperRequest struct {
 	Body           string `json:"body"`
 }
 
-// darwinHelperNotificationBackend is intentionally not wired into platform
-// capability selection yet. A successful launch leaves the private request for
-// the helper to delete after reading it; abandoned requests older than one day
-// are removed the next time a backend is initialized.
+// A successful launch leaves the private request for the helper to delete after
+// reading it; abandoned requests older than one day are removed the next time a
+// backend is initialized.
 type darwinHelperNotificationBackend struct {
 	helperPath  string
 	requestDir  string
 	sessionUUID string
 	run         notificationCommandRunner
+}
+
+type fallbackNotificationBackend struct {
+	preferred desktopNotifier
+	fallback  desktopNotifier
+}
+
+func (backend fallbackNotificationBackend) Notify(ctx context.Context, notification tui.Notification) error {
+	if backend.preferred == nil {
+		if backend.fallback == nil {
+			return errCapabilityUnavailable
+		}
+		return backend.fallback.Notify(ctx, notification)
+	}
+	err := backend.preferred.Notify(ctx, notification)
+	if err == nil || ctx.Err() != nil || backend.fallback == nil {
+		return err
+	}
+	if fallbackErr := backend.fallback.Notify(ctx, notification); fallbackErr != nil {
+		return errors.Join(err, fallbackErr)
+	}
+	return nil
 }
 
 func newDarwinHelperNotificationBackend(helperPath string, run notificationCommandRunner) (*darwinHelperNotificationBackend, error) {

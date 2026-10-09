@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -117,6 +118,133 @@ func TestDarwinCapabilitySelectionUsesBuiltInToolsWithoutITerm(t *testing.T) {
 	if len(calls) != 2 || calls[0].name != available["open"] || len(calls[0].args) != 1 || calls[0].args[0] != value || calls[0].input != "" ||
 		calls[1].name != available["pbcopy"] || len(calls[1].args) != 0 || calls[1].input != value {
 		t.Fatalf("calls=%+v", calls)
+	}
+}
+
+func TestDarwinCapabilitySelectionPrefersInstalledNotificationHelper(t *testing.T) {
+	home := t.TempDir()
+	helperPath := filepath.Join(home, "Applications", darwinNotificationHelperAppName)
+	if err := os.MkdirAll(helperPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("ITERM_SESSION_ID", testITermSessionID)
+	var calls []string
+	capabilities := selectPlatformCapabilitiesWithOptions("darwin", darwinToolLookup, platformCapabilityOptions{
+		darwinNotificationHelperPath: helperPath,
+		notificationRunner: func(_ context.Context, command string, _ []string) error {
+			calls = append(calls, command)
+			return nil
+		},
+	})
+	backend, ok := capabilities.notifier.(fallbackNotificationBackend)
+	if !ok {
+		t.Fatalf("notifier=%T want fallbackNotificationBackend", capabilities.notifier)
+	}
+	helper, ok := backend.preferred.(*darwinHelperNotificationBackend)
+	if !ok || helper.helperPath != helperPath || helper.sessionUUID != "235DEA09-F11A-4853-B92F-CC1E3E85DE65" {
+		t.Fatalf("preferred=%T %+v", backend.preferred, helper)
+	}
+	if _, ok := backend.fallback.(darwinNotificationBackend); !ok {
+		t.Fatalf("fallback=%T want darwinNotificationBackend", backend.fallback)
+	}
+
+	// Selection captures the originating session; later environment changes do
+	// not redirect an already initialized Walite instance.
+	t.Setenv("ITERM_SESSION_ID", "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE")
+	if err := capabilities.notifier.Notify(context.Background(), tui.Notification{Title: "title", Body: "body"}); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(calls, []string{darwinOpenCommand}) {
+		t.Fatalf("commands=%v", calls)
+	}
+	requests := requestFiles(t, filepath.Join(home, "Library", "Caches", "walite"))
+	if len(requests) != 1 {
+		t.Fatalf("requests=%v", requests)
+	}
+	if got := readDarwinHelperRequest(t, requests[0]).SessionUUID; got != "235DEA09-F11A-4853-B92F-CC1E3E85DE65" {
+		t.Fatalf("session UUID=%q", got)
+	}
+}
+
+func TestDarwinCapabilitySelectionFallsBackWhenHelperCannotInitialize(t *testing.T) {
+	home := t.TempDir()
+	installedHelper := filepath.Join(home, "Applications", darwinNotificationHelperAppName)
+	if err := os.MkdirAll(installedHelper, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+
+	for _, test := range []struct {
+		name, sessionID, helperPath string
+	}{
+		{name: "missing helper", sessionID: testITermSessionID, helperPath: filepath.Join(home, "Applications", "Missing.app")},
+		{name: "missing session", helperPath: installedHelper},
+		{name: "invalid session", sessionID: "not-an-iterm-session", helperPath: installedHelper},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("ITERM_SESSION_ID", test.sessionID)
+			capabilities := selectPlatformCapabilitiesWithOptions("darwin", darwinToolLookup, platformCapabilityOptions{
+				darwinNotificationHelperPath: test.helperPath,
+			})
+			if _, ok := capabilities.notifier.(darwinNotificationBackend); !ok {
+				t.Fatalf("notifier=%T want darwinNotificationBackend", capabilities.notifier)
+			}
+		})
+	}
+}
+
+func TestDarwinHelperLaunchFailureUsesAppleScriptFallback(t *testing.T) {
+	home := t.TempDir()
+	helperPath := filepath.Join(home, "Applications", darwinNotificationHelperAppName)
+	if err := os.MkdirAll(helperPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("ITERM_SESSION_ID", testITermSessionID)
+	launchError := errors.New("synthetic helper launch failure")
+	var calls []string
+	capabilities := selectPlatformCapabilitiesWithOptions("darwin", darwinToolLookup, platformCapabilityOptions{
+		darwinNotificationHelperPath: helperPath,
+		notificationRunner: func(_ context.Context, command string, _ []string) error {
+			calls = append(calls, command)
+			if command == darwinOpenCommand {
+				return launchError
+			}
+			return nil
+		},
+	})
+	if err := capabilities.notifier.Notify(context.Background(), tui.Notification{Title: "title", Body: "body"}); err != nil {
+		t.Fatalf("fallback notification error=%v", err)
+	}
+	if want := []string{darwinOpenCommand, "/usr/bin/osascript"}; !reflect.DeepEqual(calls, want) {
+		t.Fatalf("commands=%v want=%v", calls, want)
+	}
+	if requests := requestFiles(t, filepath.Join(home, "Library", "Caches", "walite")); len(requests) != 0 {
+		t.Fatalf("failed helper launch retained requests: %v", requests)
+	}
+}
+
+func TestDarwinHelperSelectionDoesNotChangeLinuxBackend(t *testing.T) {
+	t.Setenv("ITERM_SESSION_ID", testITermSessionID)
+	capabilities := selectPlatformCapabilitiesWithOptions("linux", func(name string) (string, error) {
+		if name == "notify-send" {
+			return "/usr/bin/notify-send", nil
+		}
+		return "", os.ErrNotExist
+	}, platformCapabilityOptions{darwinNotificationHelperPath: "/Applications/Walite Notifications.app"})
+	notifier, ok := capabilities.notifier.(notifySendBackend)
+	if !ok || notifier.command != "/usr/bin/notify-send" {
+		t.Fatalf("notifier=%T %+v", capabilities.notifier, notifier)
+	}
+}
+
+func darwinToolLookup(name string) (string, error) {
+	switch name {
+	case "osascript", "open", "pbcopy":
+		return "/usr/bin/" + name, nil
+	default:
+		return "", os.ErrNotExist
 	}
 }
 

@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -103,13 +105,39 @@ func (unavailableInlinePreviewer) Close() error { return nil }
 
 type executableLookup func(string) (string, error)
 
+const darwinNotificationHelperAppName = "Walite Notifications.app"
+
+type platformCapabilityOptions struct {
+	darwinNotificationHelperPath string
+	notificationRunner           notificationCommandRunner
+}
+
 // defaultPlatformCapabilities is the only runtime OS selection point in the
 // executable. Optional tools are probed independently and never gate startup.
 func defaultPlatformCapabilities() platformCapabilities {
-	return selectPlatformCapabilities(runtime.GOOS, exec.LookPath)
+	options := platformCapabilityOptions{notificationRunner: runNotificationCommand}
+	if runtime.GOOS == "darwin" {
+		if home, err := os.UserHomeDir(); err == nil {
+			options.darwinNotificationHelperPath = filepath.Join(home, "Applications", darwinNotificationHelperAppName)
+		}
+	}
+	return selectPlatformCapabilitiesWithOptions(runtime.GOOS, exec.LookPath, options)
 }
 
 func selectPlatformCapabilities(goos string, lookup executableLookup) platformCapabilities {
+	return selectPlatformCapabilitiesWithOptions(goos, lookup, platformCapabilityOptions{
+		notificationRunner: runNotificationCommand,
+	})
+}
+
+func selectPlatformCapabilitiesWithOptions(
+	goos string,
+	lookup executableLookup,
+	options platformCapabilityOptions,
+) platformCapabilities {
+	if options.notificationRunner == nil {
+		options.notificationRunner = runNotificationCommand
+	}
 	capabilities := platformCapabilities{
 		pairing:     unavailablePairingPresenter{cause: errors.New("pairing presenter unavailable")},
 		inlineImage: unavailableInlinePreviewer{},
@@ -120,16 +148,32 @@ func selectPlatformCapabilities(goos string, lookup executableLookup) platformCa
 		return capabilities
 	}
 	if goos == "darwin" {
+		var fallback desktopNotifier
 		if command, err := lookup("osascript"); err == nil {
 			capabilities.pairing = darwinPairingPresenter{command: command, run: runPairingCommand}
-			capabilities.notifier = darwinNotificationBackend{command: command, run: runNotificationCommand}
+			fallback = darwinNotificationBackend{command: command, run: options.notificationRunner}
+			capabilities.notifier = fallback
 		}
+		openAvailable := false
 		if command, err := lookup("open"); err == nil {
 			capabilities.opener = commandSystemOpener{command: command, run: runLinkCommand}
 			capabilities.systemMedia = true
+			openAvailable = true
 		}
 		if command, err := lookup("pbcopy"); err == nil {
 			capabilities.clipboard = commandClipboard{command: command, run: runLinkCommand}
+		}
+		if openAvailable && options.darwinNotificationHelperPath != "" {
+			helper, err := newDarwinHelperNotificationBackend(
+				options.darwinNotificationHelperPath,
+				options.notificationRunner,
+			)
+			if err == nil {
+				capabilities.notifier = helper
+				if fallback != nil {
+					capabilities.notifier = fallbackNotificationBackend{preferred: helper, fallback: fallback}
+				}
+			}
 		}
 		return capabilities
 	}
@@ -152,7 +196,7 @@ func selectPlatformCapabilities(goos string, lookup executableLookup) platformCa
 		capabilities.inlineImage = &ueberzugPreviewer{binary: command}
 	}
 	if command, err := lookup("notify-send"); err == nil {
-		capabilities.notifier = notifySendBackend{command: command, run: runNotificationCommand}
+		capabilities.notifier = notifySendBackend{command: command, run: options.notificationRunner}
 	}
 	return capabilities
 }
