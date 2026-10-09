@@ -2,7 +2,7 @@ import AppKit
 import UserNotifications
 import os
 
-private let logger = Logger(subsystem: "io.github.antoinebaudrimontbeep.walite.notifications", category: "notification")
+private let logger = Logger(subsystem: "io.github.antoinebaudrimontbeep.walite.notifier", category: "notification")
 
 final class NotifierDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private let center = UNUserNotificationCenter.current()

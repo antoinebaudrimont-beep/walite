@@ -73,7 +73,7 @@ From the repository root on macOS, with Apple Command Line Tools installed:
 ```
 
 The build creates `~/Applications/Walite Notifications.app`, with bundle ID
-`io.github.antoinebaudrimontbeep.walite.notifications` and an ad hoc signature.
+`io.github.antoinebaudrimontbeep.walite.notifier` and an ad hoc signature.
 It refuses to overwrite an existing app. `WALITE_NOTIFIER_BUILD_DIR` can select a
 different build directory; use an Applications location for the notification
 test, because macOS must find and validate the app. No third-party runtime is
@@ -91,6 +91,79 @@ To build an isolated validation copy without replacing the installed helper:
 WALITE_NOTIFIER_BUILD_DIR=$(mktemp -d /private/tmp/walite-notifier-build.XXXXXX) \
   ./platform/macos-notifier/build.sh
 ```
+
+### Official Walite icon and permanent identity
+
+[`assets/walite-icon.png`](../../assets/walite-icon.png) is the single artwork
+source. It is a byte-for-byte copy of the supplied official PNG (1254 × 1254,
+RGB). The original appearance, background and source resolution are preserved;
+no redraw, recoloring, cropping or transparency changes are applied.
+
+`generate-icon.sh` uses macOS `sips` and `iconutil` to make the standard 16, 32,
+128, 256 and 512 point representations, each at 1× and 2× (16 through 1024
+pixels). Temporary PNG representations are packed into
+`Contents/Resources/Walite.icns`; `CFBundleIconFile` names that file. Resources
+are installed before ad hoc signing and strict verification. Intermediate
+iconsets and generated ICNS files are build outputs; keep them and compiled apps
+out of Git. The Desktop image is not needed for future builds. Repeated builds
+are checked for identical ICNS bytes with the current macOS tools; other tool/OS
+versions are not guaranteed to produce identical compressed bytes.
+
+The source must decode as a square PNG at least 1024 pixels wide. Missing,
+malformed, undersized or rectangular sources fail the build without publishing
+an app; there is no silent artwork substitution or upscaling. Both the generator
+and ordinary app build refuse existing outputs. Terminal icon detection,
+`WALITE_TERMINAL_APP` and its obsolete tests have been removed. Their prior work
+was archived privately before removal; historical results remain in TEST_RESULTS.md.
+Linux use of the same PNG is a separate future task; Linux notifications and
+packaging are unchanged here.
+
+The permanent bundle identifier is
+`io.github.antoinebaudrimontbeep.walite.notifier`. Logging uses the same subsystem.
+The app name/path remain **Walite Notifications** and
+`~/Applications/Walite Notifications.app`, so existing Go discovery is unchanged.
+Notification JSON, IPC, chat selection and iTerm2 restoration are unchanged.
+This artwork/identity update is build **3**, display version **0.1**. Maintain
+`CFBundleVersion` explicitly in build.sh and increase it for published helper
+updates; maintain the display version separately.
+
+The previous identity's notification icon remained generic despite correct
+Finder artwork, reboot and a build-number increment. A fresh-identity native
+probe displayed the same terminal icon correctly. That motivated this permanent
+identity change; the exact internal macOS metadata cause remains unconfirmed.
+
+### Controlled installation and permissions
+
+An ordinary build never overwrites an installed helper. For updates:
+
+1. Build into a fresh separate directory and run `test.sh` first.
+2. Record the installed bundle ID, build number, signature and file hashes.
+   Make a verified private archive/`.bundle` backup outside Applications. Do not
+   register a duplicate `.app` backup with Launch Services. Retain older backups.
+3. Quit the currently running helper cleanly and verify it has exited.
+4. Replace the app at the existing path with the verified build. Check all copied
+   files and the final signature. Launch this exact path and verify the new
+   process, executable path and bundle ID; avoid duplicate helper processes.
+5. Allow notifications for **Walite Notifications** under the new identity when
+   macOS asks. Allow iTerm2 Automation access on a new notification click if asked.
+   Keep existing permission records, caches and system databases intact.
+6. Inspect a **new** notification, Finder and Notification settings visually.
+   Check exact window/tab/session restoration, originating-chat selection,
+   independent A/B targets, unfinished drafts and missing IPC. Request acceptance
+   and IPC dispatch logs are not proof that the UI changed conversations.
+7. If functionality regresses, stop the new helper and restore the verified
+   backup at the same path, then verify its signature and process identity.
+
+Old notification permission entries may remain under the previous identity.
+Previously delivered notifications belong to that identity and cannot validate
+the new helper. Chat activation targets are in memory and disappear when the
+helper exits, so always generate fresh requests for testing after replacement.
+No system-wide permission, database or cache reset is part of this procedure.
+The 2026-10-09 controlled installation passed human confirmation in Finder,
+Notification Centre and Notification settings. Local A/B clicks, exact tab/session
+restoration, draft protection and post-exit/missing-IPC safety passed. The new
+notification permission was enabled by the user; old records and caches remained
+intact. See TEST_RESULTS.md for evidence scope and remaining limits.
 
 ## Manual click and two-session test
 
