@@ -19,7 +19,7 @@ const testITermSessionID = "w0t0p0:235dea09-f11a-4853-b92f-cc1e3e85de65"
 
 func TestDarwinHelperBackendSerializesPrivateVersionedRequestAndDirectArguments(t *testing.T) {
 	backend, requestDir, helperPath := newTestDarwinHelperBackend(t, testITermSessionID, func(context.Context, string, []string) error { return nil })
-	notification := tui.Notification{Title: `Alice --flag "quotes"`, Body: "Café 🖕 A&B"}
+	notification := tui.Notification{ChatID: "chat@lid", Title: `Alice --flag "quotes"`, Body: "Café 🖕 A&B"}
 	var gotCommand string
 	var gotArguments []string
 	backend.run = func(_ context.Context, command string, arguments []string) error {
@@ -42,6 +42,17 @@ func TestDarwinHelperBackendSerializesPrivateVersionedRequestAndDirectArguments(
 		t.Fatalf("arguments=%q want=%q", gotArguments, want)
 	}
 	request := readDarwinHelperRequest(t, requestPath)
+	data, err := os.ReadFile(requestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if len(fields) != 5 || strings.Contains(string(data), notification.ChatID) {
+		t.Fatalf("version-1 helper request changed: fields=%v", fields)
+	}
 	if request.Version != darwinHelperRequestVersion || request.NotificationID == "" ||
 		request.SessionUUID != "235DEA09-F11A-4853-B92F-CC1E3E85DE65" ||
 		request.Title != notification.Title || request.Body != notification.Body {

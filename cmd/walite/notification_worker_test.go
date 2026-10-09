@@ -21,8 +21,9 @@ func (function notificationBackendFunc) Notify(ctx context.Context, notification
 
 func TestNotificationBackendsPassUntrustedTextOnlyAsArguments(t *testing.T) {
 	notification := tui.Notification{
-		Title: `--hello ' " \ & 🖕 👨‍👩‍👧‍👦`,
-		Body:  "line one\nline two: it's \"quoted\" \\ A&B",
+		ChatID: "private-chat@lid",
+		Title:  `--hello ' " \ & 🖕 👨‍👩‍👧‍👦`,
+		Body:   "line one\nline two: it's \"quoted\" \\ A&B",
 	}
 	for _, test := range []struct {
 		name    string
@@ -78,6 +79,22 @@ func TestNotificationBackendsPassUntrustedTextOnlyAsArguments(t *testing.T) {
 				t.Fatal("untrusted notification data entered AppleScript source")
 			}
 		})
+	}
+}
+
+func TestNotificationWorkerPreservesChatIdentity(t *testing.T) {
+	got := make(chan tui.Notification, 1)
+	worker := newNotificationWorker(context.Background(), notificationBackendFunc(func(_ context.Context, notification tui.Notification) error {
+		got <- notification
+		return nil
+	}))
+	defer worker.stop()
+	want := tui.Notification{ChatID: "family@g.us", Title: "walite", Body: "New WhatsApp message"}
+	if !worker.admit(want) {
+		t.Fatal("notification rejected")
+	}
+	if notification := <-got; notification != want {
+		t.Fatalf("notification=%+v want=%+v", notification, want)
 	}
 }
 

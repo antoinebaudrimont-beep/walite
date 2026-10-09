@@ -21,7 +21,7 @@ func notificationForLiveMessage(model *viewModel, event LiveMessage, mutation li
 		return Notification{}, false
 	}
 	if !model.options.NotificationPreviews {
-		return Notification{Title: "walite", Body: "New WhatsApp message"}, true
+		return Notification{ChatID: event.ChatID, Title: "walite", Body: "New WhatsApp message"}, true
 	}
 	chatIndex, ok := model.chats.chatIndexByID(event.ChatID)
 	if !ok {
@@ -57,8 +57,9 @@ func notificationForLiveMessage(model *viewModel, event LiveMessage, mutation li
 		body = "New message"
 	}
 	return Notification{
-		Title: sanitizeNotificationText(title, notificationTitleLimit),
-		Body:  body,
+		ChatID: event.ChatID,
+		Title:  sanitizeNotificationText(title, notificationTitleLimit),
+		Body:   body,
 	}, true
 }
 

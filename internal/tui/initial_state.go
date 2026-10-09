@@ -97,8 +97,11 @@ type LiveMessage struct {
 // Notification is the bounded, transport-neutral desktop presentation passed
 // to the application-owned platform worker.
 type Notification struct {
-	Title string
-	Body  string
+	// ChatID is the authoritative stable identity, independent of preview text
+	// and chat-list ordering. Platform presentation must not display this field.
+	ChatID string
+	Title  string
+	Body   string
 }
 
 // SendRequest is an immutable-by-convention outgoing presentation request.
