@@ -31,7 +31,8 @@ cat > "$stage_app/Contents/Info.plist" <<'PLIST'
 </dict></plist>
 PLIST
 
-xcrun swiftc "$script_dir/NotificationRequest.swift" "$script_dir/WaliteNotifier.swift" \
+xcrun swiftc "$script_dir/NotificationRequest.swift" "$script_dir/ChatActivation.swift" \
+	"$script_dir/SessionRestoration.swift" "$script_dir/WaliteNotifier.swift" \
 	-o "$stage_app/Contents/MacOS/WaliteNotifier"
 plutil -lint "$stage_app/Contents/Info.plist"
 codesign --force --sign - "$stage_app"

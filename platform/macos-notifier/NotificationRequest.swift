@@ -6,11 +6,45 @@ struct NotificationRequest: Decodable {
     let sessionUUID: String
     let title: String
     let body: String
+    let activation: ChatActivationTarget?
+    let rejectedActivationMetadata: Bool
 
     enum CodingKeys: String, CodingKey {
         case version, title, body
         case notificationID = "notification_id"
         case sessionUUID = "session_uuid"
+        case chatID = "chat_id"
+        case activationSocket = "activation_socket"
+        case activationToken = "activation_token"
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        version = try values.decode(Int.self, forKey: .version)
+        notificationID = try values.decode(String.self, forKey: .notificationID)
+        sessionUUID = try values.decode(String.self, forKey: .sessionUUID)
+        title = try values.decode(String.self, forKey: .title)
+        body = try values.decode(String.self, forKey: .body)
+        let supplied = [CodingKeys.chatID, .activationSocket, .activationToken].contains { values.contains($0) }
+        if let chatID = try? values.decode(String.self, forKey: .chatID),
+           let socket = try? values.decode(String.self, forKey: .activationSocket),
+           let token = try? values.decode(String.self, forKey: .activationToken) {
+            activation = ChatActivationTarget(chatID: chatID, socketPath: socket, token: token)
+        } else {
+            activation = nil
+        }
+        rejectedActivationMetadata = supplied && activation == nil
+    }
+
+    private init(version: Int, notificationID: String, sessionUUID: String, title: String,
+                 body: String, activation: ChatActivationTarget?, rejectedActivationMetadata: Bool) {
+        self.version = version
+        self.notificationID = notificationID
+        self.sessionUUID = sessionUUID
+        self.title = title
+        self.body = body
+        self.activation = activation
+        self.rejectedActivationMetadata = rejectedActivationMetadata
     }
 
     enum ValidationError: Error {
@@ -27,7 +61,9 @@ struct NotificationRequest: Decodable {
             throw ValidationError.invalidSessionUUID
         }
         return NotificationRequest(version: request.version, notificationID: request.notificationID,
-                                   sessionUUID: uuid, title: request.title, body: request.body)
+                                   sessionUUID: uuid, title: request.title, body: request.body,
+                                   activation: request.activation,
+                                   rejectedActivationMetadata: request.rejectedActivationMetadata)
     }
 
     // Match the Go backend's 36-byte hexadecimal UUID shape, without a pane prefix.

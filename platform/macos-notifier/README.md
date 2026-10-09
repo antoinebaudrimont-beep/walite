@@ -3,8 +3,7 @@
 See [TEST_RESULTS.md](TEST_RESULTS.md) for the on-Mac automated and manual results.
 
 Standalone helper for the version-1 request written by
-`cmd/walite/notification_helper_backend.go`. Production Go selection and workers
-are not connected to this helper yet. The validated implementation under
+`cmd/walite/notification_helper_backend.go`. The validated implementation under
 `prototypes/macos-click-notification/` is preserved.
 
 ## Contract
@@ -22,13 +21,49 @@ AppleScript window/tab/session traversal; title and body never enter that script
 Authorization is requested once at a time; requests arriving during a permission
 prompt remain queued with their individual IDs, UUIDs and file paths.
 
+Version 1 optionally supplies `chat_id`, `activation_socket` and
+`activation_token` as a complete group. A missing group preserves ordinary
+notifications. Incomplete, null, wrongly typed or invalid activation fields
+disable chat activation while preserving delivery and window restoration.
+Chat IDs use Go's neutral identifier rules: nonblank, at most 512 UTF-8 bytes,
+no control characters; they are never resolved or rewritten. Socket paths must
+be absolute, at most 103 UTF-8 bytes, without NUL, trailing slash or `.`/`..`
+components. Tokens must be the receiver's 64 lowercase hexadecimal characters.
+
+Activation targets are held only in a private in-memory mapping keyed by
+notification ID and bound to its session UUID. `userInfo` still contains only
+the session UUID. Scheduling failures remove the corresponding target; clicks
+consume it once. The map retains at most 256 targets, evicting the oldest at
+capacity. Replacement IDs cannot inherit stale credentials. Quitting the helper
+loses chat activation for previously delivered notifications; their persisted
+session UUID still permits window restoration when macOS delivers the click.
+
+The click callback finishes immediately and queues the existing AppleScript
+traversal on the main queue (at most eight pending clicks, with a five-second
+AppleEvent timeout). Successful restoration precedes asynchronous IPC. At most
+eight socket jobs are admitted; queueing, connection and writes share a
+one-second deadline. A cancelled job exits at the next bounded poll (at most
+20 milliseconds apart); termination cancels pending jobs. An unavailable socket
+does not undo window restoration. Failed restoration skips activation.
+
+Before sending credentials, the helper checks a same-user 0700 parent directory,
+a same-user 0600 socket, no symlink at either endpoint, the connected peer UID,
+and unchanged socket identity. It does not change endpoint permissions. This
+protects against other users, not malicious processes running as the same user.
+IPC uses native Darwin sockets, never a shell. The command has exactly
+`version: 1`, `chat_id` and `token`, and the write side is closed for EOF framing.
+There is no reply, acknowledgement or retry. The Go receiver/TUI remains the
+authority: composing a draft or another guarded UI state rejects activation.
+Cancellation cannot retract bytes already delivered, and `sent` does not imply
+that a conversation was selected. Logs never include IDs, paths or credentials.
+
 A request file is deleted only after `UserNotifications.add` succeeds. Invalid
 JSON, unsupported versions, missing/wrongly typed fields, invalid UUIDs,
 authorization denial, and scheduling failures retain the file. The Go backend
 already removes abandoned owned request files after 24 hours. Logs contain fixed
 status messages only, without notification text, contact names, UUIDs or paths.
 
-## Build and parser checks
+## Build and automated checks
 
 From the repository root on macOS, with Apple Command Line Tools installed:
 
@@ -43,6 +78,19 @@ It refuses to overwrite an existing app. `WALITE_NOTIFIER_BUILD_DIR` can select 
 different build directory; use an Applications location for the notification
 test, because macOS must find and validate the app. No third-party runtime is
 required. The app remains running as an accessory app to receive clicks.
+
+`test.sh` also exercises activation parsing, independent targets, exact JSON
+serialization, two private local Unix receivers, EOF framing, unavailable and
+unsafe endpoints, stalled socket timeout, cancellation and bounded queueing.
+It compiles the restoration AppleScript without executing it. No WhatsApp
+connection, notification permission change or installed app replacement occurs.
+
+To build an isolated validation copy without replacing the installed helper:
+
+```sh
+WALITE_NOTIFIER_BUILD_DIR=$(mktemp -d /private/tmp/walite-notifier-build.XXXXXX) \
+  ./platform/macos-notifier/build.sh
+```
 
 ## Manual click and two-session test
 
@@ -64,6 +112,37 @@ object, or a version-1 object missing `session_uuid` with
 `open -a "$HOME/Applications/Walite Notifications.app" request.json`.
 They must remain on disk and produce no notification. An `open` exit code of zero
 only means Launch Services dispatched the request; it does not confirm delivery.
+
+## Additional manual IPC validation
+
+Use a separate validated build selected explicitly by its app path. macOS may
+confuse two registered copies with the same bundle ID; deliberately select the
+test copy and retain the currently working installed app. Do not reset permissions.
+
+1. With a local test receiver or a Walite test instance, create a private 0600
+   request in a 0700 directory using the contract above. Obtain the socket and
+   token from that receiver; never put them in notification text or test logs.
+2. Post A and B for two different sessions/conversations and independent receiver
+   targets. Keep both notifications. Minimize A's window, click A after B, then
+   repeat for B. Verify exact window/tab/session restoration and the corresponding
+   receiver's command/chat selection. Use synthetic IDs with a local receiver;
+   no WhatsApp connection is needed to check delivery of the command.
+3. Stop the receiver before clicking a fresh notification. Window restoration
+   must still succeed. Repeat with no activation fields and malformed activation
+   fields: those notifications must still restore their sessions.
+4. For the full TUI check, compose a draft, then click a notification for another
+   conversation. The window must return while the current chat and draft remain.
+   The receiver provides no acknowledgement; use the UI to verify this outcome.
+
+Task 3E has now validated the modified installed helper: a real incoming
+notification selected its originating conversation; local fixture notifications
+validated B-then-A targeting, draft preservation, ordinary restoration and
+safe clicks after Walite exit. The local fixture used the actual Go receiver,
+backend, service, TUI and mute worker with a separate synthetic cache, without
+opening a WhatsApp session database. Its muted message produced no desktop
+notification. Real-account mute/settings delivery, multiple simultaneous
+instances and malformed-metadata native clicks remain untested. See
+`TEST_RESULTS.md` for the distinction between live and fixture evidence.
 
 Logout/reboot click delivery, helper termination/relaunch, revoked Automation
 permission, and multiple simultaneous production Walite instances are not yet

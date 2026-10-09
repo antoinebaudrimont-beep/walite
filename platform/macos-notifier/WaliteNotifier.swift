@@ -8,12 +8,17 @@ final class NotifierDelegate: NSObject, NSApplicationDelegate, UNUserNotificatio
     private let center = UNUserNotificationCenter.current()
     private var pendingRequests: [(request: NotificationRequest, path: String)] = []
     private var requestingAuthorization = false
+    private let activationTargets = ChatActivationTargets()
+    private let activationSender = ChatActivationSender()
+    private let clickLock = NSLock()
+    private var pendingClicks = 0
 
     func application(_ sender: NSApplication, openFiles filenames: [String]) {
         var rejected = false
         for filename in filenames {
             do {
                 let request = try NotificationRequest.parse(Data(contentsOf: URL(fileURLWithPath: filename)))
+                if request.rejectedActivationMetadata { logger.error("activation metadata rejected") }
                 post(request, requestPath: filename)
             } catch {
                 // Decoder errors and paths can contain private data; never log them.
@@ -54,8 +59,10 @@ final class NotifierDelegate: NSObject, NSApplicationDelegate, UNUserNotificatio
         content.body = request.body
         content.userInfo = ["session_uuid": request.sessionUUID]
         let notification = UNNotificationRequest(identifier: request.notificationID, content: content, trigger: nil)
+        let generation = activationTargets.register(request)
         center.add(notification) { error in
             guard error == nil else {
+                self.activationTargets.discard(request.notificationID, generation: generation)
                 logger.error("notification request failed")
                 return
             }
@@ -79,35 +86,42 @@ final class NotifierDelegate: NSObject, NSApplicationDelegate, UNUserNotificatio
             return
         }
         logger.info("notification click received")
-
-        // Preserve the window/tab/session traversal validated in the isolated prototype.
-        // Only the validated hexadecimal UUID is interpolated, never notification text.
-        let scriptSource = """
-        tell application id "com.googlecode.iterm2"
-            repeat with w in windows
-                repeat with t in tabs of w
-                    repeat with s in sessions of t
-                        if (unique id of s) is "\(uuid)" then
-                            set miniaturized of w to false
-                            select w
-                            select t
-                            select s
-                            activate
-                            return "Walite restored"
-                        end if
-                    end repeat
-                end repeat
-            end repeat
-        end tell
-        error "Walite session not found"
-        """
-        var errorInfo: NSDictionary?
-        if let script = NSAppleScript(source: scriptSource),
-           script.executeAndReturnError(&errorInfo).stringValue == "Walite restored" {
-            logger.info("session restored")
-        } else {
-            logger.error("session restore failed")
+        clickLock.lock()
+        guard pendingClicks < 8 else {
+            clickLock.unlock()
+            logger.error("notification click queue full")
+            return
         }
+        pendingClicks += 1
+        clickLock.unlock()
+        let target = activationTargets.take(response.notification.request.identifier, sessionUUID: uuid)
+        // Finish the notification callback immediately. Keep AppleScript on the
+        // main queue, followed by nonblocking socket work on a private worker.
+        DispatchQueue.main.async {
+            defer {
+                self.clickLock.lock()
+                self.pendingClicks -= 1
+                self.clickLock.unlock()
+            }
+            guard SessionRestoration.restore(uuid) else {
+                logger.error("session restore failed")
+                return
+            }
+            logger.info("session restored")
+            if let target = target {
+                self.activationSender.submit(target) { result in
+                    if result == .sent {
+                        logger.info("activation command sent")
+                    } else {
+                        logger.error("activation command not sent")
+                    }
+                }
+            }
+        }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        activationSender.cancelAll()
     }
 }
 
