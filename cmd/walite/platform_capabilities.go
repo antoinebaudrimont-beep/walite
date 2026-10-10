@@ -110,6 +110,7 @@ const darwinNotificationHelperAppName = "Walite Notifications.app"
 
 type platformCapabilityOptions struct {
 	darwinNotificationHelperPath string
+	linuxNotificationIconPath    string
 	notificationRunner           notificationCommandRunner
 }
 
@@ -121,6 +122,8 @@ func defaultPlatformCapabilities() platformCapabilities {
 		if home, err := os.UserHomeDir(); err == nil {
 			options.darwinNotificationHelperPath = filepath.Join(home, "Applications", darwinNotificationHelperAppName)
 		}
+	} else if runtime.GOOS == "linux" {
+		options.linuxNotificationIconPath = defaultLinuxNotificationIcon()
 	}
 	return selectPlatformCapabilitiesWithOptions(runtime.GOOS, exec.LookPath, options)
 }
@@ -198,7 +201,7 @@ func selectPlatformCapabilitiesWithOptions(
 		capabilities.inlineImage = &ueberzugPreviewer{binary: command}
 	}
 	if command, err := lookup("notify-send"); err == nil {
-		capabilities.notifier = notifySendBackend{command: command, run: options.notificationRunner}
+		capabilities.notifier = notifySendBackend{command: command, iconPath: options.linuxNotificationIconPath, run: options.notificationRunner}
 	}
 	return capabilities
 }
