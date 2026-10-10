@@ -229,6 +229,13 @@ func runStartedApplicationWithCapabilities(
 		}
 	}
 	notifier := notifierWithChatActivation(capabilities.notifier, activationReceiver)
+	if capabilities.newLinuxNotificationActions != nil {
+		if actions, err := capabilities.newLinuxNotificationActions(runCtx); err == nil && actions != nil {
+			defer actions.stop()
+			notifier = actions
+			chatActivations = actions.activations
+		}
+	}
 	media, err := newMediaWorkerForCapabilities(runCtx, serviceCore, capabilities)
 	if err != nil {
 		return fmt.Errorf("construct media worker: %w", err)

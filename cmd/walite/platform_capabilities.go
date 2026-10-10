@@ -36,15 +36,16 @@ type desktopNotifier interface {
 }
 
 type platformCapabilities struct {
-	pairing           pairingPresenter
-	opener            systemOpener
-	clipboard         clipboard
-	notifier          desktopNotifier
-	newChatActivation func(context.Context) (*chatActivationReceiver, error)
-	inlineImage       mediaPreviewer
-	newExternal       func() externalMediaPreviewer
-	systemMedia       bool
-	platformError     error
+	pairing                     pairingPresenter
+	opener                      systemOpener
+	clipboard                   clipboard
+	notifier                    desktopNotifier
+	newChatActivation           func(context.Context) (*chatActivationReceiver, error)
+	newLinuxNotificationActions func(context.Context) (*linuxNotificationActions, error)
+	inlineImage                 mediaPreviewer
+	newExternal                 func() externalMediaPreviewer
+	systemMedia                 bool
+	platformError               error
 }
 
 type commandPairingPresenter struct {
@@ -111,6 +112,7 @@ const darwinNotificationHelperAppName = "Walite Notifications.app"
 type platformCapabilityOptions struct {
 	darwinNotificationHelperPath string
 	linuxNotificationIconPath    string
+	linuxActions                 *linuxNotificationActionOptions
 	notificationRunner           notificationCommandRunner
 }
 
@@ -124,6 +126,10 @@ func defaultPlatformCapabilities() platformCapabilities {
 		}
 	} else if runtime.GOOS == "linux" {
 		options.linuxNotificationIconPath = defaultLinuxNotificationIcon()
+		options.linuxActions = &linuxNotificationActionOptions{
+			windowID: os.Getenv("WINDOWID"),
+			x11:      os.Getenv("DISPLAY") != "" && os.Getenv("XDG_SESSION_TYPE") != "wayland",
+		}
 	}
 	return selectPlatformCapabilitiesWithOptions(runtime.GOOS, exec.LookPath, options)
 }
@@ -201,7 +207,9 @@ func selectPlatformCapabilitiesWithOptions(
 		capabilities.inlineImage = &ueberzugPreviewer{binary: command}
 	}
 	if command, err := lookup("notify-send"); err == nil {
-		capabilities.notifier = notifySendBackend{command: command, iconPath: options.linuxNotificationIconPath, run: options.notificationRunner}
+		backend := notifySendBackend{command: command, iconPath: options.linuxNotificationIconPath, run: options.notificationRunner}
+		capabilities.notifier = backend
+		capabilities.newLinuxNotificationActions = linuxNotificationActionFactory(lookup, backend, options.linuxActions)
 	}
 	return capabilities
 }

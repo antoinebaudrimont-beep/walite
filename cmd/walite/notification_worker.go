@@ -35,11 +35,16 @@ func (backend notifySendBackend) Notify(ctx context.Context, notification tui.No
 		return errCapabilityUnavailable
 	}
 	args := []string{"--app-name=walite"}
+	args = backend.arguments(notification, args)
+	return backend.run(ctx, backend.command, args)
+}
+
+func (backend notifySendBackend) arguments(notification tui.Notification, args []string) []string {
 	if backend.iconPath != "" {
 		args = append(args, "--icon", backend.iconPath)
 	}
 	args = append(args, "--", notification.Title, notification.Body)
-	return backend.run(ctx, backend.command, args)
+	return args
 }
 
 type darwinNotificationBackend struct {
