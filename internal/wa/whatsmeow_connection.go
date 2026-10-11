@@ -94,6 +94,12 @@ func newWhatsmeowConnectionClient(ctx context.Context, sessionPath string) (*wha
 		}
 		return device.GetAltJID(ctx, jid)
 	}
+	if device.ChatSettings != nil {
+		wrapped.realtime.muteLookup = func(ctx context.Context, jid types.JID) (time.Time, bool, error) {
+			settings, err := device.ChatSettings.GetChatSettings(ctx, jid)
+			return settings.MutedUntil, settings.Found, err
+		}
+	}
 	wrapped.realtime.display = newDisplayResolver(wrapped.realtime.aliases, wrapped.realtime.lookup,
 		func(ctx context.Context, jid types.JID) (types.ContactInfo, error) {
 			if device.Contacts == nil {

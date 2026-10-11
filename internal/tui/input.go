@@ -222,6 +222,25 @@ func moveChatSelection(model *viewModel, delta int) bool {
 	return true
 }
 
+func activateChat(model *viewModel, request ChatActivationRequest) bool {
+	if model == nil || model.chats == nil || model.mode != modeNavigate || model.composer.length != 0 ||
+		model.sendPending || model.sendUncertain || model.settingsOpen || model.quitConfirm ||
+		model.linkPicker.open || model.emojiPicker.open || model.replySelect.valid || model.replyTarget.valid ||
+		model.reactionTarget.valid || model.mediaTarget.active {
+		return false
+	}
+	index, found := model.chats.chatIndexByID(request.ChatID)
+	if !found || index == model.chats.selectedIndex() {
+		return false
+	}
+	if !moveChatSelection(model, index-model.chats.selectedIndex()) {
+		return false
+	}
+	// Opening a conversation should display it when the terminal is single-pane.
+	model.narrowPane = narrowPaneConversation
+	return true
+}
+
 func handleReplySelectionKey(model *viewModel, event *tcell.EventKey, width, height int) bool {
 	switch {
 	case event.Key() == tcell.KeyEscape:

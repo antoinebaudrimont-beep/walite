@@ -140,6 +140,7 @@ func runInitialized(
 	displayUpdates := input.DisplayUpdates
 	summaryUpdates := input.SummaryUpdates
 	chatLoads := input.ChatLoads
+	chatActivations := input.ChatActivations
 	optionsResults := input.OptionsResults
 	mediaResults := input.MediaResults
 	linkResults := input.LinkResults
@@ -150,6 +151,18 @@ func runInitialized(
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case request, ok := <-chatActivations:
+			if !ok {
+				chatActivations = nil
+				continue
+			}
+			if !paste.active && activateChat(&model, request) {
+				requestPendingLocalRead(&model, input.PersistLocalRead)
+				requestPendingReadReceipt(&model, input.SendReadReceipt)
+				requestSelectedChatLoad(&model, input.LoadChat)
+				draw(screen, &model)
+				screen.Show()
+			}
 		case err, ok := <-optionsResults:
 			if !ok {
 				optionsResults = nil

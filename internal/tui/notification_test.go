@@ -58,6 +58,7 @@ func TestNotificationEligibilityIsOnlyNewReadyIncomingInsertion(t *testing.T) {
 	}{
 		{name: "new live incoming", wantNotify: true},
 		{name: "pre-ready reconnect or history", configure: func(_ *viewModel, event *LiveMessage) { event.NotificationEligible = false }},
+		{name: "muted conversation", configure: func(_ *viewModel, event *LiveMessage) { event.NotificationEligible = false }},
 		{name: "own outgoing", configure: func(_ *viewModel, event *LiveMessage) { event.FromMe = true }},
 		{name: "disabled", configure: func(model *viewModel, _ *LiveMessage) { model.options.DesktopNotifications = false }},
 	} {
@@ -95,7 +96,7 @@ func TestNotificationPreviewsOffNeverLeakContentOrMetadata(t *testing.T) {
 		{name: "document", kind: mediaDocument, mediaName: "secret-report.pdf"},
 		{name: "sticker", kind: mediaSticker},
 	}
-	want := Notification{Title: "walite", Body: "New WhatsApp message"}
+	want := Notification{ChatID: "chat@lid", Title: "walite", Body: "New WhatsApp message"}
 	for index, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			model := notificationTestView(t, test.group)
@@ -113,7 +114,7 @@ func TestNotificationPreviewsOffNeverLeakContentOrMetadata(t *testing.T) {
 func TestNotificationPreviewDirectGroupAndFallbackIdentity(t *testing.T) {
 	direct := notificationTestView(t, false)
 	direct.options.NotificationPreviews = true
-	if got := requireNotification(t, &direct, notificationEvent("direct", false)); got != (Notification{Title: "Alice", Body: "Are you coming tonight?"}) {
+	if got := requireNotification(t, &direct, notificationEvent("direct", false)); got != (Notification{ChatID: "chat@lid", Title: "Alice", Body: "Are you coming tonight?"}) {
 		t.Fatalf("direct notification=%+v", got)
 	}
 
@@ -127,7 +128,7 @@ func TestNotificationPreviewDirectGroupAndFallbackIdentity(t *testing.T) {
 	group := notificationTestView(t, true)
 	group.options.NotificationPreviews = true
 	applyDisplayMetadata(&group, DisplayMetadata{ID: "alice@lid", Name: "Alice", Quality: 5})
-	if got := requireNotification(t, &group, notificationEvent("group", true)); got != (Notification{Title: "Alice — Family", Body: "Are you coming tonight?"}) {
+	if got := requireNotification(t, &group, notificationEvent("group", true)); got != (Notification{ChatID: "chat@lid", Title: "Alice — Family", Body: "Are you coming tonight?"}) {
 		t.Fatalf("group notification=%+v", got)
 	}
 
@@ -138,6 +139,53 @@ func TestNotificationPreviewDirectGroupAndFallbackIdentity(t *testing.T) {
 	event.SenderID = "987654@lid"
 	if got := requireNotification(t, &groupFallback, event); got.Title != "987654@lid — family@g.us" {
 		t.Fatalf("group fallback=%+v", got)
+	}
+}
+
+func TestNotificationChatIdentitySurvivesReorderingAndPreviewSettings(t *testing.T) {
+	for _, chatID := range []string{"15550000001@s.whatsapp.net", "987654@lid", "family@g.us"} {
+		for _, previews := range []bool{false, true} {
+			t.Run(chatID+map[bool]string{false: "/private", true: "/preview"}[previews], func(t *testing.T) {
+				at := time.Date(2100, 1, 2, 3, 4, 5, 0, time.UTC)
+				group := strings.HasSuffix(chatID, "@g.us")
+				state, err := chatStateFromInitial(InitialState{Chats: []InitialChat{
+					{ID: "selected@lid", Title: "Selected chat", ActivityTime: at.Add(time.Minute)},
+					{ID: chatID, Title: "Incoming chat", IsGroup: group, ActivityTime: at},
+				}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				model := viewModel{chats: state, options: DefaultOptions(), terminalWidth: 100, terminalHeight: 24}
+				model.options.NotificationPreviews = previews
+				before, ok := state.chatIndexByID(chatID)
+				if !ok || before != 1 {
+					t.Fatalf("initial chat index=%d found=%t", before, ok)
+				}
+				applyDisplayMetadata(&model, DisplayMetadata{ID: "alice@lid", Name: "Alice", Quality: 5})
+				event := notificationEvent("reordered", group)
+				event.ChatID = chatID
+				event.SentAt, event.ActivityTime = at.Add(2*time.Minute), at.Add(2*time.Minute)
+				got := requireNotification(t, &model, event)
+				after, ok := state.chatIndexByID(chatID)
+				if !ok || after != 0 || got.ChatID != chatID {
+					t.Fatalf("reordered chat index=%d found=%t notification=%+v", after, ok, got)
+				}
+				selected, ok := state.selectedChat()
+				if !ok || selected.id != "selected@lid" {
+					t.Fatal("background message changed the selected chat")
+				}
+				want := Notification{ChatID: chatID, Title: "walite", Body: "New WhatsApp message"}
+				if previews {
+					want.Title, want.Body = "Incoming chat", event.Text
+					if group {
+						want.Title = "Alice — Incoming chat"
+					}
+				}
+				if got != want {
+					t.Fatalf("notification=%+v want=%+v", got, want)
+				}
+			})
+		}
 	}
 }
 
@@ -309,7 +357,7 @@ func TestRunNotifiesOnlyForEligibleLiveInsertion(t *testing.T) {
 		Text: "new live", BodyRetained: true, UnreadCount: 1, NotificationEligible: true,
 	}
 	live <- event
-	if notification := <-notifications; notification != (Notification{Title: "walite", Body: "New WhatsApp message"}) {
+	if notification := <-notifications; notification != (Notification{ChatID: event.ChatID, Title: "walite", Body: "New WhatsApp message"}) {
 		t.Fatalf("notification=%+v", notification)
 	}
 	<-screen.shown

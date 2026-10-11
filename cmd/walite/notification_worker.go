@@ -25,15 +25,26 @@ func runNotificationCommand(ctx context.Context, command string, args []string) 
 }
 
 type notifySendBackend struct {
-	command string
-	run     notificationCommandRunner
+	command  string
+	iconPath string
+	run      notificationCommandRunner
 }
 
 func (backend notifySendBackend) Notify(ctx context.Context, notification tui.Notification) error {
 	if backend.command == "" || backend.run == nil {
 		return errCapabilityUnavailable
 	}
-	return backend.run(ctx, backend.command, []string{"--app-name=walite", "--", notification.Title, notification.Body})
+	args := []string{"--app-name=walite"}
+	args = backend.arguments(notification, args)
+	return backend.run(ctx, backend.command, args)
+}
+
+func (backend notifySendBackend) arguments(notification tui.Notification, args []string) []string {
+	if backend.iconPath != "" {
+		args = append(args, "--icon", backend.iconPath)
+	}
+	args = append(args, "--", notification.Title, notification.Body)
+	return args
 }
 
 type darwinNotificationBackend struct {

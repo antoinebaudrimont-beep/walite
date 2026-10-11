@@ -217,6 +217,25 @@ func runStartedApplicationWithCapabilities(
 ) error {
 	runCtx, cancel := context.WithCancel(parent)
 	defer cancel()
+	var chatActivations <-chan tui.ChatActivationRequest
+	var activationReceiver *chatActivationReceiver
+	if capabilities.newChatActivation != nil {
+		// Optional IPC is owned by this application run. Its credentials stay
+		// in the private helper request; only activations cross the TUI boundary.
+		if receiver, err := capabilities.newChatActivation(runCtx); err == nil && receiver != nil {
+			defer receiver.stop()
+			activationReceiver = receiver
+			chatActivations = receiver.activations
+		}
+	}
+	notifier := notifierWithChatActivation(capabilities.notifier, activationReceiver)
+	if capabilities.newLinuxNotificationActions != nil {
+		if actions, err := capabilities.newLinuxNotificationActions(runCtx); err == nil && actions != nil {
+			defer actions.stop()
+			notifier = actions
+			chatActivations = actions.activations
+		}
+	}
 	media, err := newMediaWorkerForCapabilities(runCtx, serviceCore, capabilities)
 	if err != nil {
 		return fmt.Errorf("construct media worker: %w", err)
@@ -224,7 +243,7 @@ func runStartedApplicationWithCapabilities(
 	defer media.stop()
 	links := newLinkWorkerWithCapabilities(runCtx, capabilities.opener, capabilities.clipboard)
 	defer links.stop()
-	notifications := newNotificationWorker(runCtx, capabilities.notifier)
+	notifications := newNotificationWorker(runCtx, notifier)
 	defer notifications.stop()
 
 	liveMessages := make(chan tui.LiveMessage, livePresentationCapacity)
@@ -317,7 +336,8 @@ func runStartedApplicationWithCapabilities(
 			Send: sender.admit, SendResults: sender.results,
 			DisplayUpdates: displayUpdates,
 			SummaryUpdates: loader.summaries, ChatLoads: loader.chats, LoadChat: loader.requestChat,
-			OlderHistory: olderHistory.admit, OlderResults: olderHistory.results,
+			ChatActivations: chatActivations,
+			OlderHistory:    olderHistory.admit, OlderResults: olderHistory.results,
 			PersistLocalRead: loader.requestLocalRead,
 			SendReadReceipt:  readReceipts.admit,
 			Media:            media.admit, MediaResults: media.results, CloseMedia: media.close,

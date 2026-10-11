@@ -5,8 +5,10 @@ import (
 	"errors"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/antoinebaudrimont-beep/walite/internal/model"
+	"go.mau.fi/whatsmeow/types"
 )
 
 const RealtimeSourceCapacity = 64
@@ -21,6 +23,8 @@ type realtimeEntry struct {
 }
 
 var errRealtimeHistoryUnavailable = errors.New("WhatsApp realtime source has no history")
+
+type chatMuteLookup func(context.Context, types.JID) (time.Time, bool, error)
 
 // RealtimeSource is the single bounded bridge from the long-lived WhatsApp
 // callback into service.Core. The callback applies backpressure when the ring
@@ -50,6 +54,8 @@ type RealtimeSource struct {
 	closeOnce         sync.Once
 	aliases           *chatAliases
 	lookup            alternateJIDLookup
+	muteLookup        chatMuteLookup
+	now               func() time.Time
 	display           *displayResolver
 }
 
@@ -69,6 +75,7 @@ func newRealtimeSource() *RealtimeSource {
 		bootstrap: make(chan model.BootstrapRecord, BootstrapRecordCapacity),
 		history:   history,
 		status:    status,
+		now:       time.Now,
 	}
 }
 
@@ -283,6 +290,7 @@ func (source *RealtimeSource) take(ctx context.Context) (realtimeEntry, bool, er
 
 func (source *RealtimeSource) resolveEntry(ctx context.Context, entry realtimeEntry) (model.Event, error) {
 	message := entry.event.Message()
+	original := message.ChatID()
 	alternate, err := lookupAlternate(ctx, message.ChatID(), entry.alternate, source.lookup)
 	if err != nil {
 		return model.Event{}, err
@@ -292,13 +300,62 @@ func (source *RealtimeSource) resolveEntry(ctx context.Context, entry realtimeEn
 		return model.Event{}, err
 	}
 	if id == message.ChatID() {
-		return entry.event, nil
+		return source.applyMuteEligibility(ctx, entry.event, original, alternate, id), nil
 	}
 	message, err = message.WithChatID(id)
 	if err != nil {
 		return model.Event{}, err
 	}
-	return model.NewEvent(message, entry.event.ReceivedAt())
+	event, err := model.NewEvent(message, entry.event.ReceivedAt())
+	if err != nil {
+		return model.Event{}, err
+	}
+	return source.applyMuteEligibility(ctx, event, original, alternate, id), nil
+}
+
+func (source *RealtimeSource) applyMuteEligibility(
+	ctx context.Context,
+	event model.Event,
+	primary, alternate, resolved model.ChatID,
+) model.Event {
+	if source == nil || source.muteLookup == nil || !event.NotificationEligible() || event.Message().FromMe() {
+		return event
+	}
+	now := time.Now()
+	if source.now != nil {
+		now = source.now()
+	}
+	var checked [3]string
+	checkedCount := 0
+	for _, id := range [3]model.ChatID{primary, alternate, resolved} {
+		jid, err := textRecipient(id)
+		if err != nil {
+			continue
+		}
+		key := jid.String()
+		duplicate := false
+		for index := 0; index < checkedCount; index++ {
+			if checked[index] == key {
+				duplicate = true
+				break
+			}
+		}
+		if duplicate {
+			continue
+		}
+		checked[checkedCount] = key
+		checkedCount++
+		mutedUntil, found, err := source.muteLookup(ctx, jid)
+		// Mute state is advisory notification metadata. A local settings-store
+		// failure must never interrupt or suppress authoritative message flow.
+		if err != nil || !found {
+			continue
+		}
+		if !mutedUntil.IsZero() && mutedUntil.After(now) {
+			return event.WithNotificationEligibility(false)
+		}
+	}
+	return event
 }
 
 func (source *RealtimeSource) resolveReactionEntry(ctx context.Context, entry realtimeEntry) (model.Reaction, error) {

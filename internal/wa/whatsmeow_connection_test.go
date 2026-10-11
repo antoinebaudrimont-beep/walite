@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	waAdv "go.mau.fi/whatsmeow/proto/waAdv"
 	waE2E "go.mau.fi/whatsmeow/proto/waE2E"
 	waTypes "go.mau.fi/whatsmeow/types"
 	waEvents "go.mau.fi/whatsmeow/types/events"
@@ -31,6 +32,50 @@ func TestWhatsmeowSessionStoreCreatesPrivateUnlinkedDevice(t *testing.T) {
 
 	assertPrivateMode(t, filepath.Dir(path), 0o700)
 	assertPrivateMode(t, path, 0o600)
+}
+
+func TestWhatsmeowSessionStoreProvidesRealtimeMuteLookup(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "private", "whatsmeow-session.db")
+	bootstrap, err := newWhatsmeowConnectionClient(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deviceID := waTypes.NewJID("123456789", waTypes.DefaultUserServer)
+	bootstrap.client.Store.ID = &deviceID
+	bootstrap.client.Store.Account = &waAdv.ADVSignedDeviceIdentity{
+		Details:             []byte{},
+		AccountSignature:    make([]byte, 64),
+		AccountSignatureKey: make([]byte, 32),
+		DeviceSignature:     make([]byte, 64),
+	}
+	if err := bootstrap.client.Store.Save(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := bootstrap.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	client, err := newWhatsmeowConnectionClient(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := client.Close(); err != nil {
+			t.Errorf("Close=%v", err)
+		}
+	}()
+	if client.realtime.muteLookup == nil {
+		t.Fatal("realtime mute lookup was not wired to the session store")
+	}
+	chat := waTypes.NewJID("123456789", waTypes.GroupServer)
+	want := time.Date(2026, 10, 8, 13, 0, 0, 0, time.UTC)
+	if err := client.client.Store.ChatSettings.PutMutedUntil(context.Background(), chat, want); err != nil {
+		t.Fatal(err)
+	}
+	got, found, err := client.realtime.muteLookup(context.Background(), chat)
+	if err != nil || !found || !got.Equal(want) {
+		t.Fatalf("mute lookup=%v found=%t err=%v want=%v", got, found, err, want)
+	}
 }
 
 func TestSessionLinkedClosesUnlinkedStoreBeforeReopen(t *testing.T) {

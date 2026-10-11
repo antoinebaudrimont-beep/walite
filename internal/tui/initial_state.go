@@ -97,8 +97,19 @@ type LiveMessage struct {
 // Notification is the bounded, transport-neutral desktop presentation passed
 // to the application-owned platform worker.
 type Notification struct {
-	Title string
-	Body  string
+	// ChatID is the authoritative stable identity, independent of preview text
+	// and chat-list ordering. Platform presentation must not display this field.
+	ChatID string
+	Title  string
+	Body   string
+}
+
+// ChatActivationRequest identifies an explicit conversation-opening action by
+// stable ID. Unknown/already-selected targets are no-ops. Requests received
+// during text entry, pending sends, modal interactions, paste, or active media
+// work are dropped, never deferred into a later unexpected conversation switch.
+type ChatActivationRequest struct {
+	ChatID string
 }
 
 // SendRequest is an immutable-by-convention outgoing presentation request.
@@ -131,11 +142,14 @@ type Input struct {
 	Send            func(context.Context, SendRequest) error
 	// When non-nil, Send performs bounded admission only; completion arrives
 	// here and the draft remains protected until that result is processed.
-	SendResults      <-chan SendResult
-	DisplayUpdates   <-chan DisplayMetadata
-	SummaryUpdates   <-chan InitialState
-	ChatLoads        <-chan ChatLoadResult
-	LoadChat         func(ChatLoadRequest) bool
+	SendResults    <-chan SendResult
+	DisplayUpdates <-chan DisplayMetadata
+	SummaryUpdates <-chan InitialState
+	ChatLoads      <-chan ChatLoadResult
+	LoadChat       func(ChatLoadRequest) bool
+	// ChatActivations is optional. Its producer owns admission bounds; the TUI
+	// consumes requests on its existing event loop and retains no pending queue.
+	ChatActivations  <-chan ChatActivationRequest
 	OlderHistory     func(OlderHistoryRequest) bool
 	OlderResults     <-chan OlderHistoryResult
 	PersistLocalRead func(LocalReadRequest) bool
