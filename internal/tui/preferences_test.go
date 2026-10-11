@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 
 	"github.com/gdamore/tcell/v2"
@@ -94,13 +95,17 @@ func TestEmojiPreferencesLoadSanitizesOrderAndMaximum(t *testing.T) {
 }
 
 func TestDefaultPreferencesPathUsesConfigDirectory(t *testing.T) {
-	config := t.TempDir()
+	config, home := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", config)
 	path, err := defaultPreferencesPath()
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := filepath.Join(config, "walite", "preferences.json")
+	if runtime.GOOS == "darwin" {
+		want = filepath.Join(home, "Library", "Application Support", "walite", "preferences.json")
+	}
 	if path != want {
 		t.Fatalf("path=%q want=%q", path, want)
 	}

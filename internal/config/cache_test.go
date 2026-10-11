@@ -2,11 +2,13 @@ package config
 
 import (
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
-func TestDefaultCachePathUsesXDGCacheHome(t *testing.T) {
-	root := t.TempDir()
+func TestDefaultCachePathUsesPlatformCacheDirectory(t *testing.T) {
+	root, home := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", root)
 
 	got, err := DefaultCachePath()
@@ -14,6 +16,9 @@ func TestDefaultCachePathUsesXDGCacheHome(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := filepath.Join(root, "walite", "walite-cache.db")
+	if runtime.GOOS == "darwin" {
+		want = filepath.Join(home, "Library", "Caches", "walite", "walite-cache.db")
+	}
 	if got != want {
 		t.Fatalf("DefaultCachePath()=%q want=%q", got, want)
 	}
