@@ -3,6 +3,20 @@ import Darwin
 
 private struct TestFailure: Error { let check: String }
 
+private func appleScriptCompileErrorSummary(_ info: NSDictionary?) -> String {
+    guard let info else { return "no error details" }
+    let safeKeys = ["NSAppleScriptErrorNumber", "NSAppleScriptErrorBriefMessage",
+                    "NSAppleScriptErrorMessage", "NSAppleScriptErrorAppName"]
+    let details = safeKeys.compactMap { key -> String? in
+        guard let value = info[key] else { return nil }
+        let sanitized = String(describing: value).unicodeScalars.map { scalar in
+            CharacterSet.controlCharacters.contains(scalar) ? " " : String(scalar)
+        }.joined()
+        return "\(key)=\(sanitized.prefix(512))"
+    }
+    return details.isEmpty ? "no safe error details" : details.joined(separator: ", ")
+}
+
 private final class LocalReceiver {
     let directory: String
     let path: String
@@ -246,7 +260,8 @@ struct ActivationTests {
                   source.contains("select w\n") && source.contains("select t\n") && source.contains("select s\n") &&
                   source.contains("repeat with s in sessions of t") && source.contains(firstUUID), "restoration traversal")
         var scriptError: NSDictionary?
-        try check(NSAppleScript(source: source)?.compileAndReturnError(&scriptError) == true, "native AppleScript compile")
+        let scriptCompiled = NSAppleScript(source: source)?.compileAndReturnError(&scriptError) == true
+        try check(scriptCompiled, "native AppleScript compile: \(appleScriptCompileErrorSummary(scriptError))")
         try check(SessionRestoration.scriptSource(for: "\"\nactivate") == nil, "restoration rejects injection")
         try check(SessionRestoration.scriptSource(for: ordinary.sessionUUID) == source, "ordinary restoration unchanged")
         print("activation parser, targeting, IPC and restoration checks passed: \(checks)")

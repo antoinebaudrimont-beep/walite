@@ -64,6 +64,14 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Provide iTerm2 scripting dictionary
+        if: matrix.goos == 'darwin'
+        run: |
+          if [ ! -d /Applications/iTerm.app ]; then
+            brew install --cask iterm2
+          fi
+          /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
+            -f /Applications/iTerm.app
       - name: Native macOS helper tests
         if: matrix.goos == 'darwin'
         run: ./platform/macos-notifier/test.sh
