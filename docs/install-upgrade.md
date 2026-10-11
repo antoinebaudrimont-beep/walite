@@ -127,7 +127,8 @@ does not undo user-data writes made during normal application use.
 
 Helper activation targets are in memory and disappear when it quits. Previously
 delivered notifications cannot validate a newly installed helper's chat targeting;
-generate fresh notifications. Logout/reboot, revoked permissions, helper relaunch,
-multiple simultaneous live instances and every real-account mute/settings case
-still need acceptance on the packaged candidate. No such acceptance is claimed
-from a Linux build.
+generate fresh notifications. Packaged-candidate installation and reboot acceptance
+completed on Apple Silicon macOS. Logout, revoked permissions, every independent
+helper-relaunch case, multiple simultaneous live instances and every real-account
+mute/settings case remain unvalidated. No native result is inferred from a Linux
+build, and Intel macOS remains without hands-on candidate acceptance.

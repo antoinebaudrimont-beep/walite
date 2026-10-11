@@ -225,7 +225,7 @@ The UI and service use transport-neutral application data. WhatsApp-specific typ
 - Desktop notifications require walite to remain running. walite is not a daemon or background service.
 - Linux click actions require optional X11 tools and an action-capable daemon. They restore the owning window, not an individual tab; notification expiration and body-click behavior depend on the daemon.
 - macOS click-to-chat requires the correctly installed native helper, a valid iTerm2 session, notification permission and Automation permission. Builds remain ad hoc signed/unsigned as applicable, without notarization. Upgrade permission continuity is not guaranteed; do not reset existing permissions or data.
-- Live-account acceptance does not cover every mute/settings change, simultaneous instance, or logout/reboot/helper-relaunch case. Native v1.2.0 packaged-helper validation remains required before release.
+- Packaged v1.2.0 candidates passed local installation and reboot acceptance on MX Linux XFCE/amd64 and Apple Silicon macOS. Live-account acceptance does not cover every mute/settings change, simultaneous instance, revoked-permission case, or every logout/helper-relaunch scenario; Linux arm64 and Intel macOS remain without hands-on candidate acceptance.
 - Status, broadcast-list, newsletter, and other unsupported special chats remain visible from cache but are read-only; sending text, files, replies, or reactions is rejected locally.
 - Some identities remain opaque when WhatsApp provides no usable authoritative local metadata.
 - Release binaries are provided for Linux and macOS on amd64 and arm64; hands-on validation currently covers MX Linux/XFCE/X11 on amd64 and macOS on Apple Silicon.

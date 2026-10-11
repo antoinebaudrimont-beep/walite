@@ -227,9 +227,10 @@ notification. Real-account mute/settings delivery, multiple simultaneous
 instances and malformed-metadata native clicks remain untested. See
 `TEST_RESULTS.md` for the distinction between live and fixture evidence.
 
-Logout/reboot click delivery, helper termination/relaunch, revoked Automation
-permission, and multiple simultaneous production Walite instances are not yet
-validated. The native release workflow now packages this build; its new
-architecture/version/signature outputs still require native candidate validation.
+Packaged-candidate installation and reboot acceptance completed on Apple Silicon
+macOS. Logout, revoked Automation permission, every independent helper
+termination/relaunch case, multiple simultaneous production Walite instances and
+Intel macOS remain unvalidated. The native release workflow packages this build;
+each release still requires its native architecture/version/signature checks.
 Ad hoc signing is not Developer ID signing or notarization, and preserving the
 bundle ID/path cannot guarantee permission continuity after a code update.
