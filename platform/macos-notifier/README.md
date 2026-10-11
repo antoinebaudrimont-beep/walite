@@ -79,6 +79,16 @@ different build directory; use an Applications location for the notification
 test, because macOS must find and validate the app. No third-party runtime is
 required. The app remains running as an accessory app to receive clicks.
 
+Release packaging builds into a private staging directory, never the installed
+Applications path. `WALITE_NOTIFIER_ARCH` selects `amd64`/`x86_64` or `arm64`,
+with an explicit macOS 12 deployment target. `WALITE_NOTIFIER_VERSION` and
+`WALITE_NOTIFIER_BUILD_NUMBER` select validated numeric bundle metadata; defaults
+remain development version `0.1`, build `3`. v1.2.0 candidates use display version
+`1.2.0`, build `4`. Native macOS is required; Linux is rejected before creating
+an app. Strict signature and architecture checks finish each build. See
+[release packaging](../../docs/release-packaging.md) and
+[safe installation/rollback](../../docs/install-upgrade.md).
+
 `test.sh` also exercises activation parsing, independent targets, exact JSON
 serialization, two private local Unix receivers, EOF framing, unavailable and
 unsafe endpoints, stalled socket timeout, cancellation and bounded queueing.
@@ -115,8 +125,8 @@ an app; there is no silent artwork substitution or upscaling. Both the generator
 and ordinary app build refuse existing outputs. Terminal icon detection,
 `WALITE_TERMINAL_APP` and its obsolete tests have been removed. Their prior work
 was archived privately before removal; historical results remain in TEST_RESULTS.md.
-Linux use of the same PNG is a separate future task; Linux notifications and
-packaging are unchanged here.
+Linux packages use the separate dedicated 48×48 `assets/walite-notification.png`;
+the original high-resolution artwork remains this helper's icon source.
 
 The permanent bundle identifier is
 `io.github.antoinebaudrimontbeep.walite.notifier`. Logging uses the same subsystem.
@@ -219,5 +229,7 @@ instances and malformed-metadata native clicks remain untested. See
 
 Logout/reboot click delivery, helper termination/relaunch, revoked Automation
 permission, and multiple simultaneous production Walite instances are not yet
-validated. Ad hoc signing and this build script are development tooling, not
-release packaging.
+validated. The native release workflow now packages this build; its new
+architecture/version/signature outputs still require native candidate validation.
+Ad hoc signing is not Developer ID signing or notarization, and preserving the
+bundle ID/path cannot guarantee permission continuity after a code update.

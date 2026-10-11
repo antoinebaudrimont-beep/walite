@@ -7,6 +7,16 @@ on:
     tags:
       - "v*"
   pull_request:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Candidate version (build artifacts only; never publishes)
+        required: true
+        default: v1.2.0-rc1
+        type: string
+
+env:
+  RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
 
 permissions:
   contents: read
@@ -21,46 +31,95 @@ jobs:
           go-version-file: go.mod
           cache: true
       - run: go vet ./...
-      - run: go test ./...
+      - run: go test -timeout=30m ./...
+      - name: Packaging shell syntax
+        run: |
+          for script in scripts/*.sh platform/macos-notifier/*.sh; do
+            sh -n "$script"
+          done
 
   build:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     needs: validate
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - goos: linux
             goarch: amd64
+            runner: ubuntu-latest
           - goos: linux
             goarch: arm64
+            runner: ubuntu-latest
           - goos: darwin
             goarch: amd64
+            runner: macos-15-intel
           - goos: darwin
             goarch: arm64
+            runner: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
+      - name: Native macOS helper tests
+        if: matrix.goos == 'darwin'
+        run: ./platform/macos-notifier/test.sh
       - name: Build reproducible archive
         env:
           WALITE_TARGETS: ${{ matrix.goos }}/${{ matrix.goarch }}
-        run: ./scripts/build-release.sh "${GITHUB_REF_NAME}"
+        run: ./scripts/build-release.sh "$RELEASE_VERSION"
+      - name: Verify archive
+        env:
+          RELEASE_TARGET: ${{ matrix.goos }}/${{ matrix.goarch }}
+        run: ./scripts/verify-release.sh "$RELEASE_VERSION" "$RELEASE_TARGET"
+      - name: Negative Linux packaging checks
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        run: ./scripts/test-release.sh "$RELEASE_VERSION"
       - uses: actions/upload-artifact@v4
         with:
-          name: walite-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist/walite_${{ github.ref_name }}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz
+          name: walite-build-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/walite_${{ env.RELEASE_VERSION }}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz
           if-no-files-found: error
           retention-days: 1
 
-  release:
-    if: startsWith(github.ref, 'refs/tags/v')
+  assemble:
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     needs:
       - validate
       - build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: walite-build-*
+          path: dist
+          merge-multiple: true
+      - name: Create and verify checksums
+        run: |
+          cd dist
+          for target in linux_amd64 linux_arm64 darwin_amd64 darwin_arm64; do
+            test -f "walite_${RELEASE_VERSION}_${target}.tar.gz"
+          done
+          test "$(find . -maxdepth 1 -name 'walite_*.tar.gz' | wc -l)" -eq 4
+          sha256sum walite_*.tar.gz | LC_ALL=C sort -k2 > SHA256SUMS
+          sha256sum -c SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: walite-release-${{ env.RELEASE_VERSION }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    # Even a manually dispatched candidate build against a tag cannot publish.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: assemble
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -70,14 +129,10 @@ jobs:
           ref: ${{ github.ref }}
       - uses: actions/download-artifact@v4
         with:
-          pattern: walite-*
+          name: walite-release-${{ env.RELEASE_VERSION }}
           path: dist
-          merge-multiple: true
-      - name: Create and verify checksums
-        run: |
-          cd dist
-          sha256sum walite_*.tar.gz | LC_ALL=C sort -k2 > SHA256SUMS
-          sha256sum -c SHA256SUMS
+      - name: Verify publication checksums
+        run: cd dist && sha256sum -c SHA256SUMS
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

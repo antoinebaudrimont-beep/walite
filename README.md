@@ -41,6 +41,7 @@ These screenshots were AI-edited for privacy using demo names and messages. Text
 - Directional incoming/outgoing layout and date separators
 - Persistent local unread state and WhatsApp read receipts on explicit chat selection, reply, or compose/send interaction
 - Desktop notifications for genuinely new live incoming messages, with privacy-preserving preview controls
+- WhatsApp chat/group mute filtering and safe notification-to-chat activation on supported Linux desktops and macOS/iTerm2
 - Unicode-safe composition and rendering
 - Emoji picker with an expanded Unicode 18.0 catalog and persistent recent emoji
 - Functional `Ctrl-P` settings with four themes: Terminal, Dark, Light, and High contrast
@@ -51,20 +52,24 @@ These screenshots were AI-edited for privacy using demo names and messages. Text
 
 ### Prebuilt releases
 
-Tagged releases provide unsigned archives for Linux and macOS on both amd64 and arm64. No Go installation is needed. Download the archive matching your system from the [latest GitHub release](https://github.com/antoinebaudrimont-beep/walite/releases/latest), along with `SHA256SUMS`, then verify, unpack, and pair it. For example:
+Tagged releases provide archives for Linux and macOS on both amd64 and arm64. No Go installation is needed. Download the archive matching your system from the [latest GitHub release](https://github.com/antoinebaudrimont-beep/walite/releases/latest), along with `SHA256SUMS`, then verify and unpack it. The v1.2.0 packaging below is also used for release candidates; substitute the exact downloaded version, such as `v1.2.0-rc1`. Candidates are build artifacts, not a published stable release.
 
 ```sh
 sha256sum -c SHA256SUMS --ignore-missing
-tar -xzf walite_v1.1.0_linux_amd64.tar.gz
+tar -xzf walite_v1.2.0_linux_amd64.tar.gz
 ./walite --pair
 ./walite
 ```
 
 The archive preserves the executable bit, so `chmod` is not normally needed. If an unusual download or extraction tool removes it, run `chmod +x walite` once. Use `./walite --version` to verify the binary or `./walite --help` for the concise command summary.
 
-For first-time pairing, run `./walite --pair` in a terminal large enough for the complete QR code; later `./walite` launches reuse the linked session. If walite reports that the terminal is too small, enlarge it or reduce its font size, then try again. On macOS, verify a downloaded archive with the built-in checksum tool, for example `grep 'walite_v1.1.0_darwin_arm64.tar.gz' SHA256SUMS | shasum -a 256 -c -`.
+For first-time pairing only, run `./walite --pair` in a terminal large enough for the complete QR code; later `./walite` launches reuse the linked session. Upgrades must not re-pair. If walite reports that the terminal is too small, enlarge it or reduce its font size, then try again. On macOS, verify a downloaded archive with the built-in checksum tool, for example `grep 'walite_v1.2.0_darwin_arm64.tar.gz$' SHA256SUMS | shasum -a 256 -c -`.
 
-Each archive contains `walite`, `LICENSE`, and `README.md`. Linux archives also include `walite-notification.png`; keep it beside the executable for the small desktop notification icon. The macOS binaries are not code-signed or notarized. If macOS blocks the first launch, make that launch attempt, then open **System Settings → Privacy & Security** and use **Open Anyway** for walite; this approves only that binary rather than weakening Gatekeeper globally.
+Each archive contains `walite`, `LICENSE`, and `README.md`. Linux archives also include the dedicated 48×48 `walite-notification.png`; keep it beside the executable. v1.2.0 macOS archives additionally contain **Walite Notifications.app**, including the official icon. Install the helper at `~/Applications/Walite Notifications.app` for clickable iTerm2 notifications. Follow the [installation, upgrade and rollback guide](docs/install-upgrade.md), especially when replacing an existing helper.
+
+macOS builds are not Developer ID signed or notarized; the helper has an ad hoc signature. If macOS blocks an individual app's first launch, use its **System Settings → Privacy & Security → Open Anyway** flow. Do not disable Gatekeeper or remove quarantine globally. Notification and iTerm2 Automation permissions remain controlled by macOS and may require confirmation after an upgrade.
+
+Install or upgrade in a fresh versioned directory and check `--version`/`--help` before changing your launch command; keep the previous binary and Linux icon for rollback. On macOS, verify the extracted helper with `codesign --verify --strict './Walite Notifications.app'`. Do not run the staged helper alongside an installed copy. For a first install, copy the complete verified app with `ditto` into `~/Applications/Walite Notifications.app`. For an upgrade, quit Walite and the old helper, retain a private archive or `.bundle` backup outside Applications, copy/verify the new helper at that same path, and start only that installed copy. Rollback restores the prior code/helper, never user databases. Preserve linked sessions, configuration and preferences; do not re-pair. The detailed guide is in the source repository; release archives intentionally contain only the documented payload files.
 
 | Operating system | Architectures |
 | --- | --- |
@@ -92,9 +97,9 @@ go run ./cmd/walite
 
 ### Optional Linux desktop helpers
 
-Core messaging requires only walite, a compatible terminal, and network access; it does not require a media viewer, clipboard helper, or notification helper. Optional Linux integrations use `mpv` for video/audio, `zathura` for PDF, `xdg-open` for URLs and desktop-default files, and `xclip` or `xsel` for clipboard copy. Inline image/GIF/sticker previews use `ueberzugpp` on X11, while `xfce4-terminal` provides the validated XFCE automatic first-pairing window. Desktop notifications use the optional `notify-send` command across compatible Linux desktop environments, commonly provided by `libnotify-bin` on Debian, MX Linux, and Ubuntu. When a helper is unavailable, walite reports the unavailable optional action without blocking normal startup or messaging.
+Core messaging requires only walite, a compatible terminal, and network access; it does not require a media viewer, clipboard helper, or notification helper. Optional Linux integrations use `mpv` for video/audio, `zathura` for PDF, `xdg-open` for URLs and desktop-default files, and `xclip` or `xsel` for clipboard copy. Inline image/GIF/sticker previews use `ueberzugpp` on X11, while `xfce4-terminal` provides the validated XFCE automatic first-pairing window. Desktop notifications use the optional `notify-send` command across compatible Linux desktop environments, commonly provided by `libnotify-bin` on Debian, MX Linux, and Ubuntu. X11 click-to-chat additionally uses `wmctrl`, `xprop`, and `gdbus`, a valid terminal `WINDOWID`, and daemon action support. Missing click capabilities preserve ordinary notifications; no tools are installed automatically.
 
-macOS uses built-in system tooling for desktop notifications, plus native `open`, `pbcopy`, and Terminal.app integration. Notifications require neither Homebrew, `terminal-notifier`, nor iTerm2; their appearance and permissions are controlled by macOS. iTerm2 and `mpv` are not dependencies; explicit first-time pairing works with `./walite --pair` in any sufficiently large terminal.
+macOS uses the bundled native helper for clickable notifications when it is installed and the current iTerm2 session can be identified, with built-in `osascript` notifications as fallback. Native `open`, `pbcopy`, and Terminal.app integrations remain unchanged. Core operation and ordinary notifications require neither Homebrew, `terminal-notifier`, nor iTerm2; exact window/tab/session restoration requires iTerm2. Explicit first-time pairing works with `./walite --pair` in any sufficiently large terminal.
 
 ## First pairing
 
@@ -169,7 +174,11 @@ walite
 New WhatsApp message
 ```
 
-With previews On, a direct message may appear as `Alice` with `Are you coming tonight?`; a group message may appear as `Alice — Family` with the same body. Media uses compact placeholders such as `[Image]`, `[Video]`, `[Audio]`, `[Sticker]`, or `[Document: report.pdf]`, optionally followed by an available caption. Linux requires the optional `notify-send` helper for desktop notifications; macOS uses its native notification mechanism. Notification clicks and actions are not implemented.
+With previews On, a direct message may appear as `Alice` with `Are you coming tonight?`; a group message may appear as `Alice — Family` with the same body. Media uses compact placeholders such as `[Image]`, `[Video]`, `[Audio]`, `[Sticker]`, or `[Document: report.pdf]`, optionally followed by an available caption. WhatsApp chat and group mutes suppress notifications; expired temporary mutes allow them again.
+
+On supported Linux/X11 desktops, use the notification's **Open** action to restore the owning terminal window and select its originating conversation. This restores a window, not a particular terminal tab. The requested click lifetime is 15 seconds; the daemon controls visibility and how actions are invoked. XFCE and i3/Dunst have been manually tested, but body clicks may dismiss instead of activating—use **Open** when offered. Up to four action waiters are allowed; saturation or missing capabilities falls back to ordinary notifications.
+
+On macOS, the installed native helper restores the exact iTerm2 window, tab and session, including minimized windows, then requests the originating conversation. Missing helper/session or a launch error falls back to ordinary `osascript` notifications. macOS controls authorization and delivery; a successful `open` command does not prove delivery. Both platforms reject chat switching during drafts, pending sends and guarded modal interactions. Notifications never launch another Walite instance. Generate fresh notifications after replacing/restarting the macOS helper because its chat activation targets are held in memory.
 
 ## Quitting and terminal closure
 
@@ -213,8 +222,10 @@ The UI and service use transport-neutral application data. WhatsApp-specific typ
 - Inline image/GIF and WebP sticker overlays remain Linux/X11-specific and require `ueberzugpp`; macOS uses system viewers. Animated WebP playback depends on the selected viewer and may appear as a static frame. Other document formats remain save-only.
 - Expired WhatsApp media references are reported as unavailable; media-retry refresh is not implemented yet.
 - Typing indicators and presence are not implemented.
-- Desktop notifications require walite to remain running. walite is not a daemon or background service, and notification clicks/actions are not implemented.
-- Linux desktop notifications require the optional `notify-send` command. Notification behavior and appearance otherwise depend on the desktop operating system.
+- Desktop notifications require walite to remain running. walite is not a daemon or background service.
+- Linux click actions require optional X11 tools and an action-capable daemon. They restore the owning window, not an individual tab; notification expiration and body-click behavior depend on the daemon.
+- macOS click-to-chat requires the correctly installed native helper, a valid iTerm2 session, notification permission and Automation permission. Builds remain ad hoc signed/unsigned as applicable, without notarization. Upgrade permission continuity is not guaranteed; do not reset existing permissions or data.
+- Live-account acceptance does not cover every mute/settings change, simultaneous instance, or logout/reboot/helper-relaunch case. Native v1.2.0 packaged-helper validation remains required before release.
 - Status, broadcast-list, newsletter, and other unsupported special chats remain visible from cache but are read-only; sending text, files, replies, or reactions is rejected locally.
 - Some identities remain opaque when WhatsApp provides no usable authoritative local metadata.
 - Release binaries are provided for Linux and macOS on amd64 and arm64; hands-on validation currently covers MX Linux/XFCE/X11 on amd64 and macOS on Apple Silicon.
@@ -271,6 +282,13 @@ image message
 - Optional Linux `notify-send` integration and native macOS notifications
 - Clean `SIGHUP`, `SIGTERM`, and `SIGINT` shutdown
 - Notification eligibility hardened against cache, history, duplicate, and reconnect replay
+
+### v1.2.0 (release preparation)
+
+- WhatsApp mute-aware notifications
+- Native macOS notification helper with official icon and safe iTerm2 click-to-chat
+- Linux XFCE and i3/Dunst click-to-chat with a dedicated 48×48 notification icon
+- Complete architecture-specific packaging and documented installation/rollback procedures
 
 ## Development
 
