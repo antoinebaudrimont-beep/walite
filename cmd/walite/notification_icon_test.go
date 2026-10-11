@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"image/png"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -27,6 +28,14 @@ func installNotificationTestIcon(t *testing.T, path string) {
 
 func TestLinuxNotificationIconDiscovery(t *testing.T) {
 	for _, location := range []string{
+		"data/icons/walite-notification.png",
+		"data/icons/hicolor/48x48/apps/walite-notification.png",
+		"data/icons/hicolor/64x64/apps/walite-notification.png",
+		"data/pixmaps/walite-notification.png",
+		"home/.icons/walite-notification.png",
+		"bin/walite-notification.png",
+		"bin/assets/walite-notification.png",
+		"repository/assets/walite-notification.png",
 		"data/icons/walite.png",
 		"data/icons/walite-icon.png",
 		"data/icons/hicolor/256x256/apps/walite.png",
@@ -141,5 +150,54 @@ func TestLinuxNotificationIconArgumentsAndDesktopIndependence(t *testing.T) {
 	mac := selectPlatformCapabilitiesWithOptions("darwin", darwinToolLookup, platformCapabilityOptions{linuxNotificationIconPath: icon})
 	if _, ok := mac.notifier.(darwinNotificationBackend); !ok {
 		t.Fatalf("Linux icon affected macOS notifier: %T", mac.notifier)
+	}
+}
+
+func TestLinuxNotificationDedicatedIconPriorityAndInvalidFallback(t *testing.T) {
+	root := t.TempDir()
+	home, executable, directory := filepath.Join(root, "home"), filepath.Join(root, "bin", "walite"), filepath.Join(root, "repo")
+	user, system := filepath.Join(root, "user"), filepath.Join(root, "system")
+	branding := filepath.Join(user, "icons", "walite.png")
+	packaged := filepath.Join(root, "bin", "walite-notification.png")
+	systemIcon := filepath.Join(system, "icons", "walite-notification.png")
+	userIcon := filepath.Join(user, "icons", "walite-notification.png")
+	installNotificationTestIcon(t, branding)
+	installNotificationTestIcon(t, packaged)
+	discover := func() string {
+		return discoverLinuxNotificationIcon(home, executable, directory, []string{user, system})
+	}
+	if got := discover(); got != packaged {
+		t.Fatalf("branding overrode packaged notification icon: %q", got)
+	}
+	installNotificationTestIcon(t, systemIcon)
+	if got := discover(); got != systemIcon {
+		t.Fatalf("XDG location priority lost: %q", got)
+	}
+	installNotificationTestIcon(t, userIcon)
+	if got := discover(); got != userIcon {
+		t.Fatalf("XDG user priority lost: %q", got)
+	}
+	for _, path := range []string{userIcon, systemIcon, packaged} {
+		if err := os.WriteFile(path, []byte("invalid PNG"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := discover(); got != branding {
+		t.Fatalf("invalid dedicated icons blocked branding fallback: %q", got)
+	}
+}
+
+func TestLinuxNotificationDedicatedArtworkSize(t *testing.T) {
+	file, err := os.Open(filepath.Join("..", "..", "assets", "walite-notification.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	config, err := png.DecodeConfig(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Width != 48 || config.Height != 48 {
+		t.Fatalf("notification artwork dimensions=%dx%d", config.Width, config.Height)
 	}
 }

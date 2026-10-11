@@ -74,9 +74,16 @@ for target in $targets; do
 	chmod 0755 "$stage/walite"
 	chmod 0644 "$stage/LICENSE" "$stage/README.md"
 
+	archive_files="LICENSE README.md walite"
+	if [ "$goos" = linux ]; then
+		cp assets/walite-notification.png "$stage/"
+		chmod 0644 "$stage/walite-notification.png"
+		archive_files="$archive_files walite-notification.png"
+	fi
+
 	tar --format=ustar --sort=name --mtime="@$source_date_epoch" \
 		--owner=0 --group=0 --numeric-owner \
-		-C "$stage" -cf "$tar_path" LICENSE README.md walite
+		-C "$stage" -cf "$tar_path" $archive_files
 	gzip -n -c "$tar_path" >"dist/$archive"
 done
 

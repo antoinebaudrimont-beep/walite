@@ -64,7 +64,7 @@ The archive preserves the executable bit, so `chmod` is not normally needed. If 
 
 For first-time pairing, run `./walite --pair` in a terminal large enough for the complete QR code; later `./walite` launches reuse the linked session. If walite reports that the terminal is too small, enlarge it or reduce its font size, then try again. On macOS, verify a downloaded archive with the built-in checksum tool, for example `grep 'walite_v1.1.0_darwin_arm64.tar.gz' SHA256SUMS | shasum -a 256 -c -`.
 
-Each archive contains `walite`, `LICENSE`, and `README.md`. The macOS binaries are not code-signed or notarized. If macOS blocks the first launch, make that launch attempt, then open **System Settings → Privacy & Security** and use **Open Anyway** for walite; this approves only that binary rather than weakening Gatekeeper globally.
+Each archive contains `walite`, `LICENSE`, and `README.md`. Linux archives also include `walite-notification.png`; keep it beside the executable for the small desktop notification icon. The macOS binaries are not code-signed or notarized. If macOS blocks the first launch, make that launch attempt, then open **System Settings → Privacy & Security** and use **Open Anyway** for walite; this approves only that binary rather than weakening Gatekeeper globally.
 
 | Operating system | Architectures |
 | --- | --- |

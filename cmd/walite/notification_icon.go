@@ -35,21 +35,30 @@ func defaultLinuxNotificationIcon() string {
 
 func discoverLinuxNotificationIcon(home, executable, workingDirectory string, dataDirectories []string) string {
 	var candidates []string
-	for _, directory := range dataDirectories {
-		if !filepath.IsAbs(directory) {
-			continue
+	// Prefer the dedicated small artwork across all locations before falling
+	// back to branding icons, retaining location priority within each group.
+	for _, names := range [][]string{{"walite-notification.png"}, {"walite.png", "walite-icon.png"}} {
+		for _, directory := range dataDirectories {
+			if !filepath.IsAbs(directory) {
+				continue
+			}
+			candidates = appendNotificationIconCandidates(candidates, filepath.Join(directory, "icons"), names...)
+			for _, name := range names {
+				candidates = append(candidates, filepath.Join(directory, "pixmaps", name))
+			}
 		}
-		candidates = appendNotificationIconCandidates(candidates, filepath.Join(directory, "icons"))
-		candidates = append(candidates, filepath.Join(directory, "pixmaps", "walite.png"), filepath.Join(directory, "pixmaps", "walite-icon.png"))
-	}
-	if filepath.IsAbs(home) {
-		candidates = appendNotificationIconCandidates(candidates, filepath.Join(home, ".icons"))
-	}
-	if filepath.IsAbs(executable) {
-		candidates = append(candidates, filepath.Join(filepath.Dir(executable), "walite-icon.png"), filepath.Join(filepath.Dir(executable), "assets", "walite-icon.png"))
-	}
-	if filepath.IsAbs(workingDirectory) {
-		candidates = append(candidates, filepath.Join(workingDirectory, "assets", "walite-icon.png"))
+		if filepath.IsAbs(home) {
+			candidates = appendNotificationIconCandidates(candidates, filepath.Join(home, ".icons"), names...)
+		}
+		// walite.png remains a theme alias; adjacent/repository fallback uses
+		// the original walite-icon.png filename, as before.
+		localName := names[len(names)-1]
+		if filepath.IsAbs(executable) {
+			candidates = append(candidates, filepath.Join(filepath.Dir(executable), localName), filepath.Join(filepath.Dir(executable), "assets", localName))
+		}
+		if filepath.IsAbs(workingDirectory) {
+			candidates = append(candidates, filepath.Join(workingDirectory, "assets", localName))
+		}
 	}
 	for _, candidate := range candidates {
 		info, err := os.Stat(candidate)
@@ -69,8 +78,8 @@ func discoverLinuxNotificationIcon(home, executable, workingDirectory string, da
 	return ""
 }
 
-func appendNotificationIconCandidates(candidates []string, directory string) []string {
-	for _, name := range []string{"walite.png", "walite-icon.png"} {
+func appendNotificationIconCandidates(candidates []string, directory string, names ...string) []string {
+	for _, name := range names {
 		candidates = append(candidates, filepath.Join(directory, name))
 		for _, size := range []string{"256x256", "512x512", "128x128", "64x64", "48x48"} {
 			candidates = append(candidates, filepath.Join(directory, "hicolor", size, "apps", name))
