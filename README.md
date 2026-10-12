@@ -8,6 +8,16 @@ The project was developed and tested on an old Core 2 Duo MacBook Pro running Li
 
 walite began as an experiment to make WhatsApp usable on an older Linux laptop without keeping a heavyweight browser client open. Its priorities are keyboard-first interaction, fast cached startup, bounded queues and working sets, modest resource use, and a workflow that feels at home in a terminal.
 
+## Demo
+
+See walite in action: keyboard navigation, four themes, emoji, quoted replies, inline media previews and desktop notifications.
+
+[![Watch walite in action — 73-second showcase](docs/media/walite-thumbnail-v1.2.1.png)](https://github.com/antoinebaudrimont-beep/walite/releases/download/v1.2.1/walite-showcase-v1.2.1.mp4)
+
+**[▶ Watch the 73-second Walite showcase](https://github.com/antoinebaudrimont-beep/walite/releases/download/v1.2.1/walite-showcase-v1.2.1.mp4)**
+
+*Demonstration recorded using the real Walite interface with synthetic conversations and media.*
+
 ## Screenshots
 
 Four themes, with settings available through `Ctrl-P`.
