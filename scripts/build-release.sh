@@ -116,7 +116,7 @@ for target in $targets; do
 		helper_version=${helper_version%%-*}
 		# Bump for subsequent published helper builds; the bundle ID stays fixed.
 		WALITE_NOTIFIER_BUILD_DIR="$stage" WALITE_NOTIFIER_ARCH="$goarch" \
-			WALITE_NOTIFIER_VERSION="$helper_version" WALITE_NOTIFIER_BUILD_NUMBER=4 \
+			WALITE_NOTIFIER_VERSION="$helper_version" WALITE_NOTIFIER_BUILD_NUMBER=5 \
 			./platform/macos-notifier/build.sh
 		set -- LICENSE README.md walite 'Walite Notifications.app'
 	fi
