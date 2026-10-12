@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 import ImageIO
 
 @main
@@ -30,6 +31,29 @@ struct IconTests {
         return (image.width, image.height)
     }
 
+    static func hasTransparentCorners(_ url: URL) -> Bool {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
+              let context = CGContext(
+                data: nil,
+                width: image.width,
+                height: image.height,
+                bitsPerComponent: 8,
+                bytesPerRow: image.width * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              ), let data = context.data else { return false }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        let pixels = data.bindMemory(to: UInt8.self, capacity: image.width * image.height * 4)
+        let alpha = { (x: Int, y: Int) -> UInt8 in
+            pixels[y * context.bytesPerRow + x * 4 + 3]
+        }
+        return alpha(0, 0) == 0
+            && alpha(image.width - 1, 0) == 0
+            && alpha(0, image.height - 1) == 0
+            && alpha(image.width - 1, image.height - 1) == 0
+    }
+
     static func main() {
         do { try test() }
         catch {
@@ -46,6 +70,7 @@ struct IconTests {
         let dimensions = dimensions(source)
         try check(dimensions != nil, "source image decodes")
         try check(dimensions!.0 == dimensions!.1 && dimensions!.0 >= 1024, "square high-resolution source")
+        try check(hasTransparentCorners(source), "source has transparent outer corners")
 
         let temporary = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("walite-icon-tests-" + UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
@@ -66,6 +91,7 @@ struct IconTests {
                 let file = decoded.appendingPathComponent("icon_\(size)x\(size)\(suffix).png")
                 let actual = Self.dimensions(file)
                 try check(actual?.0 == pixels && actual?.1 == pixels, "representation \(file.lastPathComponent)")
+                try check(hasTransparentCorners(file), "transparent corners in \(file.lastPathComponent)")
             }
         }
         let second = temporary.appendingPathComponent("second.icns")

@@ -83,8 +83,9 @@ Release packaging builds into a private staging directory, never the installed
 Applications path. `WALITE_NOTIFIER_ARCH` selects `amd64`/`x86_64` or `arm64`,
 with an explicit macOS 12 deployment target. `WALITE_NOTIFIER_VERSION` and
 `WALITE_NOTIFIER_BUILD_NUMBER` select validated numeric bundle metadata; defaults
-remain development version `0.1`, build `3`. v1.2.0 candidates use display version
-`1.2.0`, build `4`. Native macOS is required; Linux is rejected before creating
+remain development version `0.1`, build `3`. v1.2.0 packages use display version
+`1.2.0`, build `4`; v1.2.1 packages use display version `1.2.1`, build `5`.
+Native macOS is required; Linux is rejected before creating
 an app. Strict signature and architecture checks finish each build. See
 [release packaging](../../docs/release-packaging.md) and
 [safe installation/rollback](../../docs/install-upgrade.md).
@@ -105,9 +106,10 @@ WALITE_NOTIFIER_BUILD_DIR=$(mktemp -d /private/tmp/walite-notifier-build.XXXXXX)
 ### Official Walite icon and permanent identity
 
 [`assets/walite-icon.png`](../../assets/walite-icon.png) is the single artwork
-source. It is a byte-for-byte copy of the supplied official PNG (1254 × 1254,
-RGB). The original appearance, background and source resolution are preserved;
-no redraw, recoloring, cropping or transparency changes are applied.
+source. It is a byte-for-byte copy of the approved v1.2.1 PNG (1254 × 1254,
+RGBA). The established glyph, inner tile and source resolution are preserved;
+the outer canvas corners are transparent so macOS and promotional presentation
+do not show the obsolete square border.
 
 `generate-icon.sh` uses macOS `sips` and `iconutil` to make the standard 16, 32,
 128, 256 and 512 point representations, each at 1× and 2× (16 through 1024

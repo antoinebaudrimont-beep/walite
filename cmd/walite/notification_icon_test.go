@@ -201,3 +201,32 @@ func TestLinuxNotificationDedicatedArtworkSize(t *testing.T) {
 		t.Fatalf("notification artwork dimensions=%dx%d", config.Width, config.Height)
 	}
 }
+
+func TestOfficialArtworkHasTransparentCorners(t *testing.T) {
+	for _, name := range []string{"walite-icon.png", "walite-notification.png"} {
+		t.Run(name, func(t *testing.T) {
+			file, err := os.Open(filepath.Join("..", "..", "assets", name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer file.Close()
+			artwork, err := png.Decode(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bounds := artwork.Bounds()
+			corners := []struct{ x, y int }{
+				{bounds.Min.X, bounds.Min.Y},
+				{bounds.Max.X - 1, bounds.Min.Y},
+				{bounds.Min.X, bounds.Max.Y - 1},
+				{bounds.Max.X - 1, bounds.Max.Y - 1},
+			}
+			for _, corner := range corners {
+				_, _, _, alpha := artwork.At(corner.x, corner.y).RGBA()
+				if alpha != 0 {
+					t.Fatalf("corner (%d,%d) alpha=%d, want transparent", corner.x, corner.y, alpha)
+				}
+			}
+		})
+	}
+}

@@ -86,7 +86,7 @@ else
 	test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$app/Contents/Info.plist")" = Walite.icns
 	helper_version=${version#v}
 	test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "${helper_version%%-*}"
-	test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info.plist")" = 4
+	test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info.plist")" = 5
 	test -s "$app/Contents/Resources/Walite.icns"
 	test -x "$app/Contents/MacOS/WaliteNotifier"
 	case "$goarch" in amd64 ) swift_arch=x86_64 ;; arm64 ) swift_arch=arm64 ;; esac
