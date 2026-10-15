@@ -188,6 +188,14 @@ With previews On, a direct message may appear as `Alice` with `Are you coming to
 
 On supported Linux/X11 desktops, use the notification's **Open** action to restore the owning terminal window and select its originating conversation. This restores a window, not a particular terminal tab. The requested click lifetime is 15 seconds; the daemon controls visibility and how actions are invoked. XFCE and i3/Dunst have been manually tested, but body clicks may dismiss instead of activating—use **Open** when offered. Up to four action waiters are allowed; saturation or missing capabilities falls back to ordinary notifications.
 
+Compatible dunst_tray versions can retain **Open discussion** for repeated use
+of one notification. The [v2 integration contract](docs/dunst-tray-integration.md)
+rotates a private one-use ticket on each explicit click, never exposing stable
+chat identities or reusing consumed capabilities. Chains are limited to the
+newest 32 notifications and 24 hours from issuance; clicks do not extend expiry.
+Walite restarts invalidate old chains; fresh notifications are needed. Generic
+**Show app** stays focus-only. Lost responses fail closed instead of replaying.
+
 On macOS, the installed native helper restores the exact iTerm2 window, tab and session, including minimized windows, then requests the originating conversation. Missing helper/session or a launch error falls back to ordinary `osascript` notifications. macOS controls authorization and delivery; a successful `open` command does not prove delivery. Both platforms reject chat switching during drafts, pending sends and guarded modal interactions. Notifications never launch another Walite instance. Generate fresh notifications after replacing/restarting the macOS helper because its chat activation targets are held in memory.
 
 ## Quitting and terminal closure

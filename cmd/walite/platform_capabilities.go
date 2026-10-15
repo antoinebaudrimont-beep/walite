@@ -209,6 +209,7 @@ func selectPlatformCapabilitiesWithOptions(
 	if command, err := lookup("notify-send"); err == nil {
 		backend := notifySendBackend{command: command, iconPath: options.linuxNotificationIconPath, run: options.notificationRunner}
 		capabilities.notifier = backend
+		capabilities.newChatActivation = newChatActivationReceiver
 		capabilities.newLinuxNotificationActions = linuxNotificationActionFactory(lookup, backend, options.linuxActions)
 	}
 	return capabilities

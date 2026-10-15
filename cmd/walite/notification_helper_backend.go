@@ -52,6 +52,9 @@ type darwinHelperNotificationBackend struct {
 // carry an old instance's endpoint into a run where IPC initialization failed.
 func notifierWithChatActivation(notifier desktopNotifier, receiver *chatActivationReceiver) desktopNotifier {
 	switch backend := notifier.(type) {
+	case notifySendBackend:
+		backend.activationReceiver = receiver
+		return backend
 	case *darwinHelperNotificationBackend:
 		if backend == nil {
 			return notifier

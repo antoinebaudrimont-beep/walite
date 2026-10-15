@@ -23,7 +23,10 @@ import (
 
 const (
 	chatActivationVersion         = 1
+	chatActivationRenewalVersion  = 2
 	chatActivationQueueCapacity   = 8
+	chatActivationTicketCapacity  = 32
+	chatActivationTicketLifetime  = 24 * time.Hour
 	chatActivationMaxRequestBytes = 4096
 	chatActivationReadTimeout     = time.Second
 	// Darwin sockaddr_un has 104 bytes, including the terminating NUL.
@@ -31,15 +34,30 @@ const (
 )
 
 type chatActivationCommand struct {
-	Version int    `json:"version"`
-	ChatID  string `json:"chat_id"`
-	Token   string `json:"token"`
+	Version      int    `json:"version"`
+	ChatID       string `json:"chat_id,omitempty"`
+	Token        string `json:"token,omitempty"`
+	ActivationID string `json:"activation_id,omitempty"`
+}
+
+type chatActivationTicket struct {
+	chatID    string
+	version   int
+	expiresAt time.Time
+}
+
+type chatActivationResponse struct {
+	Version      int    `json:"version"`
+	Status       string `json:"status"`
+	ActivationID string `json:"activation_id,omitempty"`
+	ExpiresAt    int64  `json:"expires_at,omitempty"`
 }
 
 // chatActivationReceiver is dormant until explicitly constructed. It owns one
 // accept/read goroutine, one connection at a time, and a cosmetic bounded queue.
 // Clients write one JSON object and close their write side (EOF framing). There
-// is no response or delivery acknowledgement. Full queues drop authenticated
+// is no response for v1. V2 rotates each one-use ticket and acknowledges queue
+// admission, never TUI selection. Full queues drop authenticated
 // commands. Shutdown cancels reads and discards pending activations.
 type chatActivationReceiver struct {
 	socketPath    string
@@ -54,6 +72,8 @@ type chatActivationReceiver struct {
 	done          chan struct{}
 	mu            sync.Mutex
 	connection    *net.UnixConn
+	tickets       map[string]chatActivationTicket
+	ticketOrder   []string
 	transportOnce sync.Once
 }
 
@@ -118,6 +138,7 @@ func newChatActivationReceiverInDirectory(parent context.Context, baseDirectory 
 		socketPath: socketPath, token: hex.EncodeToString(random[16:]), directory: directory,
 		socketInfo: socketInfo, directoryInfo: directoryInfo, listener: listener,
 		activations: make(chan tui.ChatActivationRequest, chatActivationQueueCapacity),
+		tickets:     make(map[string]chatActivationTicket, chatActivationTicketCapacity),
 		ctx:         ctx, cancel: cancel, done: make(chan struct{}),
 	}
 	context.AfterFunc(ctx, receiver.closeTransport)
@@ -132,6 +153,8 @@ func (receiver *chatActivationReceiver) run() {
 		receiver.closeTransport()
 		removeOwnedActivationPath(receiver.socketPath, receiver.socketInfo)
 		removeOwnedActivationPath(receiver.directory, receiver.directoryInfo)
+		receiver.mu.Lock()
+		defer receiver.mu.Unlock()
 		for {
 			select {
 			case <-receiver.activations:
@@ -172,27 +195,196 @@ func (receiver *chatActivationReceiver) receive(connection *net.UnixConn) {
 		return
 	}
 	command, ok := decodeChatActivationCommand(data)
-	if !ok || subtle.ConstantTimeCompare([]byte(command.Token), []byte(receiver.token)) != 1 {
+	if !ok {
 		return
 	}
-	if strings.TrimSpace(command.ChatID) == "" {
+	if command.Version == chatActivationRenewalVersion {
+		response, request, valid := receiver.rotateTicket(command.ActivationID)
+		if valid {
+			response.Status = "busy"
+			if receiver.admit(request) {
+				response.Status = "queued"
+			}
+		}
+		if connection.SetWriteDeadline(time.Now().Add(chatActivationReadTimeout)) == nil {
+			_ = json.NewEncoder(connection).Encode(response)
+		}
 		return
 	}
-	id, err := model.NewChatID(command.ChatID)
+	if command.ActivationID != "" {
+		chatID, found := receiver.consumeTicket(command.ActivationID)
+		if !found {
+			return
+		}
+		receiver.admit(tui.ChatActivationRequest{ChatID: chatID})
+		return
+	}
+	if subtle.ConstantTimeCompare([]byte(command.Token), []byte(receiver.token)) != 1 {
+		return
+	}
+	receiver.admitChatID(command.ChatID)
+}
+
+func (receiver *chatActivationReceiver) admitChatID(chatID string) bool {
+	if strings.TrimSpace(chatID) == "" {
+		return false
+	}
+	id, err := model.NewChatID(chatID)
 	if err != nil {
-		return
+		return false
+	}
+	return receiver.admit(tui.ChatActivationRequest{ChatID: id.String()})
+}
+
+func (receiver *chatActivationReceiver) admit(request tui.ChatActivationRequest) bool {
+	if receiver == nil {
+		return false
 	}
 	// Admission and cancellation are serialized; the socket owner alone closes
 	// activations after it has stopped producing, avoiding send-on-closed races.
 	receiver.mu.Lock()
 	defer receiver.mu.Unlock()
 	if receiver.ctx.Err() != nil {
-		return
+		return false
 	}
 	select {
-	case receiver.activations <- tui.ChatActivationRequest{ChatID: id.String()}:
+	case receiver.activations <- request:
+		return true
 	default:
+		return false
 	}
+}
+
+// issueTicket creates a bounded, one-time capability for one notification.
+// Neither the stable WhatsApp ChatID nor the receiver-wide authentication
+// token leaves Walite through the desktop notification service.
+func (receiver *chatActivationReceiver) issueTicket(chatID string) (string, bool) {
+	ticket, _, ok := receiver.issueTicketVersion(chatID, chatActivationVersion)
+	return ticket, ok
+}
+
+func (receiver *chatActivationReceiver) issueRenewableTicket(chatID string) (string, int64, bool) {
+	return receiver.issueTicketVersion(chatID, chatActivationRenewalVersion)
+}
+
+func (receiver *chatActivationReceiver) issueTicketVersion(chatID string, version int) (string, int64, bool) {
+	if receiver == nil || strings.TrimSpace(chatID) == "" {
+		return "", 0, false
+	}
+	id, err := model.NewChatID(chatID)
+	if err != nil {
+		return "", 0, false
+	}
+	for attempt := 0; attempt < 4; attempt++ {
+		var random [32]byte
+		if _, err := rand.Read(random[:]); err != nil {
+			return "", 0, false
+		}
+		ticket := hex.EncodeToString(random[:])
+		receiver.mu.Lock()
+		if receiver.ctx.Err() != nil {
+			receiver.mu.Unlock()
+			return "", 0, false
+		}
+		if _, exists := receiver.tickets[ticket]; exists {
+			receiver.mu.Unlock()
+			continue
+		}
+		if len(receiver.ticketOrder) == chatActivationTicketCapacity {
+			delete(receiver.tickets, receiver.ticketOrder[0])
+			copy(receiver.ticketOrder, receiver.ticketOrder[1:])
+			receiver.ticketOrder = receiver.ticketOrder[:len(receiver.ticketOrder)-1]
+		}
+		entry := chatActivationTicket{chatID: id.String(), version: version}
+		var expiresAt int64
+		if version == chatActivationRenewalVersion {
+			expiresAt = time.Now().Add(chatActivationTicketLifetime).Unix()
+			entry.expiresAt = time.Unix(expiresAt, 0)
+		}
+		receiver.tickets[ticket] = entry
+		receiver.ticketOrder = append(receiver.ticketOrder, ticket)
+		receiver.mu.Unlock()
+		return ticket, expiresAt, true
+	}
+	return "", 0, false
+}
+
+func (receiver *chatActivationReceiver) consumeTicket(ticket string) (string, bool) {
+	if len(ticket) != 64 {
+		return "", false
+	}
+	if _, err := hex.DecodeString(ticket); err != nil {
+		return "", false
+	}
+	receiver.mu.Lock()
+	defer receiver.mu.Unlock()
+	if receiver.ctx.Err() != nil {
+		return "", false
+	}
+	entry, ok := receiver.tickets[ticket]
+	if !ok || entry.version != chatActivationVersion {
+		return "", false
+	}
+	delete(receiver.tickets, ticket)
+	for index, value := range receiver.ticketOrder {
+		if subtle.ConstantTimeCompare([]byte(value), []byte(ticket)) == 1 {
+			copy(receiver.ticketOrder[index:], receiver.ticketOrder[index+1:])
+			receiver.ticketOrder = receiver.ticketOrder[:len(receiver.ticketOrder)-1]
+			break
+		}
+	}
+	return entry.chatID, true
+}
+
+// rotateTicket consumes a v2 capability exactly once. Its successor retains
+// the same chain position and absolute expiry, so clicks cannot extend lifetime
+// or crowd newer notifications out. No reusable chat handle leaves this process.
+func (receiver *chatActivationReceiver) rotateTicket(ticket string) (chatActivationResponse, tui.ChatActivationRequest, bool) {
+	response := chatActivationResponse{Version: chatActivationRenewalVersion, Status: "unavailable"}
+	var request tui.ChatActivationRequest
+	if len(ticket) != 64 || strings.ToLower(ticket) != ticket {
+		return response, request, false
+	}
+	if _, err := hex.DecodeString(ticket); err != nil {
+		return response, request, false
+	}
+	receiver.mu.Lock()
+	defer receiver.mu.Unlock()
+	entry, ok := receiver.tickets[ticket]
+	if !ok || entry.version != chatActivationRenewalVersion || receiver.ctx.Err() != nil {
+		return response, request, false
+	}
+	if !time.Now().Before(entry.expiresAt) {
+		delete(receiver.tickets, ticket)
+		for index, value := range receiver.ticketOrder {
+			if value == ticket {
+				receiver.ticketOrder = append(receiver.ticketOrder[:index], receiver.ticketOrder[index+1:]...)
+				break
+			}
+		}
+		return response, request, false
+	}
+	for attempt := 0; attempt < 4; attempt++ {
+		var random [32]byte
+		if _, err := rand.Read(random[:]); err != nil {
+			return response, request, false
+		}
+		next := hex.EncodeToString(random[:])
+		if _, exists := receiver.tickets[next]; exists {
+			continue
+		}
+		delete(receiver.tickets, ticket)
+		receiver.tickets[next] = entry
+		for index, value := range receiver.ticketOrder {
+			if value == ticket {
+				receiver.ticketOrder[index] = next
+				break
+			}
+		}
+		response.ActivationID, response.ExpiresAt = next, entry.expiresAt.Unix()
+		return response, tui.ChatActivationRequest{ChatID: entry.chatID}, true
+	}
+	return response, request, false
 }
 
 func decodeChatActivationCommand(data []byte) (chatActivationCommand, bool) {
@@ -204,7 +396,7 @@ func decodeChatActivationCommand(data []byte) (chatActivationCommand, bool) {
 	}
 	// Read exact case-sensitive keys and reject duplicates, rather than letting
 	// encoding/json silently overwrite authentication or identity fields.
-	var seen [3]bool
+	var seen [4]bool
 	for decoder.More() {
 		key, err := decoder.Token()
 		if err != nil {
@@ -219,6 +411,8 @@ func decodeChatActivationCommand(data []byte) (chatActivationCommand, bool) {
 			index, target = 1, &command.ChatID
 		case "token":
 			index, target = 2, &command.Token
+		case "activation_id":
+			index, target = 3, &command.ActivationID
 		default:
 			return command, false
 		}
@@ -235,7 +429,15 @@ func decodeChatActivationCommand(data []byte) (chatActivationCommand, bool) {
 	if decoder.Decode(&trailing) != io.EOF {
 		return command, false
 	}
-	return command, seen[0] && seen[1] && seen[2] && command.Version == chatActivationVersion
+	if !seen[0] || (command.Version != chatActivationVersion && command.Version != chatActivationRenewalVersion) {
+		return command, false
+	}
+	legacy := seen[1] && seen[2] && !seen[3]
+	ticket := !seen[1] && !seen[2] && seen[3]
+	if command.Version == chatActivationRenewalVersion {
+		return command, ticket
+	}
+	return command, legacy || ticket
 }
 
 func (receiver *chatActivationReceiver) closeTransport() {

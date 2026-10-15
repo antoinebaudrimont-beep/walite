@@ -86,11 +86,25 @@ type linuxNotificationActions struct {
 	jobs                          chan tui.Notification
 	slots                         chan struct{}
 	activations                   chan tui.ChatActivationRequest
+	activationReceiver            *chatActivationReceiver
 	waiters                       sync.WaitGroup
 	mu                            sync.Mutex
 	activationMu                  sync.Mutex
 	stopped                       bool
 	stopOnce                      sync.Once
+}
+
+// bindChatActivation is called once during application construction, before
+// notification admission begins. The receiver supplies both the external
+// opaque-ticket endpoint and the TUI activation channel.
+func (actions *linuxNotificationActions) bindChatActivation(receiver *chatActivationReceiver) {
+	if actions == nil {
+		return
+	}
+	actions.activationReceiver = receiver
+	if backend, ok := notifierWithChatActivation(actions.ordinary, receiver).(notifySendBackend); ok {
+		actions.ordinary = backend
+	}
 }
 
 func newLinuxNotificationActions(parent context.Context, ordinary notifySendBackend, options linuxNotificationActionOptions) (*linuxNotificationActions, error) {
@@ -210,13 +224,18 @@ func (actions *linuxNotificationActions) wait(notification tui.Notification) {
 	if _, err := actions.options.run(ctx, actions.options.wmctrl, []string{"-i", "-a", actions.windowID}); err != nil {
 		return
 	}
+	request := tui.ChatActivationRequest{ChatID: notification.ChatID}
+	if actions.activationReceiver != nil {
+		actions.activationReceiver.admit(request)
+		return
+	}
 	actions.mu.Lock()
 	defer actions.mu.Unlock()
 	if actions.stopped || actions.ctx.Err() != nil {
 		return
 	}
 	select {
-	case actions.activations <- tui.ChatActivationRequest{ChatID: notification.ChatID}:
+	case actions.activations <- request:
 	default:
 	}
 }

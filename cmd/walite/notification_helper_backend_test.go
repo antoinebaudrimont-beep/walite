@@ -321,7 +321,7 @@ func TestDarwinHelperNotificationActivationMetadataIsOptionalAndPrivate(t *testi
 	}
 }
 
-func TestChatActivationBindingPreservesLinuxNotificationArguments(t *testing.T) {
+func TestChatActivationBindingAddsOpaqueLinuxNotificationTicket(t *testing.T) {
 	receiver := testActivationReceiver(t, context.Background(), activationTestDirectory(t))
 	var arguments []string
 	backend := notifySendBackend{command: "/usr/bin/notify-send", run: func(_ context.Context, command string, args []string) error {
@@ -339,8 +339,39 @@ func TestChatActivationBindingPreservesLinuxNotificationArguments(t *testing.T) 
 	if err := bound.Notify(context.Background(), notification); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(arguments, []string{"--app-name=walite", "--", notification.Title, notification.Body}) {
-		t.Fatal("activation metadata affected Linux notification arguments")
+	if len(arguments) != 5 || arguments[0] != "--app-name=walite" || arguments[2] != "--" || arguments[3] != notification.Title || arguments[4] != notification.Body {
+		t.Fatalf("Linux notification arguments=%q", arguments)
+	}
+	prefix := "--hint=string:" + linuxChatActivationHint + ":"
+	if !strings.HasPrefix(arguments[1], prefix) {
+		t.Fatalf("activation hint=%q", arguments[1])
+	}
+	var hint linuxChatActivationHintValue
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(arguments[1], prefix)), &hint); err != nil {
+		t.Fatal(err)
+	}
+	if hint.Version != 2 || hint.ActivationSocket != receiver.socketPath || len(hint.ActivationID) != 64 || hint.ExpiresAt <= time.Now().Unix() {
+		t.Fatalf("activation hint=%+v", hint)
+	}
+	if strings.Contains(arguments[1], notification.ChatID) || strings.Contains(arguments[1], receiver.token) {
+		t.Fatal("stable ChatID or reusable credential leaked into D-Bus hint")
+	}
+	if sendRotatingActivation(t, receiver, hint.ActivationID).Status != "queued" {
+		t.Fatal("notification ticket was not queued")
+	}
+	if request := <-receiver.activations; request.ChatID != notification.ChatID {
+		t.Fatal("opaque hint did not resolve to originating chat")
+	}
+	if backend.activationReceiver != nil {
+		t.Fatal("binding mutated shared Linux backend")
+	}
+	arguments = nil
+	withoutChat := tui.Notification{Title: "walite", Body: "New WhatsApp message"}
+	if err := bound.Notify(context.Background(), withoutChat); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(arguments, []string{"--app-name=walite", "--", withoutChat.Title, withoutChat.Body}) {
+		t.Fatalf("notification without a stable ChatID gained activation metadata: %q", arguments)
 	}
 }
 
