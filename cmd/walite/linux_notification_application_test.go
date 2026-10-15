@@ -152,6 +152,11 @@ func TestLinuxStoredNotificationTicketsSelectIndependentDirectAndGroupChats(t *t
 	if <-service.loads != "first@lid" {
 		t.Fatal("incorrect initial selection")
 	}
+	// These same two stored notifications will be selected again after the
+	// first direct/group cycle; only their current one-use ticket changes.
+	var retained []struct {
+		ticket, chatID, content string
+	}
 	for _, test := range []struct {
 		chatID, content string
 	}{
@@ -166,12 +171,33 @@ func TestLinuxStoredNotificationTicketsSelectIndependentDirectAndGroupChats(t *t
 		if hint.ActivationSocket != receiver.socketPath || hint.ActivationID == "" {
 			t.Fatalf("wrong per-instance activation hint: %+v", hint)
 		}
-		sendActivationBytes(t, receiver, activationTicketJSON(t, hint.ActivationID))
+		response := sendRotatingActivation(t, receiver, hint.ActivationID)
+		if response.Status != "queued" {
+			t.Fatal("stored notification request was not queued")
+		}
+		retained = append(retained, struct{ ticket, chatID, content string }{
+			response.ActivationID, test.chatID, test.content,
+		})
 		call.reply <- linuxActionResult{} // notification-center selection, not notify-send's live Open action
 		<-screen.shown
 		<-screen.shown
 		if id := <-service.loads; id != test.chatID || !strings.Contains(startupScreenText(screen), test.content) {
 			t.Fatalf("stored notification selected wrong chat: got=%q want=%q", id, test.chatID)
+		}
+	}
+	for iteration := 0; iteration < 2; iteration++ {
+		for index := range retained {
+			item := &retained[index]
+			response := sendRotatingActivation(t, receiver, item.ticket)
+			if response.Status != "queued" || response.ActivationID == item.ticket {
+				t.Fatal("retained notification did not rotate on repeated selection")
+			}
+			item.ticket = response.ActivationID
+			<-screen.shown
+			<-screen.shown
+			if id := <-service.loads; id != item.chatID || !strings.Contains(startupScreenText(screen), item.content) {
+				t.Fatal("repeated selection did not render the original conversation")
+			}
 		}
 	}
 	screen.InjectKey(tcell.KeyCtrlC, 0, tcell.ModNone)

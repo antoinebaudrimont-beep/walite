@@ -350,13 +350,15 @@ func TestChatActivationBindingAddsOpaqueLinuxNotificationTicket(t *testing.T) {
 	if err := json.Unmarshal([]byte(strings.TrimPrefix(arguments[1], prefix)), &hint); err != nil {
 		t.Fatal(err)
 	}
-	if hint.Version != 1 || hint.ActivationSocket != receiver.socketPath || len(hint.ActivationID) != 64 {
+	if hint.Version != 2 || hint.ActivationSocket != receiver.socketPath || len(hint.ActivationID) != 64 || hint.ExpiresAt <= time.Now().Unix() {
 		t.Fatalf("activation hint=%+v", hint)
 	}
 	if strings.Contains(arguments[1], notification.ChatID) || strings.Contains(arguments[1], receiver.token) {
 		t.Fatal("stable ChatID or reusable credential leaked into D-Bus hint")
 	}
-	sendActivationBytes(t, receiver, activationTicketJSON(t, hint.ActivationID))
+	if sendRotatingActivation(t, receiver, hint.ActivationID).Status != "queued" {
+		t.Fatal("notification ticket was not queued")
+	}
 	if request := <-receiver.activations; request.ChatID != notification.ChatID {
 		t.Fatal("opaque hint did not resolve to originating chat")
 	}

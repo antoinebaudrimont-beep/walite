@@ -38,6 +38,7 @@ type linuxChatActivationHintValue struct {
 	Version          int    `json:"version"`
 	ActivationSocket string `json:"activation_socket"`
 	ActivationID     string `json:"activation_id"`
+	ExpiresAt        int64  `json:"expires_at"`
 }
 
 func (backend notifySendBackend) Notify(ctx context.Context, notification tui.Notification) error {
@@ -54,11 +55,12 @@ func (backend notifySendBackend) arguments(notification tui.Notification, args [
 		args = append(args, "--icon", backend.iconPath)
 	}
 	if receiver := backend.activationReceiver; receiver != nil {
-		if ticket, ok := receiver.issueTicket(notification.ChatID); ok {
+		if ticket, expiresAt, ok := receiver.issueRenewableTicket(notification.ChatID); ok {
 			value, err := json.Marshal(linuxChatActivationHintValue{
-				Version:          chatActivationVersion,
+				Version:          chatActivationRenewalVersion,
 				ActivationSocket: receiver.socketPath,
 				ActivationID:     ticket,
+				ExpiresAt:        expiresAt,
 			})
 			if err == nil {
 				args = append(args, "--hint=string:"+linuxChatActivationHint+":"+string(value))
