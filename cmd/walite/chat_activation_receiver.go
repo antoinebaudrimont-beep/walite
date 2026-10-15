@@ -24,6 +24,7 @@ import (
 const (
 	chatActivationVersion         = 1
 	chatActivationQueueCapacity   = 8
+	chatActivationTicketCapacity  = 32
 	chatActivationMaxRequestBytes = 4096
 	chatActivationReadTimeout     = time.Second
 	// Darwin sockaddr_un has 104 bytes, including the terminating NUL.
@@ -31,9 +32,10 @@ const (
 )
 
 type chatActivationCommand struct {
-	Version int    `json:"version"`
-	ChatID  string `json:"chat_id"`
-	Token   string `json:"token"`
+	Version      int    `json:"version"`
+	ChatID       string `json:"chat_id,omitempty"`
+	Token        string `json:"token,omitempty"`
+	ActivationID string `json:"activation_id,omitempty"`
 }
 
 // chatActivationReceiver is dormant until explicitly constructed. It owns one
@@ -54,6 +56,8 @@ type chatActivationReceiver struct {
 	done          chan struct{}
 	mu            sync.Mutex
 	connection    *net.UnixConn
+	tickets       map[string]string
+	ticketOrder   []string
 	transportOnce sync.Once
 }
 
@@ -118,6 +122,7 @@ func newChatActivationReceiverInDirectory(parent context.Context, baseDirectory 
 		socketPath: socketPath, token: hex.EncodeToString(random[16:]), directory: directory,
 		socketInfo: socketInfo, directoryInfo: directoryInfo, listener: listener,
 		activations: make(chan tui.ChatActivationRequest, chatActivationQueueCapacity),
+		tickets:     make(map[string]string, chatActivationTicketCapacity),
 		ctx:         ctx, cancel: cancel, done: make(chan struct{}),
 	}
 	context.AfterFunc(ctx, receiver.closeTransport)
@@ -132,6 +137,8 @@ func (receiver *chatActivationReceiver) run() {
 		receiver.closeTransport()
 		removeOwnedActivationPath(receiver.socketPath, receiver.socketInfo)
 		removeOwnedActivationPath(receiver.directory, receiver.directoryInfo)
+		receiver.mu.Lock()
+		defer receiver.mu.Unlock()
 		for {
 			select {
 			case <-receiver.activations:
@@ -172,27 +179,117 @@ func (receiver *chatActivationReceiver) receive(connection *net.UnixConn) {
 		return
 	}
 	command, ok := decodeChatActivationCommand(data)
-	if !ok || subtle.ConstantTimeCompare([]byte(command.Token), []byte(receiver.token)) != 1 {
+	if !ok {
 		return
 	}
-	if strings.TrimSpace(command.ChatID) == "" {
+	if command.ActivationID != "" {
+		chatID, found := receiver.consumeTicket(command.ActivationID)
+		if !found {
+			return
+		}
+		receiver.admit(tui.ChatActivationRequest{ChatID: chatID})
 		return
 	}
-	id, err := model.NewChatID(command.ChatID)
+	if subtle.ConstantTimeCompare([]byte(command.Token), []byte(receiver.token)) != 1 {
+		return
+	}
+	receiver.admitChatID(command.ChatID)
+}
+
+func (receiver *chatActivationReceiver) admitChatID(chatID string) bool {
+	if strings.TrimSpace(chatID) == "" {
+		return false
+	}
+	id, err := model.NewChatID(chatID)
 	if err != nil {
-		return
+		return false
+	}
+	return receiver.admit(tui.ChatActivationRequest{ChatID: id.String()})
+}
+
+func (receiver *chatActivationReceiver) admit(request tui.ChatActivationRequest) bool {
+	if receiver == nil {
+		return false
 	}
 	// Admission and cancellation are serialized; the socket owner alone closes
 	// activations after it has stopped producing, avoiding send-on-closed races.
 	receiver.mu.Lock()
 	defer receiver.mu.Unlock()
 	if receiver.ctx.Err() != nil {
-		return
+		return false
 	}
 	select {
-	case receiver.activations <- tui.ChatActivationRequest{ChatID: id.String()}:
+	case receiver.activations <- request:
+		return true
 	default:
+		return false
 	}
+}
+
+// issueTicket creates a bounded, one-time capability for one notification.
+// Neither the stable WhatsApp ChatID nor the receiver-wide authentication
+// token leaves Walite through the desktop notification service.
+func (receiver *chatActivationReceiver) issueTicket(chatID string) (string, bool) {
+	if receiver == nil || strings.TrimSpace(chatID) == "" {
+		return "", false
+	}
+	id, err := model.NewChatID(chatID)
+	if err != nil {
+		return "", false
+	}
+	for attempt := 0; attempt < 4; attempt++ {
+		var random [32]byte
+		if _, err := rand.Read(random[:]); err != nil {
+			return "", false
+		}
+		ticket := hex.EncodeToString(random[:])
+		receiver.mu.Lock()
+		if receiver.ctx.Err() != nil {
+			receiver.mu.Unlock()
+			return "", false
+		}
+		if _, exists := receiver.tickets[ticket]; exists {
+			receiver.mu.Unlock()
+			continue
+		}
+		if len(receiver.ticketOrder) == chatActivationTicketCapacity {
+			delete(receiver.tickets, receiver.ticketOrder[0])
+			copy(receiver.ticketOrder, receiver.ticketOrder[1:])
+			receiver.ticketOrder = receiver.ticketOrder[:len(receiver.ticketOrder)-1]
+		}
+		receiver.tickets[ticket] = id.String()
+		receiver.ticketOrder = append(receiver.ticketOrder, ticket)
+		receiver.mu.Unlock()
+		return ticket, true
+	}
+	return "", false
+}
+
+func (receiver *chatActivationReceiver) consumeTicket(ticket string) (string, bool) {
+	if len(ticket) != 64 {
+		return "", false
+	}
+	if _, err := hex.DecodeString(ticket); err != nil {
+		return "", false
+	}
+	receiver.mu.Lock()
+	defer receiver.mu.Unlock()
+	if receiver.ctx.Err() != nil {
+		return "", false
+	}
+	chatID, ok := receiver.tickets[ticket]
+	if !ok {
+		return "", false
+	}
+	delete(receiver.tickets, ticket)
+	for index, value := range receiver.ticketOrder {
+		if subtle.ConstantTimeCompare([]byte(value), []byte(ticket)) == 1 {
+			copy(receiver.ticketOrder[index:], receiver.ticketOrder[index+1:])
+			receiver.ticketOrder = receiver.ticketOrder[:len(receiver.ticketOrder)-1]
+			break
+		}
+	}
+	return chatID, true
 }
 
 func decodeChatActivationCommand(data []byte) (chatActivationCommand, bool) {
@@ -204,7 +301,7 @@ func decodeChatActivationCommand(data []byte) (chatActivationCommand, bool) {
 	}
 	// Read exact case-sensitive keys and reject duplicates, rather than letting
 	// encoding/json silently overwrite authentication or identity fields.
-	var seen [3]bool
+	var seen [4]bool
 	for decoder.More() {
 		key, err := decoder.Token()
 		if err != nil {
@@ -219,6 +316,8 @@ func decodeChatActivationCommand(data []byte) (chatActivationCommand, bool) {
 			index, target = 1, &command.ChatID
 		case "token":
 			index, target = 2, &command.Token
+		case "activation_id":
+			index, target = 3, &command.ActivationID
 		default:
 			return command, false
 		}
@@ -235,7 +334,12 @@ func decodeChatActivationCommand(data []byte) (chatActivationCommand, bool) {
 	if decoder.Decode(&trailing) != io.EOF {
 		return command, false
 	}
-	return command, seen[0] && seen[1] && seen[2] && command.Version == chatActivationVersion
+	if !seen[0] || command.Version != chatActivationVersion {
+		return command, false
+	}
+	legacy := seen[1] && seen[2] && !seen[3]
+	ticket := !seen[1] && !seen[2] && seen[3]
+	return command, legacy || ticket
 }
 
 func (receiver *chatActivationReceiver) closeTransport() {

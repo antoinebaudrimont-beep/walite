@@ -51,6 +51,15 @@ func activationJSON(t *testing.T, receiver *chatActivationReceiver, id string) [
 	return data
 }
 
+func activationTicketJSON(t *testing.T, ticket string) []byte {
+	t.Helper()
+	data, err := json.Marshal(chatActivationCommand{Version: chatActivationVersion, ActivationID: ticket})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
 // EOF from the server is a deterministic barrier: receive/admission has
 // completed before the owner closes the connection. It is not an IPC ack.
 func sendActivationBytes(t *testing.T, receiver *chatActivationReceiver, data []byte) {
@@ -98,6 +107,55 @@ func TestChatActivationReceiverAuthenticatesAndPreservesStableIDs(t *testing.T) 
 	}
 }
 
+func TestChatActivationReceiverOneTimeTicketsPreserveStableIDs(t *testing.T) {
+	receiver := testActivationReceiver(t, context.Background(), activationTestDirectory(t))
+	for _, id := range []string{"15550000001@s.whatsapp.net", "987654@lid", "family@g.us", "synthetic-café-👋"} {
+		ticket, ok := receiver.issueTicket(id)
+		if !ok || len(ticket) != 64 || strings.Contains(ticket, id) || strings.Contains(ticket, receiver.token) {
+			t.Fatal("invalid opaque activation ticket")
+		}
+		sendActivationBytes(t, receiver, activationTicketJSON(t, ticket))
+		if request := <-receiver.activations; request.ChatID != id {
+			t.Fatalf("ticket selected %q want %q", request.ChatID, id)
+		}
+		sendActivationBytes(t, receiver, activationTicketJSON(t, ticket))
+		if len(receiver.activations) != 0 {
+			t.Fatal("one-time ticket was replayed")
+		}
+	}
+}
+
+func TestChatActivationReceiverTicketsAreBoundedAndInstanceLocal(t *testing.T) {
+	base := activationTestDirectory(t)
+	first := testActivationReceiver(t, context.Background(), base)
+	second := testActivationReceiver(t, context.Background(), base)
+	firstTicket, ok := first.issueTicket("first@lid")
+	if !ok {
+		t.Fatal("ticket issuance failed")
+	}
+	sendActivationBytes(t, second, activationTicketJSON(t, firstTicket))
+	if len(second.activations) != 0 {
+		t.Fatal("ticket crossed application instances")
+	}
+	var oldest string
+	for index := 0; index < chatActivationTicketCapacity+1; index++ {
+		ticket, issued := first.issueTicket("bounded@lid")
+		if !issued {
+			t.Fatal("bounded ticket issuance failed")
+		}
+		if index == 0 {
+			oldest = ticket
+		}
+	}
+	if len(first.tickets) != chatActivationTicketCapacity || len(first.ticketOrder) != chatActivationTicketCapacity {
+		t.Fatal("notification ticket map exceeded its bound")
+	}
+	sendActivationBytes(t, first, activationTicketJSON(t, oldest))
+	if len(first.activations) != 0 {
+		t.Fatal("evicted activation ticket remained valid")
+	}
+}
+
 func TestChatActivationReceiverRejectsInvalidRequests(t *testing.T) {
 	receiver := testActivationReceiver(t, context.Background(), activationTestDirectory(t))
 	valid := string(activationJSON(t, receiver, "chat@lid"))
@@ -107,6 +165,9 @@ func TestChatActivationReceiverRejectsInvalidRequests(t *testing.T) {
 	}{
 		{name: "wrong token", data: []byte(strings.Replace(valid, receiver.token, strings.Repeat("0", 64), 1))},
 		{name: "missing token", data: []byte(`{"version":1,"chat_id":"chat@lid"}`)},
+		{name: "missing activation ID", data: []byte(`{"version":1}`)},
+		{name: "mixed credential forms", data: []byte(`{"version":1,"chat_id":"chat@lid","token":"` + receiver.token + `","activation_id":"` + strings.Repeat("0", 64) + `"}`)},
+		{name: "short activation ID", data: []byte(`{"version":1,"activation_id":"short"}`)},
 		{name: "malformed JSON", data: []byte(`{"version":`)},
 		{name: "oversized", data: []byte(valid + strings.Repeat(" ", chatActivationMaxRequestBytes))},
 		{name: "empty ChatID", data: activationJSON(t, receiver, "")},

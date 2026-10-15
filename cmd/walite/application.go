@@ -232,8 +232,11 @@ func runStartedApplicationWithCapabilities(
 	if capabilities.newLinuxNotificationActions != nil {
 		if actions, err := capabilities.newLinuxNotificationActions(runCtx); err == nil && actions != nil {
 			defer actions.stop()
+			actions.bindChatActivation(activationReceiver)
 			notifier = actions
-			chatActivations = actions.activations
+			if activationReceiver == nil {
+				chatActivations = actions.activations
+			}
 		}
 	}
 	media, err := newMediaWorkerForCapabilities(runCtx, serviceCore, capabilities)

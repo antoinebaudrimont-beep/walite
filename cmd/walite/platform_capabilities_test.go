@@ -35,7 +35,7 @@ func TestLinuxCapabilitySelectionPreservesValidatedHelpers(t *testing.T) {
 	if !pairingOK || pairing.command != available["xfce4-terminal"] ||
 		!openerOK || opener.command != available["xdg-open"] ||
 		!clipboardOK || clipboard.command != available["xclip"] || strings.Join(clipboard.args, "\x00") != "-selection\x00clipboard\x00-in" ||
-		!inlineOK || inline.binary != available["ueberzugpp"] || !notifierOK || notifier.command != available["notify-send"] || capabilities.platformError != nil || capabilities.newChatActivation != nil {
+		!inlineOK || inline.binary != available["ueberzugpp"] || !notifierOK || notifier.command != available["notify-send"] || capabilities.platformError != nil || capabilities.newChatActivation == nil {
 		t.Fatalf("capabilities=%+v pairing=%+v opener=%+v clipboard=%+v inline=%+v", capabilities, pairing, opener, clipboard, inline)
 	}
 }

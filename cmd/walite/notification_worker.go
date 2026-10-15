@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os/exec"
 	"sync"
 	"time"
@@ -25,9 +26,18 @@ func runNotificationCommand(ctx context.Context, command string, args []string) 
 }
 
 type notifySendBackend struct {
-	command  string
-	iconPath string
-	run      notificationCommandRunner
+	command            string
+	iconPath           string
+	run                notificationCommandRunner
+	activationReceiver *chatActivationReceiver
+}
+
+const linuxChatActivationHint = "x-walite-activation"
+
+type linuxChatActivationHintValue struct {
+	Version          int    `json:"version"`
+	ActivationSocket string `json:"activation_socket"`
+	ActivationID     string `json:"activation_id"`
 }
 
 func (backend notifySendBackend) Notify(ctx context.Context, notification tui.Notification) error {
@@ -42,6 +52,18 @@ func (backend notifySendBackend) Notify(ctx context.Context, notification tui.No
 func (backend notifySendBackend) arguments(notification tui.Notification, args []string) []string {
 	if backend.iconPath != "" {
 		args = append(args, "--icon", backend.iconPath)
+	}
+	if receiver := backend.activationReceiver; receiver != nil {
+		if ticket, ok := receiver.issueTicket(notification.ChatID); ok {
+			value, err := json.Marshal(linuxChatActivationHintValue{
+				Version:          chatActivationVersion,
+				ActivationSocket: receiver.socketPath,
+				ActivationID:     ticket,
+			})
+			if err == nil {
+				args = append(args, "--hint=string:"+linuxChatActivationHint+":"+string(value))
+			}
+		}
 	}
 	args = append(args, "--", notification.Title, notification.Body)
 	return args
